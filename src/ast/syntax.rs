@@ -97,10 +97,11 @@ impl Constraint {
 }
 
 /// A single range element within a constraint (min..max).
+/// When max is None, the range represents an exact value match.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Range {
     pub min: RangeValue,
-    pub max: RangeValue,
+    pub max: Option<RangeValue>,
     pub span: Span,
 }
 

@@ -281,6 +281,38 @@ impl TokenKind {
         )
     }
 
+    /// Human-readable name for error messages.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            TokenKind::Error => "<error>",
+            TokenKind::Eof => "end of file",
+            TokenKind::ForbiddenKeyword => "reserved keyword",
+            TokenKind::Comment => "comment",
+            TokenKind::UppercaseIdent => "identifier",
+            TokenKind::LowercaseIdent => "identifier",
+            TokenKind::Number => "number",
+            TokenKind::NegativeNumber => "negative number",
+            TokenKind::QuotedString => "quoted string",
+            TokenKind::HexString => "hex string",
+            TokenKind::BinString => "binary string",
+            TokenKind::LBracket => "'['",
+            TokenKind::RBracket => "']'",
+            TokenKind::LBrace => "'{'",
+            TokenKind::RBrace => "'}'",
+            TokenKind::LParen => "'('",
+            TokenKind::RParen => "')'",
+            TokenKind::Colon => "':'",
+            TokenKind::Semicolon => "';'",
+            TokenKind::Comma => "','",
+            TokenKind::Dot => "'.'",
+            TokenKind::Pipe => "'|'",
+            TokenKind::Minus => "'-'",
+            TokenKind::DotDot => "'..'",
+            TokenKind::ColonColonEqual => "'::='",
+            _ => self.libsmi_name(),
+        }
+    }
+
     /// Returns the libsmi-compatible name for this token kind.
     pub fn libsmi_name(self) -> &'static str {
         match self {

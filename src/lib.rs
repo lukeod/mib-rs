@@ -3,6 +3,7 @@ pub mod error;
 pub mod graph;
 pub mod lexer;
 pub mod mib;
+pub mod parser;
 pub mod types;
 
 // Re-exports for convenience
