@@ -3,14 +3,14 @@ use crate::types::Span;
 
 /// Parsed components of an OBJECT IDENTIFIER value,
 /// e.g. { iso org(3) dod(6) 1 }.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct OidAssignment {
     pub components: Vec<OidComponent>,
     pub span: Span,
 }
 
 /// A single element in an OID value assignment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum OidComponent {
     /// Named reference, e.g. internet, ifEntry.
     Name(Ident),

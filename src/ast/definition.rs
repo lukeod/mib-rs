@@ -4,7 +4,7 @@ use super::syntax::*;
 use crate::types::Span;
 
 /// A top-level construct in a MIB module body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Definition {
     ObjectType(ObjectTypeDef),
     ModuleIdentity(ModuleIdentityDef),
@@ -22,48 +22,45 @@ pub enum Definition {
     Error(ErrorDef),
 }
 
-impl Definition {
-    pub fn name(&self) -> Option<&Ident> {
-        match self {
-            Definition::ObjectType(d) => Some(&d.name),
-            Definition::ModuleIdentity(d) => Some(&d.name),
-            Definition::ObjectIdentity(d) => Some(&d.name),
-            Definition::NotificationType(d) => Some(&d.name),
-            Definition::TrapType(d) => Some(&d.name),
-            Definition::TextualConvention(d) => Some(&d.name),
-            Definition::TypeAssignment(d) => Some(&d.name),
-            Definition::ValueAssignment(d) => Some(&d.name),
-            Definition::ObjectGroup(d) => Some(&d.name),
-            Definition::NotificationGroup(d) => Some(&d.name),
-            Definition::ModuleCompliance(d) => Some(&d.name),
-            Definition::AgentCapabilities(d) => Some(&d.name),
-            Definition::MacroDefinition(d) => Some(&d.name),
-            Definition::Error(_) => None,
+macro_rules! delegate_def {
+    (name: $($variant:ident),+ ; no_name: $($no_name:ident),+) => {
+        impl Definition {
+            pub fn name(&self) -> Option<&Ident> {
+                match self {
+                    $( Definition::$variant(d) => Some(&d.name), )+
+                    $( Definition::$no_name(_) => None, )+
+                }
+            }
         }
-    }
-
-    pub fn span(&self) -> Span {
-        match self {
-            Definition::ObjectType(d) => d.span,
-            Definition::ModuleIdentity(d) => d.span,
-            Definition::ObjectIdentity(d) => d.span,
-            Definition::NotificationType(d) => d.span,
-            Definition::TrapType(d) => d.span,
-            Definition::TextualConvention(d) => d.span,
-            Definition::TypeAssignment(d) => d.span,
-            Definition::ValueAssignment(d) => d.span,
-            Definition::ObjectGroup(d) => d.span,
-            Definition::NotificationGroup(d) => d.span,
-            Definition::ModuleCompliance(d) => d.span,
-            Definition::AgentCapabilities(d) => d.span,
-            Definition::MacroDefinition(d) => d.span,
-            Definition::Error(d) => d.span,
+    };
+    (span: $($variant:ident),+) => {
+        impl Definition {
+            pub fn span(&self) -> Span {
+                match self {
+                    $( Definition::$variant(d) => d.span, )+
+                }
+            }
         }
-    }
+    };
 }
 
+delegate_def!(name:
+    ObjectType, ModuleIdentity, ObjectIdentity, NotificationType,
+    TrapType, TextualConvention, TypeAssignment, ValueAssignment,
+    ObjectGroup, NotificationGroup, ModuleCompliance, AgentCapabilities,
+    MacroDefinition;
+    no_name: Error
+);
+
+delegate_def!(span:
+    ObjectType, ModuleIdentity, ObjectIdentity, NotificationType,
+    TrapType, TextualConvention, TypeAssignment, ValueAssignment,
+    ObjectGroup, NotificationGroup, ModuleCompliance, AgentCapabilities,
+    MacroDefinition, Error
+);
+
 /// OBJECT-TYPE macro invocation (SMIv1/v2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ObjectTypeDef {
     pub name: Ident,
     pub span: Span,
@@ -76,11 +73,11 @@ pub struct ObjectTypeDef {
     pub index: Option<IndexClause>,
     pub augments: Option<AugmentsClause>,
     pub defval: Option<DefValClause>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// MODULE-IDENTITY macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ModuleIdentityDef {
     pub name: Ident,
     pub span: Span,
@@ -89,22 +86,22 @@ pub struct ModuleIdentityDef {
     pub contact_info: QuotedString,
     pub description: QuotedString,
     pub revisions: Vec<RevisionClause>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// OBJECT-IDENTITY macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ObjectIdentityDef {
     pub name: Ident,
     pub span: Span,
     pub status: StatusClause,
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// NOTIFICATION-TYPE macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct NotificationTypeDef {
     pub name: Ident,
     pub span: Span,
@@ -112,11 +109,11 @@ pub struct NotificationTypeDef {
     pub status: StatusClause,
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// TRAP-TYPE macro invocation (SMIv1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TrapTypeDef {
     pub name: Ident,
     pub span: Span,
@@ -128,7 +125,7 @@ pub struct TrapTypeDef {
 }
 
 /// TEXTUAL-CONVENTION definition (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TextualConventionDef {
     pub name: Ident,
     pub span: Span,
@@ -140,7 +137,7 @@ pub struct TextualConventionDef {
 }
 
 /// Type assignment (TypeName ::= TypeSyntax).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TypeAssignmentDef {
     pub name: Ident,
     pub span: Span,
@@ -148,15 +145,15 @@ pub struct TypeAssignmentDef {
 }
 
 /// OID value assignment (name OBJECT IDENTIFIER ::= { ... }).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ValueAssignmentDef {
     pub name: Ident,
     pub span: Span,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// OBJECT-GROUP macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ObjectGroupDef {
     pub name: Ident,
     pub span: Span,
@@ -164,11 +161,11 @@ pub struct ObjectGroupDef {
     pub status: StatusClause,
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// NOTIFICATION-GROUP macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct NotificationGroupDef {
     pub name: Ident,
     pub span: Span,
@@ -176,11 +173,11 @@ pub struct NotificationGroupDef {
     pub status: StatusClause,
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// MODULE-COMPLIANCE macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ModuleComplianceDef {
     pub name: Ident,
     pub span: Span,
@@ -188,11 +185,11 @@ pub struct ModuleComplianceDef {
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
     pub modules: Vec<ComplianceModule>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// A MODULE clause within MODULE-COMPLIANCE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ComplianceModule {
     pub module_name: Option<Ident>,
     pub module_oid: Option<OidAssignment>,
@@ -202,14 +199,14 @@ pub struct ComplianceModule {
 }
 
 /// A GROUP or OBJECT refinement in MODULE-COMPLIANCE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Compliance {
     Group(ComplianceGroup),
     Object(ComplianceObject),
 }
 
 /// GROUP clause within MODULE-COMPLIANCE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ComplianceGroup {
     pub group: Ident,
     pub description: QuotedString,
@@ -217,7 +214,7 @@ pub struct ComplianceGroup {
 }
 
 /// OBJECT refinement within MODULE-COMPLIANCE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ComplianceObject {
     pub object: Ident,
     pub syntax: Option<SyntaxClause>,
@@ -228,7 +225,7 @@ pub struct ComplianceObject {
 }
 
 /// AGENT-CAPABILITIES macro invocation (SMIv2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AgentCapabilitiesDef {
     pub name: Ident,
     pub span: Span,
@@ -237,11 +234,11 @@ pub struct AgentCapabilitiesDef {
     pub description: QuotedString,
     pub reference: Option<QuotedString>,
     pub supports: Vec<SupportsModule>,
-    pub oid_assignment: OidAssignment,
+    pub oid: OidAssignment,
 }
 
 /// A SUPPORTS clause within AGENT-CAPABILITIES.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SupportsModule {
     pub module_name: Ident,
     pub module_oid: Option<OidAssignment>,
@@ -251,7 +248,7 @@ pub struct SupportsModule {
 }
 
 /// A VARIATION clause within AGENT-CAPABILITIES.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Variation {
     pub name: Ident,
     pub syntax: Option<SyntaxClause>,
@@ -264,14 +261,14 @@ pub struct Variation {
 }
 
 /// A MACRO definition whose body is skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MacroDefinitionDef {
     pub name: Ident,
     pub span: Span,
 }
 
 /// A parse error from which the parser recovered.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ErrorDef {
     pub span: Span,
     pub message: String,

@@ -10,12 +10,16 @@ pub enum LoadError {
     #[error("diagnostic threshold exceeded")]
     DiagnosticThreshold,
 
-    #[error("source error: {0}")]
-    Source(String),
+    #[error("source error")]
+    Source(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("I/O error: {0}")]
+    #[error("I/O error")]
     Io(#[from] std::io::Error),
+}
 
-    #[error("multiple errors")]
-    Multiple(Vec<LoadError>),
+impl LoadError {
+    /// Create a Source error from any error type.
+    pub fn source(err: impl std::error::Error + Send + Sync + 'static) -> Self {
+        LoadError::Source(Box::new(err))
+    }
 }

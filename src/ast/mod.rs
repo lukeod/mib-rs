@@ -11,7 +11,7 @@ pub use syntax::*;
 use crate::types::{Severity, Span, SpanDiagnostic};
 
 /// Top-level AST node for a parsed MIB module.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Module {
     pub name: Ident,
     pub imports: Vec<ImportClause>,
@@ -35,12 +35,12 @@ impl Module {
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
-            .any(|d| d.severity.at_least(Severity::Error))
+            .any(|d| d.severity <= Severity::Error)
     }
 }
 
 /// Groups symbols imported from a single source module.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ImportClause {
     pub symbols: Vec<Ident>,
     pub from_module: Ident,

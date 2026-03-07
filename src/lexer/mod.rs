@@ -40,14 +40,13 @@ impl<'src> Lexer<'src> {
     /// The token stream always ends with `TokenKind::Eof`.
     pub fn tokenize(mut self) -> (Vec<Token>, Vec<SpanDiagnostic>) {
         let estimated = (self.source.len() / 6).max(64);
-        let mut tokens = Vec::with_capacity(estimated);
-        loop {
-            let tok = self.next_token();
-            tokens.push(tok);
-            if tok.kind == TokenKind::Eof {
-                break;
-            }
-        }
+        let mut tokens: Vec<Token> = Vec::with_capacity(estimated);
+        tokens.extend(&mut self);
+        // Always terminate with EOF
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            span: self.span_from(self.pos),
+        });
         (tokens, self.diagnostics)
     }
 
@@ -88,22 +87,20 @@ impl<'src> Lexer<'src> {
     }
 
     fn skip_whitespace(&mut self) {
-        while let Some(b) = self.peek() {
-            if matches!(b, b' ' | b'\t' | b'\r' | b'\n') {
-                self.advance();
-            } else {
-                break;
-            }
+        while self
+            .peek()
+            .is_some_and(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        {
+            self.advance();
         }
     }
 
     fn skip_line_ending(&mut self) {
-        if let Some(b) = self.advance() {
-            if b == b'\r' {
-                if self.peek() == Some(b'\n') {
-                    self.advance();
-                }
-            }
+        if let Some(b) = self.advance()
+            && b == b'\r'
+            && self.peek() == Some(b'\n')
+        {
+            self.advance();
         }
     }
 
@@ -198,10 +195,10 @@ impl<'src> Lexer<'src> {
 
         // Minus or NegativeNumber
         if b == b'-' {
-            if let Some(next) = self.peek_at(1) {
-                if next.is_ascii_digit() {
-                    return Some(self.scan_negative_number());
-                }
+            if let Some(next) = self.peek_at(1)
+                && next.is_ascii_digit()
+            {
+                return Some(self.scan_negative_number());
             }
             self.advance();
             return Some(self.token(TokenKind::Minus, start));
@@ -292,35 +289,32 @@ impl<'src> Lexer<'src> {
     // -- Number scanning --
 
     fn scan_digits(&mut self) {
-        while let Some(b) = self.peek() {
-            if b.is_ascii_digit() {
-                self.advance();
-            } else {
-                break;
-            }
+        while self.peek().is_some_and(|b| b.is_ascii_digit()) {
+            self.advance();
         }
     }
 
     fn scan_number(&mut self) -> Token {
-        let start = self.pos;
-        self.scan_digits();
-        let tok = self.token(TokenKind::Number, start);
-        if self.pos - start > 1 && self.source[start] == b'0' {
-            self.emit_diagnostic(
-                DiagCode::NumberLeadingZero,
-                self.span_from(start),
-                "leading zero(s) on a number",
-            );
-        }
-        tok
+        self.scan_number_impl(false)
     }
 
     fn scan_negative_number(&mut self) -> Token {
+        self.scan_number_impl(true)
+    }
+
+    fn scan_number_impl(&mut self, negative: bool) -> Token {
         let start = self.pos;
-        self.advance(); // consume '-'
+        if negative {
+            self.advance(); // consume '-'
+        }
         let digit_start = self.pos;
         self.scan_digits();
-        let tok = self.token(TokenKind::NegativeNumber, start);
+        let kind = if negative {
+            TokenKind::NegativeNumber
+        } else {
+            TokenKind::Number
+        };
+        let tok = self.token(kind, start);
         if self.pos - digit_start > 1 && self.source[digit_start] == b'0' {
             self.emit_diagnostic(
                 DiagCode::NumberLeadingZero,
@@ -391,7 +385,7 @@ impl<'src> Lexer<'src> {
         match suffix {
             Some(b'H' | b'h') => {
                 self.advance();
-                if content_len > 0 && content_len % 2 != 0 {
+                if content_len > 0 && !content_len.is_multiple_of(2) {
                     let span = self.span_from(start);
                     self.emit_diagnostic(
                         DiagCode::HexStringMul2,
@@ -403,7 +397,7 @@ impl<'src> Lexer<'src> {
             }
             Some(b'B' | b'b') => {
                 self.advance();
-                if content_len > 0 && content_len % 8 != 0 {
+                if content_len > 0 && !content_len.is_multiple_of(8) {
                     let span = self.span_from(start);
                     self.emit_diagnostic(
                         DiagCode::BinStringMul8,
@@ -451,10 +445,10 @@ impl<'src> Lexer<'src> {
         self.skip_comment_body(true);
         let tok = self.token(TokenKind::Comment, self.comment_start);
         // Consume trailing newline if present (not part of comment span).
-        if let Some(b) = self.peek() {
-            if b == b'\n' || b == b'\r' {
-                self.skip_line_ending();
-            }
+        if let Some(b) = self.peek()
+            && (b == b'\n' || b == b'\r')
+        {
+            self.skip_line_ending();
         }
         self.state = LexerState::Normal;
         tok
@@ -555,6 +549,19 @@ impl<'src> Lexer<'src> {
     }
 }
 
+impl<'src> Iterator for Lexer<'src> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Token> {
+        let tok = self.next_token();
+        if tok.kind == TokenKind::Eof {
+            None
+        } else {
+            Some(tok)
+        }
+    }
+}
+
 fn punctuation_kind(b: u8) -> Option<TokenKind> {
     match b {
         b'[' => Some(TokenKind::LBracket),
@@ -575,13 +582,13 @@ mod tests {
     use super::*;
 
     fn tokenize(input: &str) -> Vec<Token> {
-        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::default_config());
+        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::default());
         let (tokens, _) = lexer.tokenize();
         tokens
     }
 
     fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<SpanDiagnostic>) {
-        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::strict_config());
+        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::strict());
         lexer.tokenize()
     }
 

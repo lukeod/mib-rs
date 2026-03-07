@@ -1,5 +1,17 @@
 use std::fmt;
 
+macro_rules! impl_display {
+    ($ty:ident { $($variant:ident => $s:literal),* $(,)? }) => {
+        impl fmt::Display for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(match self {
+                    $($ty::$variant => $s),*
+                })
+            }
+        }
+    }
+}
+
 /// Severity indicates how serious a diagnostic issue is (libsmi-compatible).
 /// Lower values are more severe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -14,34 +26,15 @@ pub enum Severity {
     Info = 6,
 }
 
-impl Severity {
-    /// Reports whether self is at least as severe as other.
-    /// Lower numeric values are more severe (Fatal=0, Info=6).
-    pub fn at_least(self, other: Severity) -> bool {
-        (self as u8) <= (other as u8)
-    }
-
-    pub fn names() -> &'static [&'static str] {
-        &[
-            "fatal", "severe", "error", "minor", "style", "warning", "info",
-        ]
-    }
-}
-
-impl fmt::Display for Severity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Severity::Fatal => "fatal",
-            Severity::Severe => "severe",
-            Severity::Error => "error",
-            Severity::Minor => "minor",
-            Severity::Style => "style",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(Severity {
+    Fatal => "fatal",
+    Severe => "severe",
+    Error => "error",
+    Minor => "minor",
+    Style => "style",
+    Warning => "warning",
+    Info => "info",
+});
 
 /// StrictnessLevel defines preset strictness configurations.
 /// Higher values are stricter and report more diagnostics.
@@ -54,17 +47,12 @@ pub enum StrictnessLevel {
     Strict = 6,
 }
 
-impl fmt::Display for StrictnessLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            StrictnessLevel::Silent => "silent",
-            StrictnessLevel::Permissive => "permissive",
-            StrictnessLevel::Normal => "normal",
-            StrictnessLevel::Strict => "strict",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(StrictnessLevel {
+    Silent => "silent",
+    Permissive => "permissive",
+    Normal => "normal",
+    Strict => "strict",
+});
 
 /// Kind identifies what an OID node represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -96,24 +84,19 @@ impl Kind {
     }
 }
 
-impl fmt::Display for Kind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Kind::Unknown => "unknown",
-            Kind::Internal => "internal",
-            Kind::Node => "node",
-            Kind::Scalar => "scalar",
-            Kind::Table => "table",
-            Kind::Row => "row",
-            Kind::Column => "column",
-            Kind::Notification => "notification",
-            Kind::Group => "group",
-            Kind::Compliance => "compliance",
-            Kind::Capability => "capabilities",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(Kind {
+    Unknown => "unknown",
+    Internal => "internal",
+    Node => "node",
+    Scalar => "scalar",
+    Table => "table",
+    Row => "row",
+    Column => "column",
+    Notification => "notification",
+    Group => "group",
+    Compliance => "compliance",
+    Capability => "capabilities",
+});
 
 /// Access represents the access level for OBJECT-TYPE definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -129,34 +112,15 @@ pub enum Access {
     NotImplemented = 6,
 }
 
-impl fmt::Display for Access {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Access::NotAccessible => "not-accessible",
-            Access::AccessibleForNotify => "accessible-for-notify",
-            Access::ReadOnly => "read-only",
-            Access::ReadWrite => "read-write",
-            Access::ReadCreate => "read-create",
-            Access::WriteOnly => "write-only",
-            Access::NotImplemented => "not-implemented",
-        };
-        f.write_str(name)
-    }
-}
-
-impl Access {
-    pub fn names() -> &'static [&'static str] {
-        &[
-            "not-accessible",
-            "accessible-for-notify",
-            "read-only",
-            "read-write",
-            "read-create",
-            "write-only",
-            "not-implemented",
-        ]
-    }
-}
+impl_display!(Access {
+    NotAccessible => "not-accessible",
+    AccessibleForNotify => "accessible-for-notify",
+    ReadOnly => "read-only",
+    ReadWrite => "read-write",
+    ReadCreate => "read-create",
+    WriteOnly => "write-only",
+    NotImplemented => "not-implemented",
+});
 
 /// Status represents the lifecycle state of a MIB definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -175,24 +139,15 @@ impl Status {
     pub fn is_smiv1(self) -> bool {
         matches!(self, Status::Mandatory | Status::Optional)
     }
-
-    pub fn names() -> &'static [&'static str] {
-        &["current", "deprecated", "obsolete", "mandatory", "optional"]
-    }
 }
 
-impl fmt::Display for Status {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Status::Current => "current",
-            Status::Deprecated => "deprecated",
-            Status::Obsolete => "obsolete",
-            Status::Mandatory => "mandatory",
-            Status::Optional => "optional",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(Status {
+    Current => "current",
+    Deprecated => "deprecated",
+    Obsolete => "obsolete",
+    Mandatory => "mandatory",
+    Optional => "optional",
+});
 
 /// Language identifies the SMI version of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -204,16 +159,11 @@ pub enum Language {
     SMIv2 = 2,
 }
 
-impl fmt::Display for Language {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Language::Unknown => "unknown",
-            Language::SMIv1 => "SMIv1",
-            Language::SMIv2 => "SMIv2",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(Language {
+    Unknown => "unknown",
+    SMIv1 => "SMIv1",
+    SMIv2 => "SMIv2",
+});
 
 /// BaseType identifies the fundamental SMI type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -235,26 +185,21 @@ pub enum BaseType {
     Sequence = 12,
 }
 
-impl fmt::Display for BaseType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            BaseType::Unknown => "unknown",
-            BaseType::Integer32 => "Integer32",
-            BaseType::Unsigned32 => "Unsigned32",
-            BaseType::Counter32 => "Counter32",
-            BaseType::Counter64 => "Counter64",
-            BaseType::Gauge32 => "Gauge32",
-            BaseType::TimeTicks => "TimeTicks",
-            BaseType::IpAddress => "IpAddress",
-            BaseType::OctetString => "OCTET STRING",
-            BaseType::ObjectIdentifier => "OBJECT IDENTIFIER",
-            BaseType::Bits => "BITS",
-            BaseType::Opaque => "Opaque",
-            BaseType::Sequence => "SEQUENCE",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(BaseType {
+    Unknown => "unknown",
+    Integer32 => "Integer32",
+    Unsigned32 => "Unsigned32",
+    Counter32 => "Counter32",
+    Counter64 => "Counter64",
+    Gauge32 => "Gauge32",
+    TimeTicks => "TimeTicks",
+    IpAddress => "IpAddress",
+    OctetString => "OCTET STRING",
+    ObjectIdentifier => "OBJECT IDENTIFIER",
+    Bits => "BITS",
+    Opaque => "Opaque",
+    Sequence => "SEQUENCE",
+});
 
 /// IndexEncoding classifies how an INDEX component maps to instance-identifier
 /// sub-identifiers per RFC 2578 s7.7.
@@ -270,19 +215,14 @@ pub enum IndexEncoding {
     IpAddress = 5,
 }
 
-impl fmt::Display for IndexEncoding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            IndexEncoding::Unknown => "unknown",
-            IndexEncoding::Integer => "integer",
-            IndexEncoding::FixedString => "fixed-string",
-            IndexEncoding::LengthPrefixed => "length-prefixed",
-            IndexEncoding::Implied => "implied",
-            IndexEncoding::IpAddress => "ip-address",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(IndexEncoding {
+    Unknown => "unknown",
+    Integer => "integer",
+    FixedString => "fixed-string",
+    LengthPrefixed => "length-prefixed",
+    Implied => "implied",
+    IpAddress => "ip-address",
+});
 
 /// AccessKeyword records which keyword was used (ACCESS, MAX-ACCESS, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -294,16 +234,11 @@ pub enum AccessKeyword {
     MinAccess = 2,
 }
 
-impl fmt::Display for AccessKeyword {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            AccessKeyword::Access => "ACCESS",
-            AccessKeyword::MaxAccess => "MAX-ACCESS",
-            AccessKeyword::MinAccess => "MIN-ACCESS",
-        };
-        f.write_str(name)
-    }
-}
+impl_display!(AccessKeyword {
+    Access => "ACCESS",
+    MaxAccess => "MAX-ACCESS",
+    MinAccess => "MIN-ACCESS",
+});
 
 #[cfg(test)]
 mod tests {
@@ -311,9 +246,9 @@ mod tests {
 
     #[test]
     fn severity_ordering() {
-        assert!(Severity::Fatal.at_least(Severity::Info));
-        assert!(Severity::Fatal.at_least(Severity::Fatal));
-        assert!(!Severity::Info.at_least(Severity::Fatal));
+        assert!(Severity::Fatal <= Severity::Info);
+        assert!(Severity::Fatal <= Severity::Fatal);
+        assert!(!(Severity::Info <= Severity::Fatal));
     }
 
     #[test]

@@ -3,14 +3,14 @@ use super::oid::OidComponent;
 use crate::types::{Access, AccessKeyword, Span, Status};
 
 /// Wraps a TypeSyntax with its source span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SyntaxClause {
     pub syntax: TypeSyntax,
     pub span: Span,
 }
 
 /// A type expression in a SYNTAX clause or type assignment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TypeSyntax {
     /// Unqualified type name reference.
     TypeRef(Ident),
@@ -72,7 +72,7 @@ impl TypeSyntax {
 }
 
 /// A named field within a SEQUENCE definition.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SequenceField {
     pub name: Ident,
     pub syntax: TypeSyntax,
@@ -80,7 +80,7 @@ pub struct SequenceField {
 }
 
 /// A type sub-typing constraint (SIZE or range).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Constraint {
     /// SIZE(...) constraint on length.
     Size { ranges: Vec<Range>, span: Span },
@@ -97,7 +97,7 @@ impl Constraint {
 }
 
 /// A single range element within a constraint (min..max).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Range {
     pub min: RangeValue,
     pub max: RangeValue,
@@ -105,15 +105,15 @@ pub struct Range {
 }
 
 /// An endpoint in a range (numeric literal or MIN/MAX).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RangeValue {
     Signed(i64),
     Unsigned(u64),
-    Ident(Ident),
+    Named(Ident),
 }
 
 /// A parsed ACCESS, MAX-ACCESS, or MIN-ACCESS clause.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AccessClause {
     pub keyword: AccessKeyword,
     pub value: Access,
@@ -121,21 +121,21 @@ pub struct AccessClause {
 }
 
 /// A parsed STATUS clause value and span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct StatusClause {
     pub value: Status,
     pub span: Span,
 }
 
 /// An INDEX clause in OBJECT-TYPE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct IndexClause {
     pub items: Vec<IndexItem>,
     pub span: Span,
 }
 
 /// A single entry in an INDEX clause, possibly IMPLIED.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct IndexItem {
     pub implied: bool,
     pub object: Ident,
@@ -143,21 +143,21 @@ pub struct IndexItem {
 }
 
 /// The target row referenced by AUGMENTS.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AugmentsClause {
     pub target: Ident,
     pub span: Span,
 }
 
 /// The default value for an OBJECT-TYPE.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DefValClause {
     pub value: DefVal,
     pub span: Span,
 }
 
 /// The typed content within a DEFVAL { ... } clause.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum DefVal {
     Integer(i64),
     Unsigned(u64),
@@ -185,7 +185,7 @@ pub enum DefVal {
 }
 
 /// A REVISION clause within MODULE-IDENTITY.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RevisionClause {
     pub date: QuotedString,
     pub description: QuotedString,

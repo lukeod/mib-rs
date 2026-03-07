@@ -6,7 +6,7 @@ mod line_table;
 pub mod macro_info;
 mod span;
 
-pub use diagcode::{DiagCode, DiagCodeInfo, all_diagnostic_codes, code_phase, code_severity};
+pub use diagcode::{DiagCode, all_diagnostic_codes};
 pub use diagnostic::{Diagnostic, DiagnosticConfig};
 pub use enums::{
     Access, AccessKeyword, BaseType, IndexEncoding, Kind, Language, Severity, Status,
