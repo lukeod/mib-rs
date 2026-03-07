@@ -1,0 +1,42 @@
+-- Tests identifier-underscore diagnostic
+-- Underscores in identifiers violate RFC 2578 Section 3.1
+-- Should emit identifier-underscore diagnostic for both test_object and test_value
+
+UNDERSCORE-TEST-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+underscoreTestMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "A MIB with underscore violations for strictness testing."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { enterprises 99999 10 }
+
+underscoreTestObjects OBJECT IDENTIFIER ::= { underscoreTestMIB 1 }
+
+-- Violation: underscore in identifier
+test_object OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "An object with underscore in name."
+    ::= { underscoreTestObjects 1 }
+
+-- Another violation: underscore in identifier
+test_value OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Another object with underscore in name."
+    ::= { underscoreTestObjects 2 }
+
+END

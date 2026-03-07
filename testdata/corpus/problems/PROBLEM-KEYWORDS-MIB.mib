@@ -1,0 +1,111 @@
+-- Reserved keywords used as identifiers and in DEFVAL
+-- Replicates: CISCO-DOT11-IF-MIB, various vendor MIBs
+-- Tests parser keyword acceptance in DEFVAL and identifier contexts
+-- gomib: internal/parser/parser.go parseDefVal(), expectIdentifier()
+
+PROBLEM-KEYWORDS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+problemKeywordsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests reserved keyword handling in various contexts"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 4 }
+
+problemKeywordsObjects OBJECT IDENTIFIER ::= { problemKeywordsMIB 1 }
+
+ProblemAccessLevel ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Enum with keywords as labels"
+    SYNTAX      INTEGER {
+                    none(0),
+                    optional(1),
+                    mandatory(2),
+                    current(3),
+                    deprecated(4),
+                    obsolete(5)
+                }
+
+-- DEFVAL using `mandatory` keyword as enum value
+-- Real: CISCO-DOT11-IF-MIB cd11IfVlanWepEncryptOptions DEFVAL { mandatory }
+-- gomib: parser.go parseDefVal() accepts keyword tokens
+problemDefvalMandatory OBJECT-TYPE
+    SYNTAX      ProblemAccessLevel
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses mandatory keyword as enum value"
+    DEFVAL      { mandatory }
+    ::= { problemKeywordsObjects 1 }
+
+-- DEFVAL using `optional` keyword
+problemDefvalOptional OBJECT-TYPE
+    SYNTAX      ProblemAccessLevel
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses optional keyword as enum value"
+    DEFVAL      { optional }
+    ::= { problemKeywordsObjects 2 }
+
+-- DEFVAL using `current` keyword
+-- gomib: divergences_test.go:145-147
+problemDefvalCurrent OBJECT-TYPE
+    SYNTAX      ProblemAccessLevel
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses current keyword as enum value"
+    DEFVAL      { current }
+    ::= { problemKeywordsObjects 3 }
+
+-- DEFVAL using `deprecated` keyword
+problemDefvalDeprecated OBJECT-TYPE
+    SYNTAX      ProblemAccessLevel
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses deprecated keyword as enum value"
+    DEFVAL      { deprecated }
+    ::= { problemKeywordsObjects 4 }
+
+-- DEFVAL using `obsolete` keyword
+problemDefvalObsolete OBJECT-TYPE
+    SYNTAX      ProblemAccessLevel
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses obsolete keyword as enum value"
+    DEFVAL      { obsolete }
+    ::= { problemKeywordsObjects 5 }
+
+-- Object using a forbidden ASN.1 keyword as name
+-- gomib: parser.go:342-352 accepts TokForbiddenKeyword, emits keyword-reserved
+-- This is intentionally named to conflict; parser should accept with diagnostic
+
+ProblemBooleanType ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "TC that happens to use a forbidden keyword-adjacent name"
+    SYNTAX      INTEGER { true(1), false(2) }
+
+-- DEFVAL with `true` and `false` keywords
+problemDefvalTrue OBJECT-TYPE
+    SYNTAX      ProblemBooleanType
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses true keyword as enum value"
+    DEFVAL      { true }
+    ::= { problemKeywordsObjects 6 }
+
+problemDefvalFalse OBJECT-TYPE
+    SYNTAX      ProblemBooleanType
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses false keyword as enum value"
+    DEFVAL      { false }
+    ::= { problemKeywordsObjects 7 }
+
+END

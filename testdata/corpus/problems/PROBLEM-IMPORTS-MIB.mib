@@ -1,0 +1,88 @@
+-- Import resolution edge cases
+-- Replicates: F3-SYNC-MIB, ECS4510-MIB, HUAWEI-DISMAN-PING-MIB
+-- Tests import fallback and partial resolution
+
+PROBLEM-IMPORTS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32,
+    enterprises
+        FROM SNMPv2-SMI;
+
+-- Note: Counter64, Gauge32, Unsigned32, TimeTicks are deliberately
+-- NOT imported, replicating a common vendor MIB mistake.
+-- Real: F3-SYNC-MIB (Counter64, 138 occurrences)
+-- Real: HUAWEI-DISMAN-PING-MIB (Gauge32, Integer32)
+-- Real: ECS4510-MIB (90 Gauge32 uses without import)
+-- smilint: "Counter64 implicitly defined, not imported from SNMPv2-SMI"
+
+-- Also: TEXTUAL-CONVENTION is not imported from SNMPv2-TC
+-- Real: TOKEN-RING-RMON-MIB, JUNIPER-SMI, ECS4510-MIB
+-- smilint: "TEXTUAL-CONVENTION not imported from SNMPv2-TC"
+
+-- Also: NOTIFICATION-TYPE is not imported
+-- Real: ALCATEL-IND1-IPV6-MIB, RADIO-BRIDGE-MIB
+-- smilint: "NOTIFICATION-TYPE not imported from SNMPv2-SMI"
+
+problemImportsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests missing import fallback behavior"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 2 }
+
+problemImportsObjects OBJECT IDENTIFIER ::= { problemImportsMIB 1 }
+
+-- Uses Counter64 without importing it
+problemMissingCounter64 OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Counter64 used without import"
+    ::= { problemImportsObjects 1 }
+
+-- Uses Gauge32 without importing it
+problemMissingGauge32 OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Gauge32 used without import"
+    ::= { problemImportsObjects 2 }
+
+-- Uses Unsigned32 without importing it
+problemMissingUnsigned32 OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Unsigned32 used without import"
+    ::= { problemImportsObjects 3 }
+
+-- Uses TimeTicks without importing it
+problemMissingTimeTicks OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "TimeTicks used without import"
+    ::= { problemImportsObjects 4 }
+
+-- Uses DisplayString without importing from SNMPv2-TC
+-- Real: RADLAN-MIB (16 occurrences of unresolved DisplayString)
+problemMissingDisplayString OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "DisplayString used without importing from SNMPv2-TC"
+    ::= { problemImportsObjects 5 }
+
+-- Uses TruthValue without importing from SNMPv2-TC
+-- Real: RADLAN-MIB (55 occurrences)
+problemMissingTruthValue OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "TruthValue used without import"
+    ::= { problemImportsObjects 6 }
+
+END

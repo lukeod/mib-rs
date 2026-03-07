@@ -1,0 +1,105 @@
+-- SMIv1/v2 mixing issues
+-- Replicates: RADLAN-MIB, IFT-SNMP-MIB, CISCOSB-MIB
+-- Tests parser and resolver handling of cross-version constructs
+
+PROBLEM-SMIv1v2-MIX-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Counter32,
+    enterprises, NOTIFICATION-TYPE
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemSmiv1v2MixMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests SMIv1/v2 mixing edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 1 }
+
+problemSmiv1v2Objects OBJECT IDENTIFIER ::= { problemSmiv1v2MixMIB 1 }
+problemSmiv1v2Traps   OBJECT IDENTIFIER ::= { problemSmiv1v2MixMIB 2 }
+
+-- SMIv1-style ACCESS keyword in an SMIv2 module
+-- Real: RADLAN-MIB.mib, IFT-SNMP-MIB.mib (477 occurrences)
+-- smilint: "ACCESS is SMIv1 style, use MAX-ACCESS in SMIv2 MIBs instead"
+
+problemV1AccessObject OBJECT-TYPE
+    SYNTAX      Integer32
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Uses SMIv1 ACCESS instead of MAX-ACCESS"
+    ::= { problemSmiv1v2Objects 1 }
+
+-- mandatory status in SMIv2 context
+-- Real: RADLAN-MIB.mib (477 occurrences)
+-- smilint: "invalid status `mandatory' in SMIv2 MIB"
+
+problemMandatoryStatus OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Uses SMIv1 mandatory status in SMIv2 module"
+    ::= { problemSmiv1v2Objects 2 }
+
+-- optional status (SMIv1 only)
+-- gomib: types_phase.go:455-469 preserves as StatusOptional
+
+problemOptionalStatus OBJECT-TYPE
+    SYNTAX      Integer32
+    ACCESS      read-only
+    STATUS      optional
+    DESCRIPTION "Uses SMIv1 optional status"
+    ::= { problemSmiv1v2Objects 3 }
+
+-- SMIv2 object using MAX-ACCESS and current - normal, included for contrast
+
+problemV2NormalObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Normal SMIv2 object for contrast"
+    ::= { problemSmiv1v2Objects 4 }
+
+-- TRAP-TYPE macro in SMIv2 module
+-- Real: RADLAN-MIB.mib (931 occurrences), IFT-SNMP-MIB.mib
+-- smilint: "TRAP-TYPE macro is not allowed in SMIv2"
+-- Note: TRAP-TYPE requires RFC-1215 import in strict mode
+
+problemV1Trap TRAP-TYPE
+    ENTERPRISE  problemSmiv1v2MixMIB
+    VARIABLES   { problemV1AccessObject }
+    DESCRIPTION "SMIv1 TRAP-TYPE in an SMIv2 module"
+    ::= 1
+
+-- SMIv2 NOTIFICATION-TYPE alongside the v1 trap
+
+problemV2Notification NOTIFICATION-TYPE
+    OBJECTS     { problemV2NormalObject }
+    STATUS      current
+    DESCRIPTION "Normal SMIv2 notification for contrast"
+    ::= { problemSmiv1v2Traps 1 }
+
+-- Counter and Gauge without proper SMIv1 imports
+-- Real: RFC1213-MIB.mib (334 Counter, 4 Gauge)
+-- smilint: "Counter does not resolve to known base type"
+-- Note: These are SMIv1 types from RFC1155-SMI
+
+problemCounterObject OBJECT-TYPE
+    SYNTAX      Counter
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "SMIv1 Counter type (not Counter32)"
+    ::= { problemSmiv1v2Objects 5 }
+
+problemGaugeObject OBJECT-TYPE
+    SYNTAX      Gauge
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "SMIv1 Gauge type (not Gauge32)"
+    ::= { problemSmiv1v2Objects 6 }
+
+END

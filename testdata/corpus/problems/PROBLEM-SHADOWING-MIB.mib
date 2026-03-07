@@ -1,0 +1,67 @@
+-- Module that imports ShadowableType from PROBLEM-SHADOWING-BASE-MIB
+-- but also defines its own local version. Tests that the local definition
+-- takes precedence over the imported one (import shadowing).
+--
+-- This is a MIB bug (importing and locally redefining the same symbol),
+-- but it occurs in real vendor MIBs. gomib resolves the local definition
+-- first because lookupInModuleScope checks local symbols before imports.
+
+PROBLEM-SHADOWING-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC
+    ShadowableType
+        FROM PROBLEM-SHADOWING-BASE-MIB;
+
+problemShadowingMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests import shadowing (local def overrides import)"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 26 }
+
+problemShadowObjects OBJECT IDENTIFIER ::= { problemShadowingMIB 1 }
+
+-- Local redefinition of ShadowableType with a DIFFERENT size constraint.
+-- This should shadow the imported version from PROBLEM-SHADOWING-BASE-MIB.
+-- Base version: SIZE (0..64), display hint "255a"
+-- Local version: SIZE (0..128), display hint "1024a"
+ShadowableType ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "1024a"
+    STATUS      current
+    DESCRIPTION "Locally redefined version with SIZE 0..128"
+    SYNTAX      OCTET STRING (SIZE (0..128))
+
+-- This object uses ShadowableType. Because the local definition shadows
+-- the imported one, it should get the local constraints (SIZE 0..128,
+-- display hint "1024a") rather than the base constraints.
+problemShadowedTypeObject OBJECT-TYPE
+    SYNTAX      ShadowableType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using locally-shadowed ShadowableType"
+    ::= { problemShadowObjects 1 }
+
+-- An object that uses a non-shadowed imported type (DisplayString)
+-- to verify non-shadowed imports still work.
+problemNonShadowedObject OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using non-shadowed DisplayString import"
+    ::= { problemShadowObjects 2 }
+
+-- A scalar using Integer32 to verify basic types still resolve
+problemShadowScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Simple scalar in shadowing module"
+    ::= { problemShadowObjects 3 }
+
+END

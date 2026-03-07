@@ -1,0 +1,62 @@
+STRICT-TEST-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+strictTestMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "A minimal RFC-compliant SMIv2 MIB for strictness testing.
+         This MIB should pass smilint at level 0-1 with no errors."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { strictTestEnterprise 1 }
+
+strictTestEnterprise OBJECT IDENTIFIER ::= { enterprises 99999 }
+strictTestObjects OBJECT IDENTIFIER ::= { strictTestMIB 1 }
+strictTestConform OBJECT IDENTIFIER ::= { strictTestMIB 2 }
+
+-- Scalar objects
+
+strictTestString OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A test string object."
+    ::= { strictTestObjects 1 }
+
+strictTestInteger OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "A test integer object."
+    ::= { strictTestObjects 2 }
+
+-- Conformance
+
+strictTestCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION
+        "Compliance statement for STRICT-TEST-MIB."
+    MODULE
+        MANDATORY-GROUPS { strictTestGroup }
+    ::= { strictTestConform 1 }
+
+strictTestGroup OBJECT-GROUP
+    OBJECTS { strictTestString, strictTestInteger }
+    STATUS      current
+    DESCRIPTION
+        "Objects in STRICT-TEST-MIB."
+    ::= { strictTestConform 2 }
+
+END

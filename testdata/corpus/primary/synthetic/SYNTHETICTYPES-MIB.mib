@@ -1,0 +1,49 @@
+SYNTHETICTYPES-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, Integer32, Unsigned32, experimental
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+syntheticTypesMIB MODULE-IDENTITY
+    LAST-UPDATED "202504210000Z" -- Placeholder Date
+    ORGANIZATION "Synthetic MIB Generator"
+    CONTACT-INFO "Roo"
+    DESCRIPTION
+        "Provides basic types for SYNTHETIC-MIB to test multi-level imports."
+    REVISION    "202504210000Z"
+    DESCRIPTION
+        "Initial revision. Added DISPLAY-HINT."
+    ::= { experimental 998 } -- Assign a temporary OID under experimental
+
+-- Textual Conventions
+
+SyntheticTypeCode ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d" -- Added DISPLAY-HINT
+    STATUS       current
+    DESCRIPTION
+        "A simple type code based on Integer32 for import testing."
+    SYNTAX       Integer32 (0..255)
+
+
+SyntheticInetAddressType ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "A synthetic value representing a type of Internet address,
+         simplified for testing purposes. Based on InetAddressType."
+    SYNTAX       INTEGER {
+                     unknown(0),
+                     ipv4(1),
+                     ipv6(2)
+                 }
+
+SyntheticInetPortNumber ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d"
+    STATUS       current
+    DESCRIPTION
+        "A synthetic value representing a 16-bit port number.
+         Based on InetPortNumber."
+    SYNTAX       Unsigned32 (0..65535)
+
+END

@@ -1,0 +1,106 @@
+STRICT-TABLE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Unsigned32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString, TruthValue
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+strictTableMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "An RFC-compliant SMIv2 MIB with a table for strictness testing.
+         This MIB should pass smilint at level 0-1 with no errors."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { strictTableEnterprise 2 }
+
+strictTableEnterprise OBJECT IDENTIFIER ::= { enterprises 99999 }
+strictTableObjects OBJECT IDENTIFIER ::= { strictTableMIB 1 }
+strictTableConform OBJECT IDENTIFIER ::= { strictTableMIB 2 }
+
+-- Table definition
+
+strictExampleTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF StrictExampleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A test table."
+    ::= { strictTableObjects 1 }
+
+strictExampleEntry OBJECT-TYPE
+    SYNTAX      StrictExampleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry in the test table."
+    INDEX { strictExampleIndex }
+    ::= { strictExampleTable 1 }
+
+StrictExampleEntry ::= SEQUENCE {
+    strictExampleIndex    Unsigned32,
+    strictExampleName     DisplayString,
+    strictExampleValue    Integer32,
+    strictExampleEnabled  TruthValue
+}
+
+strictExampleIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4294967295)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The index for this entry."
+    ::= { strictExampleEntry 1 }
+
+strictExampleName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The name for this entry."
+    ::= { strictExampleEntry 2 }
+
+strictExampleValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "A value for this entry."
+    ::= { strictExampleEntry 3 }
+
+strictExampleEnabled OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Whether this entry is enabled."
+    ::= { strictExampleEntry 4 }
+
+-- Conformance
+
+strictTableCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION
+        "Compliance statement for STRICT-TABLE-MIB."
+    MODULE
+        MANDATORY-GROUPS { strictTableGroup }
+    ::= { strictTableConform 1 }
+
+strictTableGroup OBJECT-GROUP
+    OBJECTS {
+        strictExampleName,
+        strictExampleValue,
+        strictExampleEnabled
+    }
+    STATUS      current
+    DESCRIPTION
+        "Objects in STRICT-TABLE-MIB."
+    ::= { strictTableConform 2 }
+
+END

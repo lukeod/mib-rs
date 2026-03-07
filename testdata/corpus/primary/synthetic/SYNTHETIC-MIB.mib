@@ -1,0 +1,841 @@
+SYNTHETIC-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Counter32, Gauge32,
+    Counter64, Integer32, TimeTicks, IpAddress, Unsigned32, mib-2,
+    zeroDotZero
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString, TruthValue, RowStatus, TimeStamp,
+    TestAndIncr, AutonomousType, PhysAddress, DateAndTime, MacAddress
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    SyntheticTypeCode, SyntheticInetAddressType, SyntheticInetPortNumber -- Import from our new types MIB
+        FROM SYNTHETICTYPES-MIB; -- Standard practice: refer without file extension
+
+syntheticMIB MODULE-IDENTITY
+    LAST-UPDATED "202504210000Z" -- Placeholder Date
+    ORGANIZATION "Synthetic MIB Generator"
+    CONTACT-INFO "Roo"
+    DESCRIPTION
+        "A synthetic MIB module containing a variety of constructs
+         for testing MIB parsers. It aims to represent common patterns
+         found in standard IETF MIBs like IF-MIB, HOST-RESOURCES-MIB,
+         TCP-MIB, BRIDGE-MIB, and SNMPv2-MIB, using base SMIv2 macros.
+         Also tests multi-level imports."
+    REVISION    "202504210000Z"
+    DESCRIPTION
+        "Added 5-tuple index, MacAddress index, OCTET STRING bitmask,
+         fixed-size TC, refined conformance, and multi-level import.
+         Corrected compliance syntax and added display hints.
+         Corrected group references in compliance."
+    ::= { mib-2 999 } -- Use mib-2 as parent
+
+-- Textual Conventions
+
+SyntheticStatus ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "A simple status enumeration, representing operational or admin status."
+    SYNTAX       INTEGER { enabled(1), disabled(2), testing(3), unknown(4), down(5) }
+
+SyntheticBitmask ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "A bitmask example using the BITS pseudo-type, representing error states."
+    SYNTAX       BITS {
+                     bitZero(0),  -- Error A
+                     bitOne(1),   -- Error B
+                     bitTwo(2),   -- Warning X
+                     bitSeven(7)  -- Status Y
+                 }
+
+SyntheticName ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "64a"
+    STATUS       current
+    DESCRIPTION
+        "A constrained string for names or descriptions (e.g., interface alias, run name)."
+    SYNTAX       OCTET STRING (SIZE (0..64))
+
+SyntheticPath ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "128a"
+    STATUS       current
+    DESCRIPTION
+        "A constrained string for path names."
+    SYNTAX       OCTET STRING (SIZE (0..128))
+
+SyntheticKBytes ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d"
+    STATUS       current
+    DESCRIPTION
+        "Storage size, expressed in units of 1024 bytes."
+    SYNTAX       Integer32 (0..2147483647)
+
+SyntheticProductID ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "Represents a product identifier, similar to HOST-RESOURCES-MIB ProductID."
+    SYNTAX       OBJECT IDENTIFIER
+
+SyntheticFixedOctetString ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "8x" -- Added DISPLAY-HINT (assuming hex representation)
+    STATUS       current
+    DESCRIPTION
+        "Represents a fixed-size identifier, like BridgeId."
+    SYNTAX       OCTET STRING (SIZE (8))
+
+
+SyntheticIndexInetAddress ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "1x:" -- Hint for hex representation (common for IPv4)
+    STATUS       current
+    DESCRIPTION
+        "An OCTET STRING constrained for use in table indices,
+         representing only fixed-length IPv4 (4 octets) or IPv6 (16 octets) addresses.
+         This prevents potential OID length limit violations when using InetAddress-based indices."
+    SYNTAX       OCTET STRING (SIZE (4 | 16)) -- Only IPv4 or IPv6 length
+
+
+SyntheticFdbStatus ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "The status of an entry in the FDB table."
+    SYNTAX       INTEGER { other(1), invalid(2), learned(3), self(4), mgmt(5) }
+
+-- Scalar Objects Group
+syntheticScalars OBJECT IDENTIFIER ::= { syntheticMIB 1 }
+
+syntheticSystemDescription OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A description of the synthetic entity, like sysDescr."
+    ::= { syntheticScalars 1 }
+
+syntheticSystemObjectID OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "An object identifier for the synthetic entity, like sysObjectID."
+    DEFVAL      { zeroDotZero } -- Use zeroDotZero for DEFVAL
+    ::= { syntheticScalars 2 }
+
+syntheticSystemUpTime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The uptime of the synthetic entity, like sysUpTime."
+    ::= { syntheticScalars 3 }
+
+syntheticConfigSerial OBJECT-TYPE
+    SYNTAX      TestAndIncr
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "An advisory lock for configuration changes, like snmpSetSerialNo."
+    ::= { syntheticScalars 4 }
+
+syntheticTrapEnable OBJECT-TYPE
+    SYNTAX      INTEGER { enabled(1), disabled(2) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Controls whether synthetic traps should be generated."
+    DEFVAL      { enabled }
+    ::= { syntheticScalars 5 }
+
+syntheticMemorySize OBJECT-TYPE
+    SYNTAX      SyntheticKBytes
+    UNITS       "KBytes"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Total memory size, like hrMemorySize."
+    ::= { syntheticScalars 6 }
+
+syntheticLastChange OBJECT-TYPE
+    SYNTAX      TimeStamp
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Timestamp of the last change in a related table (e.g., simpleTable)."
+    ::= { syntheticScalars 7 }
+
+syntheticErrorState OBJECT-TYPE
+    SYNTAX      SyntheticBitmask
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Current error state represented by a bitmask."
+    ::= { syntheticScalars 8 }
+
+syntheticBootStatus OBJECT-TYPE
+    SYNTAX      TruthValue
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Indicates if the last boot was successful."
+    ::= { syntheticScalars 9 }
+
+syntheticDeviceType OBJECT-TYPE
+    SYNTAX      AutonomousType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Identifies the type of a synthetic device."
+    ::= { syntheticScalars 10 }
+
+syntheticInstallDate OBJECT-TYPE
+    SYNTAX      DateAndTime
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The installation date of a synthetic component."
+    ::= { syntheticScalars 11 }
+
+syntheticTypeCodeValue OBJECT-TYPE
+    SYNTAX      SyntheticTypeCode -- Using imported type
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A value using the type imported from SYNTHETIC-TYPES-MIB."
+    ::= { syntheticScalars 12 }
+
+-- DEFVAL test objects for integration testing
+
+syntheticDefvalInteger OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Test object for integer DEFVAL."
+    DEFVAL      { 42 }
+    ::= { syntheticScalars 13 }
+
+syntheticDefvalString OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Test object for string DEFVAL."
+    DEFVAL      { "default" }
+    ::= { syntheticScalars 14 }
+
+syntheticDefvalHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (4))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Test object for hex string DEFVAL representing 4 bytes."
+    DEFVAL      { 'DEADBEEF'H }
+    ::= { syntheticScalars 15 }
+
+syntheticDefvalEmptyHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..32))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Test object for empty hex string DEFVAL."
+    DEFVAL      { ''H }
+    ::= { syntheticScalars 16 }
+
+syntheticDefvalBits OBJECT-TYPE
+    SYNTAX      BITS { flag0(0), flag1(1), flag2(2) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "Test object for BITS DEFVAL."
+    DEFVAL      { { flag0, flag2 } }
+    ::= { syntheticScalars 17 }
+
+syntheticFixedId OBJECT-TYPE
+    SYNTAX      SyntheticFixedOctetString -- Using fixed-size TC
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A fixed-size identifier."
+    ::= { syntheticScalars 18 }
+
+-- Simple Table Group
+syntheticSimpleTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 2 }
+
+syntheticSimpleTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticSimpleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A simple table indexed by an Unsigned32."
+    ::= { syntheticSimpleTableGroup 1 }
+
+syntheticSimpleEntry OBJECT-TYPE
+    SYNTAX      SyntheticSimpleEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry in the simple table."
+    INDEX   { syntheticSimpleIndex }
+    ::= { syntheticSimpleTable 1 }
+
+SyntheticSimpleEntry ::= SEQUENCE {
+    syntheticSimpleIndex        Unsigned32,
+    syntheticSimpleStatus       SyntheticStatus,
+    syntheticSimpleData         Counter32,
+    syntheticSimpleRowStatus    RowStatus,
+    syntheticPortBitmask        OCTET STRING -- OCTET STRING as bitmask
+}
+
+syntheticSimpleIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..65535)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The index for the simple table."
+    ::= { syntheticSimpleEntry 1 }
+
+syntheticSimpleStatus OBJECT-TYPE
+    SYNTAX      SyntheticStatus
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION
+        "The status of this simple entry."
+    DEFVAL      { unknown }
+    ::= { syntheticSimpleEntry 2 }
+
+syntheticSimpleData OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A simple counter data point for this entry."
+    ::= { syntheticSimpleEntry 3 }
+
+syntheticSimpleRowStatus OBJECT-TYPE
+    SYNTAX      RowStatus
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION
+        "The RowStatus object for managing rows in this table."
+    ::= { syntheticSimpleEntry 4 }
+
+syntheticPortBitmask OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..64)) -- Example size, adjust as needed
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION
+        "A bitmask represented as an OCTET STRING, where each bit
+         corresponds to a port or feature. Similar to dot1dStaticAllowedToGoTo.
+         First octet, most significant bit = port 1, etc."
+    ::= { syntheticSimpleEntry 5 }
+
+-- Augmenting Table Group
+syntheticAugmentTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 3 }
+
+syntheticAugmentTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticAugmentEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A table augmenting the simple table, adding HC counters and a name."
+    ::= { syntheticAugmentTableGroup 1 }
+
+syntheticAugmentEntry OBJECT-TYPE
+    SYNTAX      SyntheticAugmentEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry containing additional information for a simple table entry."
+    AUGMENTS    { syntheticSimpleEntry }
+    ::= { syntheticAugmentTable 1 }
+
+SyntheticAugmentEntry ::= SEQUENCE {
+    syntheticAugmentName        SyntheticName,
+    syntheticAugmentHCData      Counter64,
+    syntheticAugmentPhysAddress PhysAddress
+}
+
+syntheticAugmentName OBJECT-TYPE
+    SYNTAX      SyntheticName
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION
+        "A configurable name for the augmented entry."
+    ::= { syntheticAugmentEntry 1 }
+
+syntheticAugmentHCData OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A high-capacity counter data point."
+    ::= { syntheticAugmentEntry 2 }
+
+syntheticAugmentPhysAddress OBJECT-TYPE
+    SYNTAX      PhysAddress
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A physical address associated with the entry."
+    ::= { syntheticAugmentEntry 3 }
+
+-- Complex Index Table Group
+syntheticComplexTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 4 }
+
+syntheticComplexTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticComplexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A table with a complex index (Integer32, IpAddress)."
+    ::= { syntheticComplexTableGroup 1 }
+
+syntheticComplexEntry OBJECT-TYPE
+    SYNTAX      SyntheticComplexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry in the complex table."
+    INDEX   { syntheticComplexGroup, syntheticComplexAddress }
+    ::= { syntheticComplexTable 1 }
+
+SyntheticComplexEntry ::= SEQUENCE {
+    syntheticComplexGroup       Integer32,
+    syntheticComplexAddress     IpAddress,
+    syntheticComplexValue       Gauge32,
+    syntheticComplexTimestamp   TimeStamp
+}
+
+syntheticComplexGroup OBJECT-TYPE
+    SYNTAX      Integer32 (1..255)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The first part of the complex index, representing a group."
+    ::= { syntheticComplexEntry 1 }
+
+syntheticComplexAddress OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The second part of the complex index, representing an IP address."
+    ::= { syntheticComplexEntry 2 }
+
+syntheticComplexValue OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A gauge value associated with the complex entry."
+    ::= { syntheticComplexEntry 3 }
+
+syntheticComplexTimestamp OBJECT-TYPE
+    SYNTAX      TimeStamp
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A timestamp associated with the complex entry."
+    ::= { syntheticComplexEntry 4 }
+
+-- OID Table Group (like sysORTable)
+syntheticOidTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 5 }
+
+syntheticOidTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticOidEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A table indexed by Integer32 containing OIDs, similar to sysORTable."
+    ::= { syntheticOidTableGroup 1 }
+
+syntheticOidEntry OBJECT-TYPE
+    SYNTAX      SyntheticOidEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry representing a capability or feature identified by an OID."
+    INDEX   { syntheticOidIndex }
+    ::= { syntheticOidTable 1 }
+
+SyntheticOidEntry ::= SEQUENCE {
+    syntheticOidIndex       Integer32,
+    syntheticOidValue       OBJECT IDENTIFIER,
+    syntheticOidDescription DisplayString,
+    syntheticOidUptime      TimeStamp
+}
+
+syntheticOidIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The index for the OID table."
+    ::= { syntheticOidEntry 1 }
+
+syntheticOidValue OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The OID identifying a specific capability or feature."
+    ::= { syntheticOidEntry 2 }
+
+syntheticOidDescription OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A description of the capability identified by syntheticOidValue."
+    ::= { syntheticOidEntry 3 }
+
+syntheticOidUptime OBJECT-TYPE
+    SYNTAX      TimeStamp
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The sysUpTime when this entry was created or last modified."
+    ::= { syntheticOidEntry 4 }
+
+-- Host Resources Style Table (Simplified)
+syntheticSoftwareTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 6 }
+
+syntheticSWRunTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticSWRunEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A simplified table representing running software, like hrSWRunTable."
+    ::= { syntheticSoftwareTableGroup 1 }
+
+syntheticSWRunEntry OBJECT-TYPE
+    SYNTAX      SyntheticSWRunEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry for one piece of running software."
+    INDEX   { syntheticSWRunIndex }
+    ::= { syntheticSWRunTable 1 }
+
+SyntheticSWRunEntry ::= SEQUENCE {
+    syntheticSWRunIndex       Integer32,
+    syntheticSWRunName        SyntheticName,
+    syntheticSWRunID          SyntheticProductID,
+    syntheticSWRunPath        SyntheticPath,
+    syntheticSWRunStatus      INTEGER -- Defined in OBJECT-TYPE below
+}
+
+syntheticSWRunIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible -- Corrected Access
+    STATUS      current
+    DESCRIPTION
+        "Unique index for the running software entry."
+    ::= { syntheticSWRunEntry 1 }
+
+syntheticSWRunName OBJECT-TYPE
+    SYNTAX      SyntheticName
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Name of the running software."
+    ::= { syntheticSWRunEntry 2 }
+
+syntheticSWRunID OBJECT-TYPE
+    SYNTAX      SyntheticProductID
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Product ID of the running software."
+    ::= { syntheticSWRunEntry 3 }
+
+syntheticSWRunPath OBJECT-TYPE
+    SYNTAX      SyntheticPath
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Path from where the software was loaded."
+    ::= { syntheticSWRunEntry 4 }
+
+syntheticSWRunStatus OBJECT-TYPE
+    SYNTAX      INTEGER { running(1), runnable(2), notRunnable(3), invalid(4) } -- Corrected Definition Location
+    MAX-ACCESS  read-write -- Simplified, allow setting to invalid
+    STATUS      current
+    DESCRIPTION
+        "Status of the running software. Setting to invalid(4) stops it."
+    ::= { syntheticSWRunEntry 5 }
+
+-- Connection Table (5-Tuple Index)
+syntheticConnectionTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 7 }
+
+syntheticConnectionTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticConnectionEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A table of synthetic connections, indexed like tcpConnectionTable."
+    ::= { syntheticConnectionTableGroup 1 }
+
+syntheticConnectionEntry OBJECT-TYPE
+    SYNTAX      SyntheticConnectionEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry representing a synthetic connection."
+    INDEX   { syntheticConnLocalAddressType,
+              syntheticConnLocalAddress,
+              syntheticConnLocalPort,
+              syntheticConnRemAddressType,
+              syntheticConnRemAddress,
+              syntheticConnRemPort }
+    ::= { syntheticConnectionTable 1 }
+
+SyntheticConnectionEntry ::= SEQUENCE {
+    syntheticConnLocalAddressType   SyntheticInetAddressType,
+    syntheticConnLocalAddress       SyntheticIndexInetAddress, -- Constrained for index
+    syntheticConnLocalPort          SyntheticInetPortNumber,
+    syntheticConnRemAddressType     SyntheticInetAddressType,
+    syntheticConnRemAddress         SyntheticIndexInetAddress, -- Constrained for index
+    syntheticConnRemPort            SyntheticInetPortNumber,
+    syntheticConnState              INTEGER,
+    syntheticConnProcessId          Unsigned32
+}
+
+syntheticConnLocalAddressType OBJECT-TYPE
+    SYNTAX     SyntheticInetAddressType
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Address type of syntheticConnLocalAddress."
+    ::= { syntheticConnectionEntry 1 }
+
+syntheticConnLocalAddress OBJECT-TYPE
+    SYNTAX     SyntheticIndexInetAddress -- Constrained for index
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Local address for this connection."
+    ::= { syntheticConnectionEntry 2 }
+
+syntheticConnLocalPort OBJECT-TYPE
+    SYNTAX     SyntheticInetPortNumber
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Local port for this connection."
+    ::= { syntheticConnectionEntry 3 }
+
+syntheticConnRemAddressType OBJECT-TYPE
+    SYNTAX     SyntheticInetAddressType
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Address type of syntheticConnRemAddress."
+    ::= { syntheticConnectionEntry 4 }
+
+syntheticConnRemAddress OBJECT-TYPE
+    SYNTAX     SyntheticIndexInetAddress -- Constrained for index
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Remote address for this connection."
+    ::= { syntheticConnectionEntry 5 }
+
+syntheticConnRemPort OBJECT-TYPE
+    SYNTAX     SyntheticInetPortNumber
+    MAX-ACCESS not-accessible
+    STATUS     current
+    DESCRIPTION "Remote port for this connection."
+    ::= { syntheticConnectionEntry 6 }
+
+syntheticConnState OBJECT-TYPE
+    SYNTAX     INTEGER { closed(1), listen(2), synSent(3), established(5) }
+    MAX-ACCESS read-only
+    STATUS     current
+    DESCRIPTION "State of this connection."
+    ::= { syntheticConnectionEntry 7 }
+
+syntheticConnProcessId OBJECT-TYPE
+    SYNTAX     Unsigned32
+    MAX-ACCESS read-only
+    STATUS     current
+    DESCRIPTION "Process ID associated with this connection."
+    ::= { syntheticConnectionEntry 8 }
+
+-- FDB Table (MacAddress Index)
+syntheticFdbTableGroup OBJECT IDENTIFIER ::= { syntheticMIB 8 }
+
+syntheticFdbTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SyntheticFdbEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A synthetic Forwarding Database table, indexed by MacAddress."
+    ::= { syntheticFdbTableGroup 1 }
+
+syntheticFdbEntry OBJECT-TYPE
+    SYNTAX      SyntheticFdbEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry representing a MAC address learned or configured."
+    INDEX   { syntheticFdbAddress }
+    ::= { syntheticFdbTable 1 }
+
+SyntheticFdbEntry ::= SEQUENCE {
+    syntheticFdbAddress     MacAddress,
+    syntheticFdbPort        Integer32,
+    syntheticFdbEntryStatus SyntheticFdbStatus
+}
+
+syntheticFdbAddress OBJECT-TYPE
+    SYNTAX      MacAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "MAC address for this FDB entry."
+    ::= { syntheticFdbEntry 1 }
+
+syntheticFdbPort OBJECT-TYPE
+    SYNTAX      Integer32 (0..65535)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Port associated with this MAC address (0 if unknown)."
+    ::= { syntheticFdbEntry 2 }
+
+syntheticFdbEntryStatus OBJECT-TYPE
+    SYNTAX      SyntheticFdbStatus
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Status of this FDB entry."
+    ::= { syntheticFdbEntry 3 }
+
+-- Notifications Group
+syntheticNotifications OBJECT IDENTIFIER ::= { syntheticMIB 14 } -- Renumbered
+syntheticNotificationPrefix OBJECT IDENTIFIER ::= { syntheticNotifications 0 }
+
+syntheticConfigChange NOTIFICATION-TYPE
+    OBJECTS { syntheticSystemDescription, syntheticConfigSerial }
+    STATUS  current
+    DESCRIPTION
+        "A notification indicating a configuration change occurred,
+         similar to coldStart or warmStart."
+    ::= { syntheticNotificationPrefix 1 }
+
+syntheticFailure NOTIFICATION-TYPE
+    OBJECTS { syntheticSimpleStatus } -- Changed from syntheticSimpleIndex
+    STATUS  current
+    DESCRIPTION
+        "A notification indicating a failure related to an entry
+         in the simple table, using an accessible object."
+    ::= { syntheticNotificationPrefix 2 }
+
+-- Conformance Information
+syntheticConformance OBJECT IDENTIFIER ::= { syntheticMIB 15 }
+syntheticGroups      OBJECT IDENTIFIER ::= { syntheticConformance 1 }
+syntheticCompliances OBJECT IDENTIFIER ::= { syntheticConformance 2 }
+
+-- Object Groups
+syntheticScalarGroup OBJECT-GROUP
+    OBJECTS { syntheticSystemDescription, syntheticSystemObjectID,
+              syntheticSystemUpTime, syntheticConfigSerial,
+              syntheticTrapEnable, syntheticMemorySize, syntheticLastChange,
+              syntheticErrorState, syntheticBootStatus, syntheticDeviceType,
+              syntheticInstallDate, syntheticTypeCodeValue, syntheticFixedId }
+    STATUS      current
+    DESCRIPTION "Group of scalar objects."
+    ::= { syntheticGroups 1 }
+
+syntheticSimpleTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticSimpleStatus, syntheticSimpleData,
+              syntheticSimpleRowStatus, syntheticPortBitmask }
+    STATUS      current
+    DESCRIPTION "Group for the simple table objects."
+    ::= { syntheticGroups 2 }
+
+syntheticAugmentTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticAugmentName, syntheticAugmentHCData,
+              syntheticAugmentPhysAddress }
+    STATUS      current
+    DESCRIPTION "Group for the augmenting table objects."
+    ::= { syntheticGroups 3 }
+
+syntheticComplexTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticComplexValue, syntheticComplexTimestamp }
+    STATUS      current
+    DESCRIPTION "Group for the complex table objects."
+    ::= { syntheticGroups 4 }
+
+syntheticOidTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticOidValue, syntheticOidDescription, syntheticOidUptime }
+    STATUS      current
+    DESCRIPTION "Group for the OID table objects."
+    ::= { syntheticGroups 5 }
+
+syntheticSoftwareTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticSWRunName, syntheticSWRunID, syntheticSWRunPath,
+              syntheticSWRunStatus }
+    STATUS      current
+    DESCRIPTION "Group for the software table objects."
+    ::= { syntheticGroups 6 }
+
+syntheticConnectionTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticConnState, syntheticConnProcessId }
+    STATUS      current
+    DESCRIPTION "Group for the connection table objects."
+    ::= { syntheticGroups 7 }
+
+syntheticFdbTableObjectGroup OBJECT-GROUP
+    OBJECTS { syntheticFdbPort, syntheticFdbEntryStatus }
+    STATUS      current
+    DESCRIPTION "Group for the FDB table objects."
+    ::= { syntheticGroups 8 }
+
+-- Notification Group
+syntheticNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { syntheticConfigChange, syntheticFailure }
+    STATUS        current
+    DESCRIPTION   "Group of notifications defined in this MIB."
+    ::= { syntheticGroups 9 } -- Renumbered
+
+-- Compliance Statement
+syntheticBasicCompliance MODULE-COMPLIANCE
+    STATUS  current
+    DESCRIPTION
+            "A basic compliance statement for agents implementing the
+             SYNTHETIC-MIB."
+    MODULE  -- this module
+        MANDATORY-GROUPS { syntheticScalarGroup, syntheticSimpleTableObjectGroup,
+                           syntheticAugmentTableObjectGroup, syntheticComplexTableObjectGroup,
+                           syntheticOidTableObjectGroup, syntheticSoftwareTableObjectGroup,
+                           syntheticConnectionTableObjectGroup, syntheticFdbTableObjectGroup,
+                           syntheticNotificationGroup }
+
+        -- Specify minimum access for writable objects if needed, e.g.:
+        OBJECT      syntheticConfigSerial
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticTrapEnable
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticSimpleStatus
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticSimpleRowStatus
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticPortBitmask
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticAugmentName
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        OBJECT      syntheticSWRunStatus
+        MIN-ACCESS  read-only
+        DESCRIPTION "Write access is optional."
+
+        -- Removed incorrect SYNTAX refinement from previous attempt
+
+    ::= { syntheticCompliances 1 }
+
+END

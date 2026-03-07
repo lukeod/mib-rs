@@ -1,0 +1,143 @@
+-- Type chain resolution test cases.
+-- Tests multi-level TC chains, base type inheritance, and effective
+-- value propagation through type hierarchies.
+
+PROBLEM-TYPECHAINS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Counter32,
+    Gauge32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC;
+
+problemTypeChainsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests type chain resolution"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 23 }
+
+problemTypeChainObjects OBJECT IDENTIFIER ::= { problemTypeChainsMIB 1 }
+
+-- Two-level TC chain: MyString -> DisplayString -> OCTET STRING
+MyString ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS      current
+    DESCRIPTION "A string type based on DisplayString"
+    SYNTAX      DisplayString (SIZE (0..64))
+
+-- Three-level TC chain: MyLabel -> MyString -> DisplayString -> OCTET STRING
+MyLabel ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "A label type based on MyString"
+    SYNTAX      MyString (SIZE (0..32))
+
+-- Object using the two-level chain
+problemTwoLevelChain OBJECT-TYPE
+    SYNTAX      MyString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with two-level TC chain"
+    ::= { problemTypeChainObjects 1 }
+
+-- Object using the three-level chain
+problemThreeLevelChain OBJECT-TYPE
+    SYNTAX      MyLabel
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with three-level TC chain"
+    ::= { problemTypeChainObjects 2 }
+
+-- TC based on Integer32 with enums
+MyStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Status enum based on Integer32"
+    SYNTAX      INTEGER { active(1), inactive(2), unknown(3) }
+
+-- TC extending MyStatus with additional constraint
+MyFilteredStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Filtered status extending MyStatus"
+    SYNTAX      MyStatus
+
+-- Object using the integer enum chain
+problemEnumChain OBJECT-TYPE
+    SYNTAX      MyFilteredStatus
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with enum TC chain"
+    ::= { problemTypeChainObjects 3 }
+
+-- TC based on application type (Counter32) - should preserve base type
+MyCounter ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Counter type"
+    SYNTAX      Counter32
+
+-- Object using application type TC
+problemAppTypeChain OBJECT-TYPE
+    SYNTAX      MyCounter
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with application type TC chain"
+    ::= { problemTypeChainObjects 4 }
+
+-- TC chain with display hint at intermediate level
+MyFormattedGauge ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d-2"
+    STATUS      current
+    DESCRIPTION "Gauge with display hint"
+    SYNTAX      Gauge32
+
+MySpecialGauge ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Special gauge extending formatted gauge, no own hint"
+    SYNTAX      MyFormattedGauge
+
+-- Object should inherit display hint from MyFormattedGauge
+problemInheritedHint OBJECT-TYPE
+    SYNTAX      MySpecialGauge
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object that should inherit display hint from chain"
+    ::= { problemTypeChainObjects 5 }
+
+-- TC with size constraint at intermediate level
+MySizedString ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Sized string"
+    SYNTAX      DisplayString (SIZE (1..100))
+
+MySizedLabel ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Label extending sized string"
+    SYNTAX      MySizedString
+
+-- Object should inherit size from MySizedString
+problemInheritedSize OBJECT-TYPE
+    SYNTAX      MySizedLabel
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object that should inherit size from chain"
+    ::= { problemTypeChainObjects 6 }
+
+-- Direct primitive type usage (no chain)
+problemDirectInteger OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with direct primitive type"
+    ::= { problemTypeChainObjects 7 }
+
+-- Inline enum (no TC chain)
+problemInlineEnum OBJECT-TYPE
+    SYNTAX      INTEGER { up(1), down(2) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with inline enum"
+    ::= { problemTypeChainObjects 8 }
+
+END

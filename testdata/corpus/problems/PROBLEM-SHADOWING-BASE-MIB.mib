@@ -1,0 +1,47 @@
+-- Base module that defines a type which will be shadowed.
+-- Used by PROBLEM-SHADOWING-MIB to test import shadowing behavior.
+
+PROBLEM-SHADOWING-BASE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC;
+
+problemShadowingBaseMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Base module for import shadowing tests"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 36 }
+
+problemShadowBaseObjects OBJECT IDENTIFIER ::= { problemShadowingBaseMIB 1 }
+
+-- This type will be imported by the shadowing module, but the
+-- shadowing module also defines its own version locally.
+ShadowableType ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS      current
+    DESCRIPTION "A type defined in the base module, SIZE 0..64"
+    SYNTAX      OCTET STRING (SIZE (0..64))
+
+-- An object using the base version of ShadowableType
+problemBaseTypedObject OBJECT-TYPE
+    SYNTAX      ShadowableType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using the base ShadowableType"
+    ::= { problemShadowBaseObjects 1 }
+
+-- A scalar object for OID shadowing tests
+problemShadowBaseScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Scalar in base module"
+    ::= { problemShadowBaseObjects 2 }
+
+END

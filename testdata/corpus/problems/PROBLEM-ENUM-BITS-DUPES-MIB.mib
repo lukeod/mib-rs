@@ -1,0 +1,75 @@
+-- Enum and BITS duplicate detection edge cases
+-- Tests: internal/module/lower.go lowerTypeSyntax
+
+PROBLEM-ENUM-BITS-DUPES-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+problemEnumBitsDupesMIB MODULE-IDENTITY
+    LAST-UPDATED "202603030000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests enum and BITS duplicate detection"
+    REVISION     "202603030000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 35 }
+
+problemEnumBitsDupesObjects OBJECT IDENTIFIER ::= { problemEnumBitsDupesMIB 1 }
+
+-- Duplicate enum name (triggers enum-name-redefinition)
+DuplicateEnumName ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Enum with duplicate name"
+    SYNTAX      INTEGER { up(1), down(2), up(3) }
+
+-- Duplicate enum value (triggers enum-value-redefinition)
+DuplicateEnumValue ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Enum with duplicate value"
+    SYNTAX      INTEGER { active(1), standby(2), backup(1) }
+
+-- Duplicate BITS name (triggers bits-name-redefinition)
+DuplicateBitsName ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "BITS with duplicate name"
+    SYNTAX      BITS { read(0), write(1), read(2) }
+
+-- Duplicate BITS position (triggers bits-value-redefinition)
+DuplicateBitsPosition ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "BITS with duplicate position"
+    SYNTAX      BITS { flag1(0), flag2(1), flag3(0) }
+
+-- Valid enum (no diagnostics)
+ValidEnum ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Valid enum"
+    SYNTAX      INTEGER { enabled(1), disabled(2) }
+
+-- Valid BITS (no diagnostics)
+ValidBits ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Valid BITS"
+    SYNTAX      BITS { read(0), write(1), execute(2) }
+
+-- Inline object with duplicate enum name (triggers enum-name-redefinition)
+problemDuplicateEnumNameObj OBJECT-TYPE
+    SYNTAX      INTEGER { on(1), off(2), on(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with duplicate enum name"
+    ::= { problemEnumBitsDupesObjects 1 }
+
+-- Inline object with duplicate enum value (triggers enum-value-redefinition)
+problemDuplicateEnumValueObj OBJECT-TYPE
+    SYNTAX      INTEGER { primary(1), secondary(2), tertiary(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with duplicate enum value"
+    ::= { problemEnumBitsDupesObjects 2 }
+
+END

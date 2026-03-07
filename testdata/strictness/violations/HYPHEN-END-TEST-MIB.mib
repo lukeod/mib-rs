@@ -1,0 +1,33 @@
+-- Tests identifier-hyphen-end diagnostic
+-- Identifiers ending with hyphen violate RFC 2578 Section 3.1
+-- Should emit identifier-hyphen-end diagnostic
+
+HYPHEN-END-TEST-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+hyphenEndTestMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "A MIB with hyphen-end violations for strictness testing."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { enterprises 99999 11 }
+
+hyphenEndTestObjects OBJECT IDENTIFIER ::= { hyphenEndTestMIB 1 }
+
+-- Violation: identifier ending with hyphen
+testObject- OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "An object with trailing hyphen in name."
+    ::= { hyphenEndTestObjects 1 }
+
+END

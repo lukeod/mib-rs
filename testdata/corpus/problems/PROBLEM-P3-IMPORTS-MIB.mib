@@ -1,0 +1,57 @@
+-- Exercises P3 import/module quality diagnostics:
+-- - import-unused: TruthValue imported but never used
+-- - macro-not-imported: uses OBJECT-TYPE, NOTIFICATION-TYPE without importing them
+-- - basetype-not-imported: uses Integer32 without importing from SNMPv2-SMI
+-- - module-identity-not-first: MODULE-IDENTITY after an OBJECT-TYPE
+
+PROBLEM-P3-IMPORTS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, enterprises
+        FROM SNMPv2-SMI
+    TruthValue, DisplayString
+        FROM SNMPv2-TC
+    OBJECT-GROUP, MODULE-COMPLIANCE
+        FROM SNMPv2-CONF;
+
+-- Deliberately place an object type BEFORE module identity
+p3TestValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Test object placed before MODULE-IDENTITY"
+    ::= { p3TestMIB 1 }
+
+p3TestMIB MODULE-IDENTITY
+    LAST-UPDATED "200501010000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "Test contact info"
+    DESCRIPTION  "Test MIB for P3 import diagnostics"
+    REVISION     "200501010000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99997 }
+
+-- Uses DisplayString (imported, so no issue)
+p3TestName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Uses an imported type"
+    ::= { p3TestMIB 2 }
+
+-- TruthValue is imported but never referenced anywhere
+
+p3TestGroup OBJECT-GROUP
+    OBJECTS { p3TestValue, p3TestName }
+    STATUS  current
+    DESCRIPTION "Test group"
+    ::= { p3TestMIB 10 }
+
+p3TestCompliance MODULE-COMPLIANCE
+    STATUS  current
+    DESCRIPTION "Test compliance"
+    MODULE
+        MANDATORY-GROUPS { p3TestGroup }
+    ::= { p3TestMIB 11 }
+
+END

@@ -1,0 +1,36 @@
+-- Source module for import forwarding chain test.
+-- Defines ForwardedType and forwardedSourceRoot, which are re-exported
+-- by PROBLEM-FORWARDING-RELAY-MIB.
+
+PROBLEM-FORWARDING-SOURCE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC;
+
+problemForwardingSourceMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Source module for import forwarding tests"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 20 }
+
+forwardedSourceRoot OBJECT IDENTIFIER ::= { problemForwardingSourceMIB 1 }
+
+ForwardedType ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "A type defined in the source module, re-exported by relay"
+    SYNTAX      DisplayString (SIZE (0..128))
+
+forwardedSourceObject OBJECT-TYPE
+    SYNTAX      ForwardedType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using ForwardedType in source module"
+    ::= { forwardedSourceRoot 1 }
+
+END

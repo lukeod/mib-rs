@@ -1,0 +1,52 @@
+-- MODULE-IDENTITY revision ordering and placement issues
+-- Replicates: CISCOSB-MIB, IEEE802dot11-MIB, various vendor MIBs
+-- smilint: "revision not in reverse chronological order"
+-- smilint: "MODULE-IDENTITY clause must be the first declaration"
+
+PROBLEM-REVISIONS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+-- Object defined BEFORE MODULE-IDENTITY (7 real MIBs do this)
+-- Real: CISCOSB-MIB, LINKSYS-MIB, IEEE802dot11-MIB
+-- Real: ECS4510-MIB, ECS4610-24F-MIB, ES4552BH2-MIB, FS-MIB
+-- smilint: "MODULE-IDENTITY clause must be the first declaration in a module"
+
+problemRevPreIdentity OBJECT IDENTIFIER ::= { enterprises 99998 11 }
+
+problemRevisionsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests revision ordering edge cases"
+
+    -- Revisions NOT in reverse chronological order
+    -- Real: 15 MIBs, 99 occurrences
+    -- smilint: "revision not in reverse chronological order"
+    REVISION     "202401010000Z"
+    DESCRIPTION  "Earlier revision listed first (wrong order)"
+
+    REVISION     "202501010000Z"
+    DESCRIPTION  "Later revision listed second (should be first)"
+
+    REVISION     "202301010000Z"
+    DESCRIPTION  "Earliest revision listed last (correct position)"
+
+    -- Also: LAST-UPDATED says 202601280000Z but no matching revision
+    -- Real: 24 MIBs
+    -- smilint: "revision for last update is missing"
+
+    ::= { problemRevPreIdentity 1 }
+
+problemRevObjects OBJECT IDENTIFIER ::= { problemRevisionsMIB 1 }
+
+problemRevTestObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Test object"
+    ::= { problemRevObjects 1 }
+
+END

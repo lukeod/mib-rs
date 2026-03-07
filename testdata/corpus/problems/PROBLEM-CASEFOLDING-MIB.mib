@@ -1,0 +1,85 @@
+-- Case-folding edge cases: lowercase type names, non-standard type casing
+-- Replicates: CT-SERIES-1000-MIB (Cybertec) - lowercase SEQUENCE type names,
+--   SYNTAX Integer instead of INTEGER/Integer32
+-- Tests: parser.go parseTypeSyntax (lowercase type ref), parseDefinition
+--   (lowercase type assignment), lexer keyword.go (Integer keyword)
+
+PROBLEM-CASEFOLDING-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32,
+    enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemCasefoldMIB MODULE-IDENTITY
+    LAST-UPDATED "202603030000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests case-folding edge cases in type references"
+    REVISION     "202603030000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 32 }
+
+problemCasefoldObjects OBJECT IDENTIFIER ::= { problemCasefoldMIB 1 }
+
+-- Non-standard "Integer" type (not INTEGER or Integer32)
+-- Real: CT-SERIES-1000-MIB wirelessSimActive uses "Integer"
+-- net-snmp: accepts silently
+-- smilint: rejects
+
+problemCasefoldInteger OBJECT-TYPE
+    SYNTAX      Integer
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using bare Integer type (non-standard casing)"
+    ::= { problemCasefoldObjects 1 }
+
+-- Table with lowercase SEQUENCE type name
+-- Real: CT-SERIES-1000-MIB wirelessSimTable/wirelessSimTableEntry
+-- The SEQUENCE type, entry SYNTAX, and SEQUENCE OF all use lowercase
+
+problemCasefoldTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF problemCasefoldEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table using lowercase entry type name"
+    ::= { problemCasefoldObjects 2 }
+
+problemCasefoldEntry OBJECT-TYPE
+    SYNTAX      problemCasefoldEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with lowercase type reference in SYNTAX"
+    INDEX       { problemCasefoldIndex }
+    ::= { problemCasefoldTable 1 }
+
+problemCasefoldEntry ::= SEQUENCE {
+    problemCasefoldIndex   Integer32,
+    problemCasefoldName    DisplayString,
+    problemCasefoldValue   Integer32
+}
+
+problemCasefoldIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..10)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table index"
+    ::= { problemCasefoldEntry 1 }
+
+problemCasefoldName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Name column"
+    ::= { problemCasefoldEntry 2 }
+
+problemCasefoldValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Value column"
+    ::= { problemCasefoldEntry 3 }
+
+END

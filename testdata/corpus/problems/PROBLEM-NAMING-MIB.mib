@@ -1,0 +1,72 @@
+-- Naming convention violations
+-- Replicates: HUAWEI-MIB (92+ uppercase objects), various Alcatel MIBs
+-- Tests: parser.go:460 lenient identifier handling
+-- smilint: "should start with lower case letter"
+
+PROBLEM-NAMING-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, OBJECT-IDENTITY,
+    Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+problemNamingMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests naming convention violations found in vendor MIBs"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 7 }
+
+problemNamingObjects OBJECT IDENTIFIER ::= { problemNamingMIB 1 }
+problemNamingProducts OBJECT IDENTIFIER ::= { problemNamingMIB 2 }
+
+-- Uppercase initial letter on OBJECT-IDENTITY
+-- Real: HUAWEI-MIB.mib NetEngine8000SysOid (61 occurrences)
+-- smilint: "NetEngine8000SysOid should start with lower case letter"
+-- gomib: parser accepts with diagnostic in normal mode
+
+NetEngine8000SysOid OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Replicates Huawei's uppercase object name"
+    ::= { problemNamingProducts 1 }
+
+-- More uppercase identifiers with device model patterns
+-- Real: HUAWEI-MIB.mib S6730-H28Y4C, S5735-L8T4X-A1, etc.
+S6730-H28Y4C OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Device model with uppercase start and complex pattern"
+    ::= { problemNamingProducts 2 }
+
+S5735-L8T4X-A1 OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Another device model identifier"
+    ::= { problemNamingProducts 3 }
+
+NetEngine-A800 OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Device with mixed case and hyphen"
+    ::= { problemNamingProducts 4 }
+
+-- Normal lowercase object for contrast
+problemNormalObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Normal lowercase-starting identifier for contrast"
+    ::= { problemNamingObjects 1 }
+
+-- Identifier with hyphen at the end (separate violation)
+-- gomib: existing test in strictness/violations/HYPHEN-END-TEST-MIB.mib
+-- Note: not duplicating that test, but including for completeness
+-- within a larger MIB context
+
+problemNameWithDigits123 OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Name with trailing digits (valid but unusual)"
+    ::= { problemNamingObjects 2 }
+
+END

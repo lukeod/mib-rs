@@ -1,0 +1,178 @@
+-- DEFVAL syntax mismatches and edge cases
+-- Replicates: TIMETRA-BGP-MIB, TIMETRA-FILTER-MIB, various Alcatel MIBs
+-- Tests: mib/resolver_semantics.go
+
+PROBLEM-DEFVAL-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Unsigned32,
+    enterprises, zeroDotZero
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+problemDefvalMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests DEFVAL edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 6 }
+
+problemDefvalObjects OBJECT IDENTIFIER ::= { problemDefvalMIB 1 }
+
+ProblemSeverity ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Severity enum for DEFVAL testing"
+    SYNTAX      INTEGER {
+                    emergency(1),
+                    alert(2),
+                    critical(3),
+                    error(4),
+                    warning(5),
+                    notice(6),
+                    info(7),
+                    debug(8)
+                }
+
+-- DEFVAL with OID reference - gomib normalizes to numeric
+-- Real: many MIBs use zeroDotZero in DEFVAL
+-- gomib: semantics.go:377-451, outputs "0.0"
+-- net-snmp: outputs "zeroDotZero"
+problemDefvalOidRef OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with symbolic OID reference"
+    DEFVAL      { zeroDotZero }
+    ::= { problemDefvalObjects 1 }
+
+-- DEFVAL syntax not matching object syntax
+-- Real: TIMETRA-BGP-MIB (78 occurrences across 10 MIBs)
+-- smilint: "default value syntax does not match object syntax"
+-- This uses an integer value for a type that expects an enum label
+problemDefvalTypeMismatch OBJECT-TYPE
+    SYNTAX      ProblemSeverity
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL uses raw integer instead of enum label"
+    DEFVAL      { 5 }
+    ::= { problemDefvalObjects 2 }
+
+-- DEFVAL not matching enumeration type - undefined enum value
+-- Real: TIMETRA-FILTER-MIB (29 occurrences across 11 MIBs)
+-- smilint: "default value does not match underlying enumeration type"
+problemDefvalBadEnum OBJECT-TYPE
+    SYNTAX      INTEGER { up(1), down(2), testing(3) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with undefined enum label"
+    DEFVAL      { unknown }
+    ::= { problemDefvalObjects 3 }
+
+-- Large hex string DEFVAL (16 bytes)
+-- gomib preserves full hex; net-snmp truncates zeros to "0"
+-- Real: various MIBs with DEFVAL { '00000000000000000000000000000000'H }
+problemDefvalLargeHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (16))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with 16-byte all-zeros hex string"
+    DEFVAL      { '00000000000000000000000000000000'H }
+    ::= { problemDefvalObjects 4 }
+
+-- Binary string DEFVAL
+-- gomib: semantics.go:455-505 binaryToBytes()
+problemDefvalBinary OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (1))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with binary string notation"
+    DEFVAL      { '10101010'B }
+    ::= { problemDefvalObjects 5 }
+
+-- Binary string not multiple of 8 bits
+-- gomib pads to multiple of 8 with leading zeros
+problemDefvalBinaryOdd OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (1))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with binary string not multiple of 8 bits"
+    DEFVAL      { '101'B }
+    ::= { problemDefvalObjects 6 }
+
+-- Empty BITS DEFVAL
+-- DEFVAL { { } } - empty set of named bits
+problemDefvalEmptyBits OBJECT-TYPE
+    SYNTAX      BITS { flagA(0), flagB(1), flagC(2) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with empty BITS value"
+    DEFVAL      { { } }
+    ::= { problemDefvalObjects 7 }
+
+-- DEFVAL with multiple BITS set
+problemDefvalMultiBits OBJECT-TYPE
+    SYNTAX      BITS { read(0), write(1), execute(2), delete(3) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with multiple named bits set"
+    DEFVAL      { { read, write } }
+    ::= { problemDefvalObjects 8 }
+
+-- Negative integer DEFVAL
+problemDefvalNegative OBJECT-TYPE
+    SYNTAX      Integer32 (-100..100)
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with negative integer"
+    DEFVAL      { -1 }
+    ::= { problemDefvalObjects 9 }
+
+-- DEFVAL with quoted string containing special characters
+problemDefvalSpecialString OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..128))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with special characters in string"
+    DEFVAL      { "default-value" }
+    ::= { problemDefvalObjects 10 }
+
+-- DEFVAL with negative value for unsigned type (triggers defval-basetype)
+problemDefvalNegativeUnsigned OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with negative value for unsigned type"
+    DEFVAL      { -1 }
+    ::= { problemDefvalObjects 11 }
+
+-- DEFVAL outside RANGE constraint (triggers defval-range)
+problemDefvalOutOfRange OBJECT-TYPE
+    SYNTAX      Integer32 (0..100)
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with value outside declared range"
+    DEFVAL      { 200 }
+    ::= { problemDefvalObjects 12 }
+
+-- DEFVAL with invalid BITS label (triggers defval-enum)
+problemDefvalBadBitsLabel OBJECT-TYPE
+    SYNTAX      BITS { a(0), b(1) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with BITS label not in type"
+    DEFVAL      { { a, c } }
+    ::= { problemDefvalObjects 13 }
+
+-- DEFVAL with integer not matching any enum value (triggers defval-enum)
+problemDefvalIntForEnum OBJECT-TYPE
+    SYNTAX      INTEGER { up(1), down(2) }
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with integer not matching any enum value"
+    DEFVAL      { 99 }
+    ::= { problemDefvalObjects 14 }
+
+END

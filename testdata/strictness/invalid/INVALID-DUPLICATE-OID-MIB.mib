@@ -1,0 +1,36 @@
+-- A MIB where multiple objects claim the same OID.
+-- This is a semantic error: OID 1 under the objects branch is assigned twice.
+
+INVALID-DUPLICATE-OID-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+invalidDuplicateOidMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "MIB with duplicate OIDs"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 52 }
+
+invalidDupObjects OBJECT IDENTIFIER ::= { invalidDuplicateOidMIB 1 }
+
+-- Both objects claim OID { invalidDupObjects 1 }
+invalidDupFirst OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "First object at OID .1"
+    ::= { invalidDupObjects 1 }
+
+invalidDupSecond OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Second object at OID .1 (duplicate)"
+    ::= { invalidDupObjects 1 }
+
+END

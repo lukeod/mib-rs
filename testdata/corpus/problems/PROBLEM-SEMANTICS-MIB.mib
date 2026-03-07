@@ -1,0 +1,150 @@
+-- Semantic phase test cases.
+-- Tests kind inference, table/row/column relationships, AUGMENTS,
+-- and notification OBJECTS resolution.
+
+PROBLEM-SEMANTICS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemSemanticsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests semantic phase resolution"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 24 }
+
+problemSemObjects OBJECT IDENTIFIER ::= { problemSemanticsMIB 1 }
+problemSemNotifs  OBJECT IDENTIFIER ::= { problemSemanticsMIB 2 }
+
+-- === Table structure ===
+
+problemSemTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemSemEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Test table"
+    ::= { problemSemObjects 1 }
+
+problemSemEntry OBJECT-TYPE
+    SYNTAX      ProblemSemEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Test table entry"
+    INDEX { problemSemIndex }
+    ::= { problemSemTable 1 }
+
+ProblemSemEntry ::= SEQUENCE {
+    problemSemIndex     Integer32,
+    problemSemName      DisplayString,
+    problemSemValue     Integer32
+}
+
+problemSemIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table index"
+    ::= { problemSemEntry 1 }
+
+problemSemName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Name column"
+    ::= { problemSemEntry 2 }
+
+problemSemValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "Value column"
+    ::= { problemSemEntry 3 }
+
+-- === AUGMENTS ===
+
+problemAugTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemAugEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Augments table extending problemSemEntry"
+    ::= { problemSemObjects 2 }
+
+problemAugEntry OBJECT-TYPE
+    SYNTAX      ProblemAugEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Augments entry"
+    AUGMENTS { problemSemEntry }
+    ::= { problemAugTable 1 }
+
+ProblemAugEntry ::= SEQUENCE {
+    problemAugExtra     Integer32
+}
+
+problemAugExtra OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Extra column from augments"
+    ::= { problemAugEntry 1 }
+
+-- === Scalars ===
+
+problemScalar1 OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A scalar object"
+    ::= { problemSemObjects 3 }
+
+problemScalar2 OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Another scalar object"
+    ::= { problemSemObjects 4 }
+
+-- === Notifications with various OBJECTS patterns ===
+
+-- Notification with all OBJECTS present and imported
+problemSemNotifNormal NOTIFICATION-TYPE
+    OBJECTS { problemSemName, problemSemValue }
+    STATUS  current
+    DESCRIPTION "Notification with resolvable objects"
+    ::= { problemSemNotifs 1 }
+
+-- Notification with empty OBJECTS clause
+problemSemNotifEmpty NOTIFICATION-TYPE
+    STATUS  current
+    DESCRIPTION "Notification with no OBJECTS"
+    ::= { problemSemNotifs 2 }
+
+-- Notification referencing a not-accessible index
+problemSemNotifWithIndex NOTIFICATION-TYPE
+    OBJECTS { problemSemIndex, problemSemName }
+    STATUS  current
+    DESCRIPTION "Notification referencing a not-accessible index object"
+    ::= { problemSemNotifs 3 }
+
+-- Notification referencing an augment column
+problemSemNotifAugObj NOTIFICATION-TYPE
+    OBJECTS { problemAugExtra, problemSemValue }
+    STATUS  current
+    DESCRIPTION "Notification referencing objects from augmented table"
+    ::= { problemSemNotifs 4 }
+
+-- Notification referencing a scalar
+problemSemNotifScalar NOTIFICATION-TYPE
+    OBJECTS { problemScalar1 }
+    STATUS  current
+    DESCRIPTION "Notification referencing a scalar object"
+    ::= { problemSemNotifs 5 }
+
+END

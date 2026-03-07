@@ -1,0 +1,85 @@
+-- Diagnostic emission test cases.
+-- Tests that unresolved types, OIDs, imports, and indexes emit the
+-- correct diagnostic codes and are tracked in Unresolved().
+
+PROBLEM-DIAGNOSTICS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemDiagnosticsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests diagnostic emission for unresolved references"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 25 }
+
+problemDiagObjects OBJECT IDENTIFIER ::= { problemDiagnosticsMIB 1 }
+problemDiagNotifs  OBJECT IDENTIFIER ::= { problemDiagnosticsMIB 2 }
+
+-- Object referencing a type that doesn't exist
+-- Should emit "type-unknown" diagnostic
+problemUnknownType OBJECT-TYPE
+    SYNTAX      NonExistentType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with unresolvable type"
+    ::= { problemDiagObjects 1 }
+
+-- Object using a valid type for contrast
+problemValidType OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with valid type"
+    ::= { problemDiagObjects 2 }
+
+-- Table with unresolvable index object
+problemDiagTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemDiagEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table for testing index resolution diagnostics"
+    ::= { problemDiagObjects 3 }
+
+problemDiagEntry OBJECT-TYPE
+    SYNTAX      ProblemDiagEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with unresolvable index"
+    INDEX { problemDiagIndex, nonExistentIndex }
+    ::= { problemDiagTable 1 }
+
+ProblemDiagEntry ::= SEQUENCE {
+    problemDiagIndex    Integer32,
+    problemDiagCol      DisplayString
+}
+
+problemDiagIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..100)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Valid index column"
+    ::= { problemDiagEntry 1 }
+
+problemDiagCol OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Regular column"
+    ::= { problemDiagEntry 2 }
+
+-- Notification with unresolvable OBJECTS
+problemDiagNotifBadObj NOTIFICATION-TYPE
+    OBJECTS { problemDiagCol, totallyBogusObject }
+    STATUS  current
+    DESCRIPTION "Notification referencing an undefined object"
+    ::= { problemDiagNotifs 1 }
+
+END

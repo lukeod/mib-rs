@@ -1,0 +1,124 @@
+-- Hex and binary string parsing edge cases
+-- Replicates: ECS4510-MIB, RAPID-CITY, ALCATEL-IND1-TIMETRA-PORT-MIB
+-- Tests: mib/resolver_semantics.go hexToBytes(), binaryToBytes()
+
+PROBLEM-HEXSTRINGS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+problemHexstringsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests hex and binary string edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 10 }
+
+problemHexObjects OBJECT IDENTIFIER ::= { problemHexstringsMIB 1 }
+
+-- Odd-length hex string (length 7)
+-- Real: ECS4510-MIB, ES4552BH2-MIB, FS-MIB
+-- smilint: "length of hexadecimal string not a multiple of 2"
+-- gomib: hexToBytes() pads with leading zero
+problemOddHex7 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..8))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with odd-length hex string (7 chars)"
+    DEFVAL      { 'ABCDEF0'H }
+    ::= { problemHexObjects 1 }
+
+-- Odd-length hex string (length 3) - "FFF"
+-- Real: RAPID-CITY.mib
+problemOddHex3 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..4))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with 3-char hex string"
+    DEFVAL      { 'FFF'H }
+    ::= { problemHexObjects 2 }
+
+-- Odd-length hex string (length 1) - "0"
+-- Real: ECS4510-MIB, ES4552BH2-MIB, FS-MIB
+problemOddHex1 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..4))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with single-char hex string"
+    DEFVAL      { '0'H }
+    ::= { problemHexObjects 3 }
+
+-- Long hex string (128 chars / 64 bytes)
+-- Real: ALCATEL-IND1-TIMETRA-PORT-MIB (length 600)
+-- Real: ALCATEL-IND1-TIMETRA-SERV-MIB (length 600)
+problemLongHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..128))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with long hex string"
+    DEFVAL      { '000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000FF'H }
+    ::= { problemHexObjects 4 }
+
+-- Empty hex string
+-- Normal edge case, but worth testing
+problemEmptyHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (0..32))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with empty hex string"
+    DEFVAL      { ''H }
+    ::= { problemHexObjects 5 }
+
+-- Binary string, 8 bits exactly
+-- gomib: binaryToBytes() converts to single byte
+problemBinary8 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (1))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with exact 8-bit binary string"
+    DEFVAL      { '11110000'B }
+    ::= { problemHexObjects 6 }
+
+-- Binary string, not multiple of 8 bits (5 bits)
+-- gomib: binaryToBytes() pads with 3 leading zeros -> '00010101'
+problemBinary5 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (1))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with 5-bit binary string (needs padding)"
+    DEFVAL      { '10101'B }
+    ::= { problemHexObjects 7 }
+
+-- Binary string, 12 bits (needs padding to 16)
+-- gomib: pads to '0000101010101010' -> 2 bytes
+problemBinary12 OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (2))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with 12-bit binary string (needs padding to 16)"
+    DEFVAL      { '101010101010'B }
+    ::= { problemHexObjects 8 }
+
+-- Hex string with lowercase letters
+-- Should be handled identically to uppercase
+problemLowerHex OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (4))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with lowercase hex characters"
+    DEFVAL      { 'deadbeef'H }
+    ::= { problemHexObjects 9 }
+
+-- All-zeros hex of various lengths (gomib preserves, net-snmp may truncate)
+problemAllZeros OBJECT-TYPE
+    SYNTAX      OCTET STRING (SIZE (8))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "DEFVAL with all-zeros hex"
+    DEFVAL      { '0000000000000000'H }
+    ::= { problemHexObjects 10 }
+
+END

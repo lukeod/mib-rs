@@ -1,0 +1,43 @@
+-- Base module that defines OID branches which are also defined in
+-- PROBLEM-SHARED-OIDS-MIB. Both modules are SMIv2 with identical
+-- LAST-UPDATED dates, exercising the same-language tiebreaker path
+-- in shouldPreferModule.
+--
+-- Replicates: HOST-RESOURCES-MIB defining hrStorageTypes, hrDeviceTypes,
+-- hrFSTypes as OBJECT IDENTIFIER value assignments that are also defined
+-- in HOST-RESOURCES-TYPES.
+
+PROBLEM-SHARED-OIDS-BASE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+problemSharedOidsBaseMIB MODULE-IDENTITY
+    LAST-UPDATED "200501010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Base module for shared OID tests"
+    REVISION     "200501010000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 30 }
+
+problemSharedBase OBJECT IDENTIFIER ::= { problemSharedOidsBaseMIB 1 }
+problemSharedSub1 OBJECT IDENTIFIER ::= { problemSharedBase 1 }
+problemSharedSub2 OBJECT IDENTIFIER ::= { problemSharedBase 2 }
+
+-- These three OIDs are also defined in PROBLEM-SHARED-OIDS-MIB.
+-- Both modules should list them in their Nodes().
+sharedBranch1 OBJECT IDENTIFIER ::= { problemSharedSub1 1 }
+sharedBranch2 OBJECT IDENTIFIER ::= { problemSharedSub1 2 }
+sharedBranch3 OBJECT IDENTIFIER ::= { problemSharedSub2 1 }
+
+-- An object under the base to give it some content
+problemSharedBaseScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Scalar in base module"
+    ::= { problemSharedBase 3 }
+
+END

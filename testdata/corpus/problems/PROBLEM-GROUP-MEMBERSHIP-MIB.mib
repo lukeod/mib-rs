@@ -1,0 +1,117 @@
+-- Group membership completeness checks.
+-- Tests: group-membership diagnostic for accessible objects and
+-- notifications not covered by any conformance group.
+
+PROBLEM-GROUP-MEMBERSHIP-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemGroupMembershipMIB MODULE-IDENTITY
+    LAST-UPDATED "202603030000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests group membership completeness"
+    REVISION     "202603030000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 37 }
+
+problemGMObjects OBJECT IDENTIFIER ::= { problemGroupMembershipMIB 1 }
+problemGMNotifs  OBJECT IDENTIFIER ::= { problemGroupMembershipMIB 2 }
+problemGMNotifPfx OBJECT IDENTIFIER ::= { problemGMNotifs 0 }
+problemGMConform OBJECT IDENTIFIER ::= { problemGroupMembershipMIB 3 }
+problemGMGroups  OBJECT IDENTIFIER ::= { problemGMConform 1 }
+
+-- Scalar covered by group
+problemGMCoveredScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Scalar in a group"
+    ::= { problemGMObjects 1 }
+
+-- Scalar NOT covered by any group
+problemGMUncoveredScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "Scalar missing from all groups"
+    ::= { problemGMObjects 2 }
+
+-- Table with accessible column not in group
+problemGMTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemGMEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Test table"
+    ::= { problemGMObjects 3 }
+
+problemGMEntry OBJECT-TYPE
+    SYNTAX      ProblemGMEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Test entry"
+    INDEX { problemGMIndex }
+    ::= { problemGMTable 1 }
+
+ProblemGMEntry ::= SEQUENCE {
+    problemGMIndex      Integer32,
+    problemGMCoveredCol Integer32,
+    problemGMUncoveredCol DisplayString
+}
+
+problemGMIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table index - not-accessible, should not trigger"
+    ::= { problemGMEntry 1 }
+
+problemGMCoveredCol OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Column in a group"
+    ::= { problemGMEntry 2 }
+
+problemGMUncoveredCol OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "Column missing from all groups"
+    ::= { problemGMEntry 3 }
+
+-- Notification covered by group
+problemGMCoveredNotif NOTIFICATION-TYPE
+    OBJECTS { problemGMCoveredScalar }
+    STATUS  current
+    DESCRIPTION "Notification in a group"
+    ::= { problemGMNotifPfx 1 }
+
+-- Notification NOT covered by any group
+problemGMUncoveredNotif NOTIFICATION-TYPE
+    OBJECTS { problemGMCoveredCol }
+    STATUS  current
+    DESCRIPTION "Notification missing from all groups"
+    ::= { problemGMNotifPfx 2 }
+
+-- Groups that cover some but not all objects/notifications
+problemGMObjGroup OBJECT-GROUP
+    OBJECTS { problemGMCoveredScalar, problemGMCoveredCol }
+    STATUS  current
+    DESCRIPTION "Covers only some objects"
+    ::= { problemGMGroups 1 }
+
+problemGMNotifGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { problemGMCoveredNotif }
+    STATUS        current
+    DESCRIPTION   "Covers only some notifications"
+    ::= { problemGMGroups 2 }
+
+END

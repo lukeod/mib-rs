@@ -1,0 +1,33 @@
+-- Tests identifier-length-64 diagnostic
+-- Identifiers exceeding 64 characters violate RFC 2578 Section 3.1
+-- Should emit identifier-length-64 diagnostic
+
+LONG-IDENT-TEST-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+longIdentTestMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "A MIB with long identifier violations for strictness testing."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { enterprises 99999 12 }
+
+longIdentTestObjects OBJECT IDENTIFIER ::= { longIdentTestMIB 1 }
+
+-- Violation: identifier exceeds 64 characters (this one is 70 chars)
+thisIsAnExtremelyLongIdentifierNameThatExceedsSixtyFourCharactersLimit OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "An object with an overly long name."
+    ::= { longIdentTestObjects 1 }
+
+END

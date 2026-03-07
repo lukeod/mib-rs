@@ -1,0 +1,25 @@
+-- A MIB that is truncated mid-definition. No END keyword.
+-- Tests that the parser handles unexpected EOF gracefully.
+
+INVALID-TRUNCATED-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+invalidTruncatedMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Truncated MIB"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 51 }
+
+invalidTruncatedObjects OBJECT IDENTIFIER ::= { invalidTruncatedMIB 1 }
+
+-- This definition is cut off mid-way
+invalidCutOff OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current

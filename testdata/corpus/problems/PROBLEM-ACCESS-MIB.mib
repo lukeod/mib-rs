@@ -1,0 +1,114 @@
+-- Access and status value edge cases
+-- Replicates: TIMETRA-VRTR-MIB, SIXNET-MIB, CISCOSB-MIB
+-- Tests: resolver semantics for access/status normalization
+
+PROBLEM-ACCESS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString, RowStatus
+        FROM SNMPv2-TC;
+
+problemAccessMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests access and status value edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 9 }
+
+problemAccessObjects OBJECT IDENTIFIER ::= { problemAccessMIB 1 }
+problemAccessTable   OBJECT IDENTIFIER ::= { problemAccessMIB 2 }
+
+-- Scalar object with read-create access (invalid per RFC)
+-- Real: TIMETRA-VRTR-MIB, TIMETRA-SERV-MIB (35 occurrences across 7 MIBs)
+-- smilint: "scalar object must not have a read-create access value"
+-- read-create is only valid for columnar objects in tables with RowStatus
+
+problemScalarReadCreate OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "Scalar with read-create access (invalid per RFC 2578)"
+    ::= { problemAccessObjects 1 }
+
+-- Another scalar with read-create
+problemScalarReadCreate2 OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "Another scalar with read-create access"
+    ::= { problemAccessObjects 2 }
+
+-- write-only access in SMIv2 (deprecated in SMIv2, valid in SMIv1)
+-- Real: SIXNET-MIB
+-- smilint: "write-only access in SMIv2"
+-- gomib: semantics.go:507-523
+
+problemWriteOnly OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  write-only
+    STATUS      current
+    DESCRIPTION "write-only access is deprecated in SMIv2"
+    ::= { problemAccessObjects 3 }
+
+-- Table to test read-write vs read-create equivalence
+-- gomib: divergences_test.go:171-182 treats read-write == read-create
+-- for comparison purposes
+
+problemAccessTestTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemAccessTestEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table for access equivalence testing"
+    ::= { problemAccessTable 1 }
+
+problemAccessTestEntry OBJECT-TYPE
+    SYNTAX      ProblemAccessTestEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry"
+    INDEX       { problemAccessTestIndex }
+    ::= { problemAccessTestTable 1 }
+
+ProblemAccessTestEntry ::= SEQUENCE {
+    problemAccessTestIndex   Integer32,
+    problemAccessTestValue   Integer32,
+    problemAccessTestName    DisplayString,
+    problemAccessTestRowSt   RowStatus
+}
+
+problemAccessTestIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..100)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Index"
+    ::= { problemAccessTestEntry 1 }
+
+-- read-write on a column in a RowStatus table
+-- Some SMIv2 modules use read-write; others use read-create
+-- gomib treats these as equivalent in comparisons
+problemAccessTestValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "Column using read-write instead of read-create"
+    ::= { problemAccessTestEntry 2 }
+
+problemAccessTestName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "Column using read-create"
+    ::= { problemAccessTestEntry 3 }
+
+problemAccessTestRowSt OBJECT-TYPE
+    SYNTAX      RowStatus
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "RowStatus column"
+    ::= { problemAccessTestEntry 4 }
+
+END

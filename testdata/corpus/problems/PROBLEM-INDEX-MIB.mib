@@ -1,0 +1,225 @@
+-- INDEX clause edge cases: bare types, missing ranges, illegal base types
+-- Replicates: RFC1213-MIB, SIXNET-MIB, CM-FACILITY-MIB, RADLAN-MIB
+-- Tests: mib/resolver_semantics.go (isBareTypeIndex)
+
+PROBLEM-INDEX-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Counter32,
+    IpAddress, Unsigned32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString, MacAddress
+        FROM SNMPv2-TC;
+
+problemIndexMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests INDEX clause edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 5 }
+
+problemIndexObjects OBJECT IDENTIFIER ::= { problemIndexMIB 1 }
+
+-- Table with bare INTEGER in INDEX
+-- gomib: semantics.go:526-533 isBareTypeIndex accepts these
+-- Real: various vendor MIBs use bare type names instead of object refs
+
+problemBareTypeTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemBareTypeEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table using bare type names in INDEX"
+    ::= { problemIndexObjects 1 }
+
+problemBareTypeEntry OBJECT-TYPE
+    SYNTAX      ProblemBareTypeEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with bare INTEGER index"
+    INDEX       { INTEGER }
+    ::= { problemBareTypeTable 1 }
+
+ProblemBareTypeEntry ::= SEQUENCE {
+    problemBareTypeValue    Integer32
+}
+
+problemBareTypeValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Value column"
+    ::= { problemBareTypeEntry 1 }
+
+-- Table with NetworkAddress in INDEX (SMIv1 style)
+-- Real: RFC1213-MIB atEntry uses NetworkAddress
+-- smilint: severity 1 "illegal base type for index element"
+
+problemNetAddrTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemNetAddrEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table using NetworkAddress in INDEX"
+    ::= { problemIndexObjects 2 }
+
+problemNetAddrEntry OBJECT-TYPE
+    SYNTAX      ProblemNetAddrEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with NetworkAddress index"
+    INDEX       { problemNetAddrIfIndex, problemNetAddrAddress }
+    ::= { problemNetAddrTable 1 }
+
+ProblemNetAddrEntry ::= SEQUENCE {
+    problemNetAddrIfIndex    Integer32,
+    problemNetAddrAddress    IpAddress,
+    problemNetAddrValue      Integer32
+}
+
+problemNetAddrIfIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Interface index"
+    ::= { problemNetAddrEntry 1 }
+
+problemNetAddrAddress OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Network address"
+    ::= { problemNetAddrEntry 2 }
+
+problemNetAddrValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Value"
+    ::= { problemNetAddrEntry 3 }
+
+-- Table with MacAddress index (illegal base type per SMIv2)
+-- Real: SIXNET-MIB (8 instances), RADLAN-MIB (4 instances)
+-- smilint: "illegal base type for index element"
+
+problemMacIndexTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemMacIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table using MacAddress as index"
+    ::= { problemIndexObjects 3 }
+
+problemMacIndexEntry OBJECT-TYPE
+    SYNTAX      ProblemMacIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with MacAddress index"
+    INDEX       { problemMacIndexAddress }
+    ::= { problemMacIndexTable 1 }
+
+ProblemMacIndexEntry ::= SEQUENCE {
+    problemMacIndexAddress   MacAddress,
+    problemMacIndexPort      Integer32
+}
+
+problemMacIndexAddress OBJECT-TYPE
+    SYNTAX      MacAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "MAC address index"
+    ::= { problemMacIndexEntry 1 }
+
+problemMacIndexPort OBJECT-TYPE
+    SYNTAX      Integer32 (0..65535)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Port for this MAC address"
+    ::= { problemMacIndexEntry 2 }
+
+-- Table with index element missing range restriction
+-- Real: CM-FACILITY-MIB neIndex, shelfIndex, slotIndex (438 occurrences)
+-- smilint: "index element must have range restriction"
+
+problemNoRangeTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemNoRangeEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table with index elements missing range restrictions"
+    ::= { problemIndexObjects 4 }
+
+problemNoRangeEntry OBJECT-TYPE
+    SYNTAX      ProblemNoRangeEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with rangeless indexes"
+    INDEX       { problemNoRangeIndex1, problemNoRangeIndex2 }
+    ::= { problemNoRangeTable 1 }
+
+ProblemNoRangeEntry ::= SEQUENCE {
+    problemNoRangeIndex1    Integer32,
+    problemNoRangeIndex2    Integer32,
+    problemNoRangeValue     Integer32
+}
+
+-- No range restriction - smilint warns about this
+problemNoRangeIndex1 OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Index without range restriction"
+    ::= { problemNoRangeEntry 1 }
+
+-- No range restriction - smilint warns about this
+problemNoRangeIndex2 OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Another index without range restriction"
+    ::= { problemNoRangeEntry 2 }
+
+problemNoRangeValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Value column"
+    ::= { problemNoRangeEntry 3 }
+
+-- Table with DisplayString index (no SIZE, illegal)
+-- Real: RADLAN-MIB rlMD5KeyChainEntry
+-- smilint: "illegal base type for index element"
+
+problemStringIndexTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemStringIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table using DisplayString as index without SIZE"
+    ::= { problemIndexObjects 5 }
+
+problemStringIndexEntry OBJECT-TYPE
+    SYNTAX      ProblemStringIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with string index"
+    INDEX       { problemStringIndexName }
+    ::= { problemStringIndexTable 1 }
+
+ProblemStringIndexEntry ::= SEQUENCE {
+    problemStringIndexName   DisplayString,
+    problemStringIndexValue  Integer32
+}
+
+problemStringIndexName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..32))
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "String index"
+    ::= { problemStringIndexEntry 1 }
+
+problemStringIndexValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Value"
+    ::= { problemStringIndexEntry 2 }
+
+END

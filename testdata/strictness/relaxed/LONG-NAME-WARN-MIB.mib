@@ -1,0 +1,33 @@
+-- Tests identifier-length-32 diagnostic (warning level)
+-- Identifiers exceeding 32 characters trigger a warning per RFC 2578
+-- Should emit identifier-length-32 warning (not error)
+
+LONG-NAME-WARN-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+longNameWarnMIB MODULE-IDENTITY
+    LAST-UPDATED "202501270000Z"
+    ORGANIZATION "Test Organization"
+    CONTACT-INFO "test@example.com"
+    DESCRIPTION
+        "A MIB with identifier length warnings for testing."
+    REVISION    "202501270000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { enterprises 99999 20 }
+
+longNameWarnObjects OBJECT IDENTIFIER ::= { longNameWarnMIB 1 }
+
+-- Warning: identifier exceeds 32 chars but under 64 (this one is 45 chars)
+thisIdentifierExceedsThirtyTwoChars OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "An object with a name longer than 32 chars."
+    ::= { longNameWarnObjects 1 }
+
+END

@@ -1,0 +1,43 @@
+-- Two modules in one file. The second imports from the first.
+-- Filename matches neither module name.
+
+PROBLEM-MULTIMOD-BASE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, enterprises
+        FROM SNMPv2-SMI;
+
+problemMultimodBaseMIB MODULE-IDENTITY
+    LAST-UPDATED "202501010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION  "Base module in a multi-module file"
+    ::= { enterprises 99990 }
+
+problemMultimodRoot OBJECT IDENTIFIER ::= { problemMultimodBaseMIB 1 }
+
+END
+
+PROBLEM-MULTIMOD-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI
+    problemMultimodRoot
+        FROM PROBLEM-MULTIMOD-BASE-MIB;
+
+problemMultimodMIB MODULE-IDENTITY
+    LAST-UPDATED "202501010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION  "Leaf module in a multi-module file, imports from sibling"
+    ::= { problemMultimodRoot 1 }
+
+problemMultimodScalar OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A scalar in the second module"
+    ::= { problemMultimodMIB 1 }
+
+END

@@ -1,0 +1,63 @@
+-- Enum subtyping validation edge cases
+-- Tests: mib/resolver_semantics.go checkEnumSubtyping
+
+PROBLEM-ENUM-SUBTYPE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+problemEnumSubtypeMIB MODULE-IDENTITY
+    LAST-UPDATED "202603030000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests enum subtyping validation"
+    REVISION     "202603030000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 33 }
+
+problemEnumSubtypeObjects OBJECT IDENTIFIER ::= { problemEnumSubtypeMIB 1 }
+
+-- Parent enum type
+MyStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Base status type"
+    SYNTAX      INTEGER { active(1), inactive(2), testing(3) }
+
+-- Valid subset (no diagnostics)
+MyActiveStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Restricts to active and inactive only"
+    SYNTAX      MyStatus { active(1), inactive(2) }
+
+-- Invalid: adds new name not in parent (triggers subtype-enumeration-illegal)
+MyBadStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Adds unknown value"
+    SYNTAX      MyStatus { active(1), inactive(2), broken(4) }
+
+-- Invalid: changes value for existing name (triggers subtype-enumeration-illegal)
+MyWrongValueStatus ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Changes value of testing"
+    SYNTAX      MyStatus { active(1), testing(9) }
+
+-- Valid inline object restriction (no diagnostics)
+problemValidSubtypeObj OBJECT-TYPE
+    SYNTAX      MyStatus { active(1) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Valid inline subset"
+    ::= { problemEnumSubtypeObjects 1 }
+
+-- Invalid inline object restriction (triggers subtype-enumeration-illegal)
+problemBadSubtypeObj OBJECT-TYPE
+    SYNTAX      MyStatus { active(1), unknown(5) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Invalid inline restriction"
+    ::= { problemEnumSubtypeObjects 2 }
+
+END

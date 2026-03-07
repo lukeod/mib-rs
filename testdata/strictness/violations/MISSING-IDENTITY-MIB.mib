@@ -1,0 +1,24 @@
+-- Tests missing-module-identity diagnostic
+-- SMIv2 modules must have MODULE-IDENTITY per RFC 2578 Section 3
+-- Should emit missing-module-identity diagnostic
+-- Note: This MIB uses SMIv2 constructs but lacks MODULE-IDENTITY
+
+MISSING-IDENTITY-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+-- No MODULE-IDENTITY - this is the violation
+
+missingIdentityObjects OBJECT IDENTIFIER ::= { enterprises 99999 13 }
+
+missingIdentityTest OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A test object in a module without MODULE-IDENTITY."
+    ::= { missingIdentityObjects 1 }
+
+END

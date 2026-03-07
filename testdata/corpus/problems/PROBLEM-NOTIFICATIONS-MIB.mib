@@ -1,0 +1,141 @@
+-- Notification varbind and group membership issues
+-- Replicates: CM-PERFORMANCE-MIB, HUAWEI-ENTITY-EXTENT-MIB, ES4552BH2-MIB
+-- Tests: resolver handling of notification OBJECTS references
+
+PROBLEM-NOTIFICATIONS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    DisplayString
+        FROM SNMPv2-TC;
+
+problemNotificationsMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests notification varbind edge cases"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 8 }
+
+problemNotifObjects OBJECT IDENTIFIER ::= { problemNotificationsMIB 1 }
+problemNotifTraps   OBJECT IDENTIFIER ::= { problemNotificationsMIB 2 }
+problemNotifTrapPfx OBJECT IDENTIFIER ::= { problemNotifTraps 0 }
+problemNotifConform OBJECT IDENTIFIER ::= { problemNotificationsMIB 3 }
+problemNotifGroups  OBJECT IDENTIFIER ::= { problemNotifConform 1 }
+
+-- Table with not-accessible index
+problemNotifTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemNotifEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table for notification testing"
+    ::= { problemNotifObjects 1 }
+
+problemNotifEntry OBJECT-TYPE
+    SYNTAX      ProblemNotifEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry"
+    INDEX       { problemNotifIndex }
+    ::= { problemNotifTable 1 }
+
+ProblemNotifEntry ::= SEQUENCE {
+    problemNotifIndex       Integer32,
+    problemNotifStatus      Integer32,
+    problemNotifDescription DisplayString
+}
+
+problemNotifIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Index - not-accessible"
+    ::= { problemNotifEntry 1 }
+
+problemNotifStatus OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Status column"
+    ::= { problemNotifEntry 2 }
+
+problemNotifDescription OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Description column"
+    ::= { problemNotifEntry 3 }
+
+-- Notification referencing not-accessible object in OBJECTS
+-- Real: CM-PERFORMANCE-MIB, HUAWEI-ENTITY-EXTENT-MIB (842 occurrences)
+-- smilint: "object must not be not-accessible"
+-- gomib: includes the reference; this is the MIB author's intent
+
+problemNotifWithIndex NOTIFICATION-TYPE
+    OBJECTS     { problemNotifIndex, problemNotifStatus }
+    STATUS      current
+    DESCRIPTION "Notification referencing not-accessible index object"
+    ::= { problemNotifTrapPfx 1 }
+
+-- Notification referencing undefined object
+-- Real: ES4552BH2-MIB trapVarLoginInetAddressTypes (typo)
+-- Real: RAPID-CITY rcVlanId (never defined/imported)
+-- gomib: excludes unresolved references
+-- net-snmp: preserves unresolved names as strings
+
+problemNotifWithUndefined NOTIFICATION-TYPE
+    OBJECTS     { problemNotifStatus, problemUndefinedVarbind }
+    STATUS      current
+    DESCRIPTION "Notification referencing undefined object (typo)"
+    ::= { problemNotifTrapPfx 2 }
+
+-- Normal notification for contrast
+problemNotifNormal NOTIFICATION-TYPE
+    OBJECTS     { problemNotifStatus, problemNotifDescription }
+    STATUS      current
+    DESCRIPTION "Normal notification with valid accessible objects"
+    ::= { problemNotifTrapPfx 3 }
+
+-- Notification directly under a non-zero parent (not reverse mappable)
+-- RFC 2578 section 8.5: next-to-last sub-id must be 0
+-- smilint: "notification is not reverse mappable"
+
+problemNotifNotReversible NOTIFICATION-TYPE
+    OBJECTS     { problemNotifStatus }
+    STATUS      current
+    DESCRIPTION "Notification under non-zero parent arc"
+    ::= { problemNotifTraps 5 }
+
+-- Notification with last sub-id exceeding INT32_MAX
+-- smilint: "last sub-identifier of notification too large"
+
+problemNotifIdTooLarge NOTIFICATION-TYPE
+    OBJECTS     { problemNotifStatus }
+    STATUS      current
+    DESCRIPTION "Notification with sub-id > 2147483647"
+    ::= { problemNotifTrapPfx 2147483648 }
+
+-- OBJECT-GROUP containing a not-accessible index element (invalid)
+-- Real: CM-FACILITY-MIB (ocnStmIndex, stsVcPathIndex)
+-- smilint: "node is an invalid member of object group"
+
+problemNotifBadGroup OBJECT-GROUP
+    OBJECTS     { problemNotifIndex, problemNotifStatus,
+                  problemNotifDescription }
+    STATUS      current
+    DESCRIPTION "Group incorrectly including not-accessible index"
+    ::= { problemNotifGroups 1 }
+
+problemNotifNotifGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { problemNotifWithIndex, problemNotifNormal,
+                    problemNotifNotReversible, problemNotifIdTooLarge }
+    STATUS        current
+    DESCRIPTION   "Notification group"
+    ::= { problemNotifGroups 2 }
+
+END

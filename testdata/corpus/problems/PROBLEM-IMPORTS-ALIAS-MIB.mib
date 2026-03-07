@@ -1,0 +1,43 @@
+-- Module alias import edge cases
+-- Replicates: RADLAN-MIB importing from SNMPv2-SMI-v1 / SNMPv2-TC-v1
+-- Tests gomib alias table: mib/resolver_imports.go
+-- smilint: "failed to locate module `SNMPv2-SMI-v1'"
+
+PROBLEM-IMPORTS-ALIAS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI-v1
+    DisplayString
+        FROM SNMPv2-TC-v1;
+
+-- Both SNMPv2-SMI-v1 and SNMPv2-TC-v1 are aliases for their
+-- non-v1 counterparts. gomib maps these in its alias table.
+-- Real: RADLAN-MIB.mib uses both aliases.
+
+problemImportsAliasMIB MODULE-IDENTITY
+    LAST-UPDATED "202601280000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests module alias resolution"
+    REVISION     "202601280000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 3 }
+
+problemAliasObjects OBJECT IDENTIFIER ::= { problemImportsAliasMIB 1 }
+
+problemAliasString OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using types from aliased modules"
+    ::= { problemAliasObjects 1 }
+
+problemAliasInteger OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using Integer32 from aliased SNMPv2-SMI-v1"
+    ::= { problemAliasObjects 2 }
+
+END

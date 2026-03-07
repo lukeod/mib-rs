@@ -1,0 +1,25 @@
+-- A MIB with a syntax error: OBJECT-TYPE missing SYNTAX clause.
+-- The parser should recover from the error but produce no usable objects.
+
+INVALID-SYNTAX-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+invalidSyntaxMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "MIB with syntax errors"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 50 }
+
+invalidSyntaxObjects OBJECT IDENTIFIER ::= { invalidSyntaxMIB 1 }
+
+-- Missing required clauses: no SYNTAX, MAX-ACCESS, STATUS, DESCRIPTION
+invalidBroken OBJECT-TYPE
+    ::= { invalidSyntaxObjects 1 }
+
+END

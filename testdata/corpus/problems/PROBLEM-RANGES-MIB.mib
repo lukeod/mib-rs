@@ -1,0 +1,136 @@
+-- Range constraint edge cases
+-- Tests: mib/resolver_semantics.go checkRangeConstraints
+
+PROBLEM-RANGES-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Unsigned32,
+    Counter32, Counter64, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+problemRangesMIB MODULE-IDENTITY
+    LAST-UPDATED "202603030000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests range constraint validation"
+    REVISION     "202603030000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 34 }
+
+problemRangesObjects OBJECT IDENTIFIER ::= { problemRangesMIB 1 }
+
+-- Exchanged limits: min > max (triggers range-exchanged)
+ExchangedRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Range with exchanged limits"
+    SYNTAX      Integer32 (100..1)
+
+-- Out of basetype bounds: 4294967295 exceeds Integer32 max (triggers range-bounds)
+OutOfBoundsRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Range exceeding Integer32 bounds"
+    SYNTAX      Integer32 (0..4294967295)
+
+-- Overlapping ranges (triggers range-overlap)
+OverlapRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Overlapping ranges"
+    SYNTAX      Integer32 (1..10 | 5..20)
+
+-- Non-ascending ranges (triggers range-ascending and range-overlap)
+DescendingRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Ranges not in ascending order"
+    SYNTAX      Integer32 (10..20 | 1..5)
+
+-- SIZE exceeding max 65535 (triggers range-bounds)
+BigSizeRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "SIZE exceeding maximum"
+    SYNTAX      OCTET STRING (SIZE (0..100000))
+
+-- Negative range on unsigned type (triggers range-bounds)
+NegativeUnsignedRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Negative range on unsigned type"
+    SYNTAX      Unsigned32 (-1..100)
+
+-- Valid range (no diagnostics expected)
+ValidRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Valid range"
+    SYNTAX      Integer32 (0..100)
+
+-- Valid multi-range (no diagnostics expected)
+ValidMultiRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Valid disjoint ranges"
+    SYNTAX      Integer32 (1..10 | 20..30)
+
+-- Inline object with exchanged limits (triggers range-exchanged)
+problemRangesExchangedObj OBJECT-TYPE
+    SYNTAX      Integer32 (50..10)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with exchanged range limits"
+    ::= { problemRangesObjects 1 }
+
+-- Inline object with valid range (no diagnostics)
+problemRangesValidObj OBJECT-TYPE
+    SYNTAX      Integer32 (0..255)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with valid range"
+    ::= { problemRangesObjects 2 }
+
+-- SIZE on Integer32 (triggers size-illegal)
+SizeOnInteger ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "SIZE applied to integer type"
+    SYNTAX      Integer32 (SIZE (0..100))
+
+-- Range on OCTET STRING (triggers range-illegal)
+RangeOnString ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Range applied to string type"
+    SYNTAX      OCTET STRING (0..255)
+
+-- Inline SIZE on integer object (triggers size-illegal)
+problemRangesSizeOnIntObj OBJECT-TYPE
+    SYNTAX      Integer32 (SIZE (1..10))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with SIZE on integer"
+    ::= { problemRangesObjects 3 }
+
+-- Inline range on string object (triggers range-illegal)
+problemRangesRangeOnStringObj OBJECT-TYPE
+    SYNTAX      OCTET STRING (0..255)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object with range on string"
+    ::= { problemRangesObjects 4 }
+
+-- Valid SIZE on OCTET STRING (no diagnostics)
+ValidSize ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Valid SIZE constraint"
+    SYNTAX      OCTET STRING (SIZE (0..255))
+
+-- Range on Counter32 (triggers counter-range-illegal)
+CounterWithRange ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "Counter32 with illegal range"
+    SYNTAX      Counter32 (0..1000)
+
+-- Object with Counter64 range (triggers counter-range-illegal)
+problemRangesCounterRangeObj OBJECT-TYPE
+    SYNTAX      Counter64 (100..999999)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Counter64 with illegal range"
+    ::= { problemRangesObjects 5 }
+
+END

@@ -1,0 +1,51 @@
+-- Module that imports OID branches from PROBLEM-SHARED-OIDS-BASE-MIB
+-- and redefines the same OBJECT IDENTIFIER value assignments.
+-- Both modules are SMIv2 with identical LAST-UPDATED dates.
+--
+-- Replicates: HOST-RESOURCES-TYPES defining hrStorageTypes, hrDeviceTypes,
+-- hrFSTypes which are also in HOST-RESOURCES-MIB. Both modules use
+-- LAST-UPDATED "200003060000Z", causing shouldPreferModule to return
+-- false (current module wins), so the second module's nodes never get
+-- added to its Module.Nodes() list.
+
+PROBLEM-SHARED-OIDS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-IDENTITY, enterprises
+        FROM SNMPv2-SMI
+    problemSharedSub1, problemSharedSub2
+        FROM PROBLEM-SHARED-OIDS-BASE-MIB;
+
+problemSharedOidsMIB MODULE-IDENTITY
+    LAST-UPDATED "200501010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests shared OID registration across modules"
+    REVISION     "200501010000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 31 }
+
+-- Same three OIDs defined in PROBLEM-SHARED-OIDS-BASE-MIB.
+-- These should appear in this module's Nodes() list.
+sharedBranch1 OBJECT IDENTIFIER ::= { problemSharedSub1 1 }
+sharedBranch2 OBJECT IDENTIFIER ::= { problemSharedSub1 2 }
+sharedBranch3 OBJECT IDENTIFIER ::= { problemSharedSub2 1 }
+
+-- OBJECT-IDENTITY nodes under the shared branches.
+-- These are unique to this module and should always appear.
+sharedItem1 OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION "Item under sharedBranch1"
+    ::= { sharedBranch1 1 }
+
+sharedItem2 OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION "Item under sharedBranch2"
+    ::= { sharedBranch2 1 }
+
+sharedItem3 OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION "Item under sharedBranch3"
+    ::= { sharedBranch3 1 }
+
+END

@@ -1,0 +1,34 @@
+-- Relay module for import forwarding chain test.
+-- Imports ForwardedType and forwardedSourceRoot from the source module.
+-- PROBLEM-FORWARDING-MIB imports these from this relay module,
+-- exercising tryImportForwarding in imports.go.
+
+PROBLEM-FORWARDING-RELAY-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    ForwardedType, forwardedSourceRoot
+        FROM PROBLEM-FORWARDING-SOURCE-MIB;
+
+problemForwardingRelayMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Relay module that re-exports symbols from source"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 21 }
+
+-- This module imports ForwardedType and forwardedSourceRoot but does
+-- not define them. When another module imports these FROM this module,
+-- the forwarding logic should follow the import chain.
+
+relayOwnObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "An object defined directly in the relay module"
+    ::= { problemForwardingRelayMIB 1 }
+
+END

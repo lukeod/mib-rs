@@ -1,0 +1,42 @@
+-- Consumer module for import forwarding chain test.
+-- Imports ForwardedType and forwardedSourceRoot FROM the relay module,
+-- which does not define them directly but imports them from the source.
+-- This exercises tryImportForwarding in imports.go:167-208.
+
+PROBLEM-FORWARDING-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    ForwardedType, forwardedSourceRoot
+        FROM PROBLEM-FORWARDING-RELAY-MIB;
+
+problemForwardingMIB MODULE-IDENTITY
+    LAST-UPDATED "202601300000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests import forwarding chains"
+    REVISION     "202601300000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 22 }
+
+problemForwardingObjects OBJECT IDENTIFIER ::= { problemForwardingMIB 1 }
+
+-- Uses ForwardedType obtained via forwarding chain:
+-- this module -> relay -> source
+problemForwardedTypeObject OBJECT-TYPE
+    SYNTAX      ForwardedType
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using a type obtained via import forwarding"
+    ::= { problemForwardingObjects 1 }
+
+-- Uses forwardedSourceRoot as OID parent, obtained via forwarding chain
+problemForwardedOidObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object under an OID obtained via import forwarding"
+    ::= { forwardedSourceRoot 10 }
+
+END
