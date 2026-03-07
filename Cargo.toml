@@ -1,0 +1,34 @@
+[package]
+name = "gomib"
+version = "0.1.0"
+edition = "2024"
+description = "SNMP MIB parser and resolver"
+license = "MIT"
+rust-version = "1.88"
+
+[[bin]]
+name = "gomib"
+path = "src/bin/gomib.rs"
+
+[dependencies]
+thiserror = "2"
+tracing = "0.1"
+rayon = "1.11"
+smallvec = { version = "1.15", features = ["union"] }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+dashmap = "6"
+dirs = "6"
+
+[features]
+default = []
+serde = ["dep:serde", "dep:serde_json", "smallvec/serde"]
+
+[dev-dependencies]
+pretty_assertions = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
