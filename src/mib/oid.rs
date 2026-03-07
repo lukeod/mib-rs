@@ -29,7 +29,9 @@ impl Oid {
             if part.is_empty() {
                 return Err(ParseOidError::Empty);
             }
-            let arc: u32 = part.parse().map_err(|_| ParseOidError::InvalidArc(part.to_string()))?;
+            let arc: u32 = part
+                .parse()
+                .map_err(|_| ParseOidError::InvalidArc(part.to_string()))?;
             arcs.push(arc);
         }
         Ok(Oid(arcs))

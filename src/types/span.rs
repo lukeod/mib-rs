@@ -38,7 +38,7 @@ impl Span {
 
 /// Internal diagnostic from the lexer or parser.
 /// Converted to Diagnostic during lowering with module name and line/column info.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpanDiagnostic {
     pub severity: super::Severity,
     pub code: DiagCode,

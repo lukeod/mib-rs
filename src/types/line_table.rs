@@ -21,7 +21,9 @@ pub fn line_col_from_table(table: &[usize], offset: ByteOffset) -> (usize, usize
         return (0, 0);
     }
     let off = offset.0 as usize;
-    let line_idx = table.partition_point(|&start| start <= off).saturating_sub(1);
+    let line_idx = table
+        .partition_point(|&start| start <= off)
+        .saturating_sub(1);
     (line_idx + 1, off - table[line_idx] + 1)
 }
 

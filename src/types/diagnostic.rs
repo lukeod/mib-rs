@@ -103,11 +103,7 @@ impl DiagnosticConfig {
 
     /// Returns true if a diagnostic with the given code and severity should be reported.
     pub fn should_report(&self, code: DiagCode, sev: Severity) -> bool {
-        let effective_sev = self
-            .overrides
-            .get(code.as_code())
-            .copied()
-            .unwrap_or(sev);
+        let effective_sev = self.overrides.get(code.as_code()).copied().unwrap_or(sev);
 
         // Fatal diagnostics are always reported.
         if effective_sev.at_least(Severity::Fatal) {
@@ -116,7 +112,11 @@ impl DiagnosticConfig {
 
         // Check ignore list.
         let code_str = code.as_code();
-        if self.ignore.iter().any(|pattern| match_glob(pattern, code_str)) {
+        if self
+            .ignore
+            .iter()
+            .any(|pattern| match_glob(pattern, code_str))
+        {
             return false;
         }
 
@@ -244,9 +244,7 @@ mod tests {
     #[test]
     fn should_report_ignores() {
         let config = DiagnosticConfig::permissive_config();
-        assert!(
-            !config.should_report(DiagCode::IdentifierUnderscore, Severity::Style)
-        );
+        assert!(!config.should_report(DiagCode::IdentifierUnderscore, Severity::Style));
     }
 
     #[test]

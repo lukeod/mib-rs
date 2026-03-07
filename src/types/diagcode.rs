@@ -438,11 +438,18 @@ pub fn code_severity(code: DiagCode) -> Severity {
         }
         DateYear2Digits => Warning,
         DateInFuture | DateInPast => Style,
-        UnknownDefinitionType | UnknownTypeSyntax | UnknownConstraintType | UnknownRangeValue
-        | UnknownOidComponent | UnknownDefvalType => Warning,
+        UnknownDefinitionType
+        | UnknownTypeSyntax
+        | UnknownConstraintType
+        | UnknownRangeValue
+        | UnknownOidComponent
+        | UnknownDefvalType => Warning,
         BitsNumberNegative | BitsNumberTooLarge => Error,
         BitsNumberLarge => Style,
-        EnumZero | EnumNameRedefinition | EnumValueRedefinition | BitsNameRedefinition
+        EnumZero
+        | EnumNameRedefinition
+        | EnumValueRedefinition
+        | BitsNameRedefinition
         | BitsValueRedefinition => Error,
         ModuleIdentityNotFirst => Warning,
         ModuleIdentityMultiple => Error,
@@ -475,8 +482,8 @@ pub fn code_severity(code: DiagCode) -> Severity {
         RangeAscending => Warning,
         SizeIllegal | RangeIllegal | CounterRangeIllegal | SubtypeEnumIllegal
         | SubtypeBitsIllegal => Error,
-        ParentTable | ParentRow | ParentColumn | ParentScalar | ParentNode
-        | ParentNotification | ParentGroup | ParentCompliance | ParentCapabilities => Error,
+        ParentTable | ParentRow | ParentColumn | ParentScalar | ParentNode | ParentNotification
+        | ParentGroup | ParentCompliance | ParentCapabilities => Error,
         RowSubidentifierOne => Error,
         IndexElementNoSize => Minor,
         IndexIllegalBasetype => Severe,
@@ -500,14 +507,20 @@ pub fn code_severity(code: DiagCode) -> Severity {
         GroupObjectsNotification | GroupNotificationsObject => Error,
         GroupObjectStatus => Warning,
         ComplianceGroupStatus | ComplianceObjectStatus | ComplianceGroupInvalid => Warning,
-        RefinementExists | OptionalGroupExists | RefinementNotListed
-        | ComplianceMemberNotLocal => Warning,
+        RefinementExists | OptionalGroupExists | RefinementNotListed | ComplianceMemberNotLocal => {
+            Warning
+        }
         TimeticksRangeIllegal | StatusInvalidCapabilities => Error,
         ImportUnused => Style,
         BasetypeNotImported => Minor,
         DescriptionMissing => Minor,
-        TCNested | TypeAssignmentSMIv2 | TableNameTable | RowNameEntry | RowNameTableName
-        | NamedNumbersAscending | HyphenInLabel => Style,
+        TCNested
+        | TypeAssignmentSMIv2
+        | TableNameTable
+        | RowNameEntry
+        | RowNameTableName
+        | NamedNumbersAscending
+        | HyphenInLabel => Style,
         OpaqueSMIv2 => Warning,
         InvalidFormat => Error,
         TypeWithoutFormat | TypeUnreferenced | GroupUnreferenced => Style,
@@ -532,23 +545,57 @@ pub fn code_severity(code: DiagCode) -> Severity {
 pub fn code_phase(code: DiagCode) -> &'static str {
     use DiagCode::*;
     match code {
-        UnexpectedCharacter | UnterminatedString | UnterminatedHexBinStr
-        | MissingHexBinSuffix | HexStringMul2 | BinStringMul8 => "lexer",
+        UnexpectedCharacter
+        | UnterminatedString
+        | UnterminatedHexBinStr
+        | MissingHexBinSuffix
+        | HexStringMul2
+        | BinStringMul8 => "lexer",
 
         IdentifierUnderscore | IdentifierHyphenEnd | IdentifierLength64 | IdentifierLength32
         | BadIdentifierCase | ParseError | InvalidU32 | InvalidI64 | KeywordReserved
         | InvalidHexRange | NumberLeadingZero => "parser",
 
-        MissingModuleIdentity | RevisionLastUpdated | RevisionNotDescending
-        | RevisionAfterUpdate | DateCharacter | DateLength | DateMonth | DateDay | DateHour
-        | DateMinutes | DateValue | DateYear2Digits | DateInFuture | DateInPast
-        | UnknownDefinitionType | UnknownTypeSyntax | UnknownConstraintType
-        | UnknownRangeValue | UnknownOidComponent | UnknownDefvalType | BitsNumberNegative
-        | BitsNumberTooLarge | BitsNumberLarge | EnumZero | EnumNameRedefinition
-        | EnumValueRedefinition | BitsNameRedefinition | BitsValueRedefinition
-        | ModuleIdentityNotFirst | ModuleIdentityMultiple | MacroNotImported
-        | EmptyDescription | EmptyReference | EmptyOrganization | EmptyContact | EmptyUnits
-        | EmptyFormat | ModuleNameSuffix | MacroNotAllowed | ChoiceNotAllowed
+        MissingModuleIdentity
+        | RevisionLastUpdated
+        | RevisionNotDescending
+        | RevisionAfterUpdate
+        | DateCharacter
+        | DateLength
+        | DateMonth
+        | DateDay
+        | DateHour
+        | DateMinutes
+        | DateValue
+        | DateYear2Digits
+        | DateInFuture
+        | DateInPast
+        | UnknownDefinitionType
+        | UnknownTypeSyntax
+        | UnknownConstraintType
+        | UnknownRangeValue
+        | UnknownOidComponent
+        | UnknownDefvalType
+        | BitsNumberNegative
+        | BitsNumberTooLarge
+        | BitsNumberLarge
+        | EnumZero
+        | EnumNameRedefinition
+        | EnumValueRedefinition
+        | BitsNameRedefinition
+        | BitsValueRedefinition
+        | ModuleIdentityNotFirst
+        | ModuleIdentityMultiple
+        | MacroNotImported
+        | EmptyDescription
+        | EmptyReference
+        | EmptyOrganization
+        | EmptyContact
+        | EmptyUnits
+        | EmptyFormat
+        | ModuleNameSuffix
+        | MacroNotAllowed
+        | ChoiceNotAllowed
         | TaggedTypeNotAllowed => "lowering",
 
         _ => "resolver",

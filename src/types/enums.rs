@@ -22,7 +22,9 @@ impl Severity {
     }
 
     pub fn names() -> &'static [&'static str] {
-        &["fatal", "severe", "error", "minor", "style", "warning", "info"]
+        &[
+            "fatal", "severe", "error", "minor", "style", "warning", "info",
+        ]
     }
 }
 
