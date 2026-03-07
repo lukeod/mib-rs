@@ -26,6 +26,13 @@ pub enum Severity {
     Info = 6,
 }
 
+impl Severity {
+    /// Reports whether this severity is at least as severe as `threshold`.
+    pub fn at_least(self, threshold: Severity) -> bool {
+        self <= threshold
+    }
+}
+
 impl_display!(Severity {
     Fatal => "fatal",
     Severe => "severe",

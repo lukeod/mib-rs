@@ -1,7 +1,9 @@
 pub mod ast;
 pub mod error;
 pub mod graph;
+pub mod ir;
 pub mod lexer;
+pub mod lower;
 pub mod mib;
 pub mod parser;
 pub mod types;

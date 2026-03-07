@@ -14,6 +14,12 @@ pub struct Span {
 }
 
 impl Span {
+    /// Zero-value span (default).
+    pub const ZERO: Span = Span {
+        start: ByteOffset(0),
+        end: ByteOffset(0),
+    };
+
     /// Span for compiler-generated constructs (base modules, built-in types).
     pub const SYNTHETIC: Span = Span {
         start: ByteOffset::SYNTHETIC,
