@@ -115,7 +115,7 @@ impl<'src> Lexer<'src> {
     }
 
     fn span_from(&self, start: usize) -> Span {
-        Span::from_offsets(start as u32, self.pos as u32)
+        Span::from_usize_offsets(start, self.pos)
     }
 
     fn token(&self, kind: TokenKind, start: usize) -> Token {
@@ -135,7 +135,7 @@ impl<'src> Lexer<'src> {
 
     fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
         let severity = code.severity();
-        if !self.diag_config.should_report(code, severity) {
+        if !self.diag_config.should_report(code) {
             return;
         }
         self.diagnostics.push(SpanDiagnostic {

@@ -60,11 +60,7 @@ impl Graph {
 
     /// Add a directed edge from -> to.
     pub fn add_edge(&mut self, from: NodeIndex, to: NodeIndex) {
-        if !self
-            .inner
-            .edges(from)
-            .any(|e| e.target() == to)
-        {
+        if !self.inner.edges(from).any(|e| e.target() == to) {
             self.inner.add_edge(from, to, ());
         }
     }
@@ -85,14 +81,11 @@ impl Graph {
 
         // petgraph returns SCCs in reverse topological order.
         for scc in &sccs {
-            let is_cycle = scc.len() > 1
-                || (scc.len() == 1 && self.has_self_loop(scc[0]));
+            let is_cycle = scc.len() > 1 || (scc.len() == 1 && self.has_self_loop(scc[0]));
 
             if is_cycle {
-                let mut cycle: Vec<Symbol> = scc
-                    .iter()
-                    .map(|&idx| self.inner[idx].clone())
-                    .collect();
+                let mut cycle: Vec<Symbol> =
+                    scc.iter().map(|&idx| self.inner[idx].clone()).collect();
                 cycle.sort();
                 cycles.push(cycle);
             }

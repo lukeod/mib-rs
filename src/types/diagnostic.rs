@@ -96,9 +96,10 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Returns true if a diagnostic with the given code and severity should be reported.
-    pub fn should_report(&self, code: DiagCode, sev: Severity) -> bool {
-        let effective_sev = self.overrides.get(&code).copied().unwrap_or(sev);
+    /// Returns true if a diagnostic with the given code should be reported.
+    pub fn should_report(&self, code: DiagCode) -> bool {
+        let default_sev = code.severity();
+        let effective_sev = self.overrides.get(&code).copied().unwrap_or(default_sev);
 
         // Fatal diagnostics are always reported.
         if effective_sev <= Severity::Fatal {
@@ -231,15 +232,15 @@ mod tests {
     fn should_report_respects_level() {
         let config = DiagnosticConfig::default();
         // Normal reports Minor and above (sev 0-3)
-        assert!(config.should_report(DiagCode::ParseError, Severity::Error));
-        assert!(config.should_report(DiagCode::MacroNotImported, Severity::Minor));
-        assert!(!config.should_report(DiagCode::IdentifierUnderscore, Severity::Style));
+        assert!(config.should_report(DiagCode::ParseError));
+        assert!(config.should_report(DiagCode::MacroNotImported));
+        assert!(!config.should_report(DiagCode::IdentifierUnderscore));
     }
 
     #[test]
     fn should_report_ignores() {
         let config = DiagnosticConfig::permissive();
-        assert!(!config.should_report(DiagCode::IdentifierUnderscore, Severity::Style));
+        assert!(!config.should_report(DiagCode::IdentifierUnderscore));
     }
 
     #[test]

@@ -248,7 +248,7 @@ mod tests {
     fn severity_ordering() {
         assert!(Severity::Fatal <= Severity::Info);
         assert!(Severity::Fatal <= Severity::Fatal);
-        assert!(!(Severity::Info <= Severity::Fatal));
+        assert!(Severity::Info > Severity::Fatal);
     }
 
     #[test]

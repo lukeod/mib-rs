@@ -31,6 +31,15 @@ impl Span {
         }
     }
 
+    /// Constructs a span from machine-sized offsets.
+    /// Returns synthetic span if offsets exceed representable byte offsets.
+    pub fn from_usize_offsets(start: usize, end: usize) -> Self {
+        match (u32::try_from(start), u32::try_from(end)) {
+            (Ok(start), Ok(end)) => Self::from_offsets(start, end),
+            _ => Self::SYNTHETIC,
+        }
+    }
+
     pub fn is_synthetic(self) -> bool {
         self == Self::SYNTHETIC
     }
