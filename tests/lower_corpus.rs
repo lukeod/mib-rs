@@ -4,7 +4,7 @@ use gomib::types::DiagnosticConfig;
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gomib/testdata/corpus/primary")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
 }
 
 fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {

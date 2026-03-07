@@ -37,6 +37,17 @@ pub(super) fn run_checks(ctx: &mut ResolverContext) {
     check_taddress_tdomain(ctx);
     check_inet_address_pairing(ctx);
     check_transport_address_pairing(ctx);
+    check_defval_constraints(ctx);
+    check_index_constraints(ctx);
+    check_enum_subtyping(ctx);
+    check_hyphen_in_label(ctx);
+    check_basetype_imports(ctx);
+    check_format_hints(ctx);
+    check_capabilities_status(ctx);
+    check_type_status_usage(ctx);
+    check_compliance_status(ctx);
+    check_group_unreferenced(ctx);
+    check_ip_address_deprecation(ctx);
 }
 
 fn emit_all(ctx: &mut ResolverContext, diags: Vec<Diag>) {
@@ -429,18 +440,18 @@ fn check_trap_in_smiv2(ctx: &mut ResolverContext) {
         }
 
         for def in &m.definitions {
-            if let ir::Definition::Notification(n) = def {
-                if n.trap_info.is_some() {
-                    diags.push((
-                        DiagCode::TrapInSMIv2,
-                        Some(ir_id),
-                        n.span,
-                        format!(
-                            "{}: use NOTIFICATION-TYPE instead of TRAP-TYPE in SMIv2",
-                            n.name
-                        ),
-                    ));
-                }
+            if let ir::Definition::Notification(n) = def
+                && n.trap_info.is_some()
+            {
+                diags.push((
+                    DiagCode::TrapInSMIv2,
+                    Some(ir_id),
+                    n.span,
+                    format!(
+                        "{}: use NOTIFICATION-TYPE instead of TRAP-TYPE in SMIv2",
+                        n.name
+                    ),
+                ));
             }
         }
     }
@@ -474,15 +485,16 @@ fn check_type_unreferenced(ctx: &mut ResolverContext) {
         }
 
         for def in &m.definitions {
-            if let ir::Definition::TypeDef(td) = def {
-                if td.is_textual_convention && !referenced.contains(&td.name) {
-                    diags.push((
-                        DiagCode::TypeUnreferenced,
-                        Some(ir_id),
-                        td.span,
-                        format!("{}: textual convention is never referenced", td.name),
-                    ));
-                }
+            if let ir::Definition::TypeDef(td) = def
+                && td.is_textual_convention
+                && !referenced.contains(&td.name)
+            {
+                diags.push((
+                    DiagCode::TypeUnreferenced,
+                    Some(ir_id),
+                    td.span,
+                    format!("{}: textual convention is never referenced", td.name),
+                ));
             }
         }
     }
@@ -580,13 +592,32 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
         }
 
         for def in &m.definitions {
-            let (name, syntax, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
-                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
-                _ => continue,
-            };
-
-            collect_range_diags(&mut diags, ir_id, name, syntax, span);
+            match def {
+                ir::Definition::TypeDef(td) => {
+                    if matches!(td.syntax, ir::TypeSyntax::Sequence { .. }) {
+                        continue;
+                    }
+                    let base = ctx
+                        .module_symbol_to_type
+                        .get(&ir_id)
+                        .and_then(|syms| syms.get(&td.name))
+                        .copied()
+                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()));
+                    collect_range_diags(&mut diags, ir_id, &td.name, &td.syntax, td.span, base);
+                }
+                ir::Definition::ObjectType(ot) => {
+                    let base = ctx
+                        .module_symbol_to_node
+                        .get(&ir_id)
+                        .and_then(|syms| syms.get(&ot.name))
+                        .copied()
+                        .and_then(|nid| ctx.mib.tree().get(nid).object)
+                        .and_then(|oid| ctx.mib.object(oid).typ)
+                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()));
+                    collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.span, base);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -599,36 +630,166 @@ fn collect_range_diags(
     name: &str,
     syntax: &ir::TypeSyntax,
     span: Span,
+    base: Option<BaseType>,
 ) {
     if let ir::TypeSyntax::Constrained { constraint, .. } = syntax {
-        let ranges = match constraint {
-            ir::Constraint::Range { ranges, .. } | ir::Constraint::Size { ranges, .. } => ranges,
+        let (ranges, is_size) = match constraint {
+            ir::Constraint::Size { ranges, .. } => (ranges, true),
+            ir::Constraint::Range { ranges, .. } => (ranges, false),
         };
-        for r in ranges {
-            if let Some(ref max) = r.max {
-                if range_value_gt(&r.min, max) {
+
+        if let Some(base) = base {
+            // SIZE only applies to OCTET STRING and Opaque.
+            if is_size && base != BaseType::OctetString && base != BaseType::Opaque {
+                diags.push((
+                    DiagCode::SizeIllegal,
+                    Some(ir_id),
+                    span,
+                    format!("{name:?}: SIZE constraint illegal for non-octet-string type"),
+                ));
+                return;
+            }
+
+            // Value range only applies to numeric types.
+            if !is_size && !is_numeric_base(base) {
+                diags.push((
+                    DiagCode::RangeIllegal,
+                    Some(ir_id),
+                    span,
+                    format!("{name:?}: range constraint illegal for non-numerical type"),
+                ));
+                return;
+            }
+
+            // Counter types must not have range restrictions (RFC 2578).
+            if !is_size && (base == BaseType::Counter32 || base == BaseType::Counter64) {
+                diags.push((
+                    DiagCode::CounterRangeIllegal,
+                    Some(ir_id),
+                    span,
+                    format!("{name:?}: range constraint illegal for Counter type"),
+                ));
+                return;
+            }
+
+            // TimeTicks may not be sub-typed (RFC 2578 s7.1.8).
+            if !is_size && base == BaseType::TimeTicks {
+                diags.push((
+                    DiagCode::TimeticksRangeIllegal,
+                    Some(ir_id),
+                    span,
+                    format!("{name:?}: range constraint illegal for TimeTicks type"),
+                ));
+                return;
+            }
+        }
+
+        let bounds = if is_size {
+            Some((0i64, 65535i64))
+        } else {
+            base.and_then(basetype_bounds)
+        };
+
+        for (i, r) in ranges.iter().enumerate() {
+            // Exchanged limits (min > max).
+            if let Some(ref max) = r.max
+                && range_value_gt(&r.min, max)
+            {
+                diags.push((
+                    DiagCode::RangeExchanged,
+                    Some(ir_id),
+                    span,
+                    format!("{}: range min ({:?}) > max ({:?})", name, r.min, max),
+                ));
+            }
+
+            // Bounds checking against basetype.
+            if let Some((bmin, bmax)) = bounds {
+                check_range_bound(diags, ir_id, span, name, &r.min, bmin, bmax, "lower");
+                if let Some(ref max) = r.max {
+                    check_range_bound(diags, ir_id, span, name, max, bmin, bmax, "upper");
+                }
+            }
+
+            // Multi-range checks against previous range.
+            if i > 0 {
+                let prev = &ranges[i - 1];
+                let prev_end = prev.max.as_ref().unwrap_or(&prev.min);
+                // Ascending order: current min should be >= previous min.
+                if range_value_gt(&prev.min, &r.min) {
                     diags.push((
-                        DiagCode::RangeExchanged,
+                        DiagCode::RangeAscending,
                         Some(ir_id),
                         span,
-                        format!("{}: range min ({:?}) > max ({:?})", name, r.min, max),
+                        format!("{name:?}: ranges not in ascending order"),
+                    ));
+                }
+                // Overlap: current min should be > previous max.
+                if !range_value_gt(&r.min, prev_end) {
+                    diags.push((
+                        DiagCode::RangeOverlap,
+                        Some(ir_id),
+                        span,
+                        format!("{}: ranges overlap or are not ascending", name),
                     ));
                 }
             }
         }
-        for i in 1..ranges.len() {
-            let prev_end = ranges[i - 1].max.as_ref().unwrap_or(&ranges[i - 1].min);
-            if !range_value_gt(&ranges[i].min, prev_end) {
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_range_bound(
+    diags: &mut Vec<Diag>,
+    ir_id: IrModuleId,
+    span: Span,
+    name: &str,
+    value: &ir::RangeValue,
+    bounds_min: i64,
+    bounds_max: i64,
+    which: &str,
+) {
+    // MIN/MAX keywords are always valid.
+    let v = match value {
+        ir::RangeValue::Signed(v) => *v,
+        ir::RangeValue::Unsigned(v) => {
+            if *v > i64::MAX as u64 {
+                // Value exceeds i64 range, definitely out of bounds for any basetype.
                 diags.push((
-                    DiagCode::RangeOverlap,
+                    DiagCode::RangeBounds,
                     Some(ir_id),
                     span,
-                    format!("{}: ranges overlap or are not ascending", name),
+                    format!("{name:?}: range {which} bound {v} exceeds basetype"),
                 ));
-                break;
+                return;
             }
+            *v as i64
         }
+        ir::RangeValue::Min | ir::RangeValue::Max => return,
+    };
+    if v < bounds_min || v > bounds_max {
+        diags.push((
+            DiagCode::RangeBounds,
+            Some(ir_id),
+            span,
+            format!("{name:?}: range {which} bound {v} exceeds basetype"),
+        ));
     }
+}
+
+fn basetype_bounds(base: BaseType) -> Option<(i64, i64)> {
+    match base {
+        BaseType::Integer32 => Some((i32::MIN as i64, i32::MAX as i64)),
+        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks | BaseType::Counter32 => {
+            Some((0, u32::MAX as i64))
+        }
+        BaseType::Counter64 => Some((0, i64::MAX)),
+        _ => None,
+    }
+}
+
+fn is_numeric_base(base: BaseType) -> bool {
+    basetype_bounds(base).is_some()
 }
 
 /// Flag plain type assignments in SMIv2 (should use TEXTUAL-CONVENTION).
@@ -849,7 +1010,7 @@ fn check_node_implicit(ctx: &mut ResolverContext) {
     let mut stack = vec![root];
     while let Some(nid) = stack.pop() {
         let node = ctx.mib.tree().get(nid);
-        for (_, &child_id) in node.children() {
+        for &child_id in node.children().values() {
             stack.push(child_id);
         }
 
@@ -898,10 +1059,10 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
         // Group definitions by lowercased name, excluding SEQUENCE types.
         let mut by_lower: HashMap<String, Vec<(&str, Span)>> = HashMap::new();
         for def in &m.definitions {
-            if let ir::Definition::TypeDef(td) = def {
-                if matches!(td.syntax, ir::TypeSyntax::Sequence { .. }) {
-                    continue;
-                }
+            if let ir::Definition::TypeDef(td) = def
+                && matches!(td.syntax, ir::TypeSyntax::Sequence { .. })
+            {
+                continue;
             }
             let name = def.name();
             let span = def.span();
@@ -911,7 +1072,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
                 .push((name, span));
         }
 
-        for (_key, defs) in &by_lower {
+        for defs in by_lower.values() {
             if defs.len() < 2 {
                 continue;
             }
@@ -994,21 +1155,21 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
 
             // SMIv1 access per version (accessible-for-notify/read-create invalid).
             if let ir::Definition::ObjectType(ot) = def {
-                if m.language == Language::SMIv1 {
-                    if matches!(
+                if m.language == Language::SMIv1
+                    && matches!(
                         ot.access,
                         Access::AccessibleForNotify | Access::ReadCreate
-                    ) {
-                        diags.push((
-                            DiagCode::AccessInvalidSMIv1,
-                            Some(ir_id),
-                            ot.access_span,
-                            format!(
-                                "{}: invalid access {} in SMIv1",
-                                ot.name, ot.access
-                            ),
-                        ));
-                    }
+                    )
+                {
+                    diags.push((
+                        DiagCode::AccessInvalidSMIv1,
+                        Some(ir_id),
+                        ot.access_span,
+                        format!(
+                            "{}: invalid access {} in SMIv1",
+                            ot.name, ot.access
+                        ),
+                    ));
                 }
                 // Scalar must not be read-create.
                 if let Some(node_id) = ctx
@@ -1048,10 +1209,10 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
         // Find SEQUENCE type definitions in this module.
         let mut seq_types: HashMap<String, &[ir::SequenceField]> = HashMap::new();
         for def in &m.definitions {
-            if let ir::Definition::TypeDef(td) = def {
-                if let ir::TypeSyntax::Sequence { fields, .. } = &td.syntax {
-                    seq_types.insert(td.name.clone(), fields);
-                }
+            if let ir::Definition::TypeDef(td) = def
+                && let ir::TypeSyntax::Sequence { fields, .. } = &td.syntax
+            {
+                seq_types.insert(td.name.clone(), fields);
             }
         }
 
@@ -1622,54 +1783,14 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
     let Some(t_domain) = ctx.mib.type_by_name("TDomain") else {
         return;
     };
-    check_address_pairing(ctx, t_address, t_domain, DiagCode::TAddressTDomain, "TAddress", "TDomain");
-}
 
-fn check_inet_address_pairing(ctx: &mut ResolverContext) {
-    let Some(addr) = lookup_type_in_named_module(ctx, "INET-ADDRESS-MIB", "InetAddress") else {
-        return;
-    };
-    let Some(addr_type) = lookup_type_in_named_module(ctx, "INET-ADDRESS-MIB", "InetAddressType") else {
-        return;
-    };
-    check_address_pairing(
-        ctx,
-        addr,
-        addr_type,
-        DiagCode::InetAddressPairing,
-        "InetAddress",
-        "InetAddressType",
-    );
-}
+    struct Check {
+        ir_mod: Option<IrModuleId>,
+        span: Span,
+        name: String,
+    }
+    let mut checks = Vec::new();
 
-fn check_transport_address_pairing(ctx: &mut ResolverContext) {
-    let Some(addr) = lookup_type_in_named_module(ctx, "TRANSPORT-ADDRESS-MIB", "TransportAddress")
-    else {
-        return;
-    };
-    let Some(addr_type) =
-        lookup_type_in_named_module(ctx, "TRANSPORT-ADDRESS-MIB", "TransportAddressType")
-    else {
-        return;
-    };
-    check_address_pairing(
-        ctx,
-        addr,
-        addr_type,
-        DiagCode::TransportAddressPairing,
-        "TransportAddress",
-        "TransportAddressType",
-    );
-}
-
-fn check_address_pairing(
-    ctx: &mut ResolverContext,
-    address_type_id: TypeId,
-    address_type_type_id: TypeId,
-    diag: DiagCode,
-    address_name: &str,
-    address_type_name: &str,
-) {
     let object_ids: Vec<ObjectId> = (0..ctx.mib.objects_slice().len())
         .map(|i| ObjectId::new(i as u32))
         .collect();
@@ -1685,37 +1806,275 @@ fn check_address_pairing(
         if ctx.mib.tree().get(node_id).kind != Kind::Column {
             continue;
         }
-        if !is_derived_from_type(ctx, type_id, address_type_id) {
+        if !is_derived_from_type(ctx, type_id, t_address) {
             continue;
         }
         let Some(row_id) = row_object_for_column(ctx, node_id) else {
             continue;
         };
-        let mut found = false;
-        for col in row_column_objects(ctx, row_id) {
-            let Some(col_type) = ctx.mib.object(col).type_id() else {
-                continue;
-            };
-            if is_derived_from_type(ctx, col_type, address_type_type_id) {
-                found = true;
+        let has_sibling = row_column_objects(ctx, row_id).iter().any(|&col| {
+            ctx.mib
+                .object(col)
+                .type_id()
+                .is_some_and(|ct| is_derived_from_type(ctx, ct, t_domain))
+        });
+        if !has_sibling {
+            checks.push(Check {
+                ir_mod: obj.module().and_then(|m| ctx.resolved_to_module.get(&m).copied()),
+                span: obj.span(),
+                name: obj.name().to_string(),
+            });
+        }
+    }
+
+    for check in checks {
+        ctx.emit_diagnostic(
+            DiagCode::TAddressTDomain,
+            check.ir_mod,
+            check.span,
+            format!("{:?}: TAddress column has no sibling with TDomain type", check.name),
+        );
+    }
+}
+
+fn check_inet_address_pairing(ctx: &mut ResolverContext) {
+    check_address_type_pairing(ctx, &AddressPairingConfig {
+        module_name: "INET-ADDRESS-MIB",
+        address_type: "InetAddress",
+        address_type_type: "InetAddressType",
+        specific_types: &[
+            "InetAddressIPv4",
+            "InetAddressIPv6",
+            "InetAddressIPv4z",
+            "InetAddressIPv6z",
+            "InetAddressDNS",
+        ],
+        diag_pairing: DiagCode::InetAddressPairing,
+        diag_subtyped: DiagCode::InetAddressTypeSubtyped,
+        diag_specific: DiagCode::InetAddressSpecific,
+    });
+}
+
+fn check_transport_address_pairing(ctx: &mut ResolverContext) {
+    check_address_type_pairing(ctx, &AddressPairingConfig {
+        module_name: "TRANSPORT-ADDRESS-MIB",
+        address_type: "TransportAddress",
+        address_type_type: "TransportAddressType",
+        specific_types: &[
+            "TransportAddressIPv4",
+            "TransportAddressIPv6",
+            "TransportAddressIPv4z",
+            "TransportAddressIPv6z",
+            "TransportAddressLocal",
+            "TransportAddressDns",
+        ],
+        diag_pairing: DiagCode::TransportAddressPairing,
+        diag_subtyped: DiagCode::TransportAddressTypeSubtyped,
+        diag_specific: DiagCode::TransportAddressSpecific,
+    });
+}
+
+struct AddressPairingConfig<'a> {
+    module_name: &'a str,
+    address_type: &'a str,
+    address_type_type: &'a str,
+    specific_types: &'a [&'a str],
+    diag_pairing: DiagCode,
+    diag_subtyped: DiagCode,
+    diag_specific: DiagCode,
+}
+
+/// Implements three related checks for address/address-type pairing patterns:
+/// - Pairing: address column should have a sibling address-type column
+/// - Subtyped: address-type with enum refinement needs correspondingly constrained address sibling
+/// - Specific: specific address variants should not be used when generic type is appropriate
+fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingConfig) {
+    let Some(addr_type_id) = lookup_type_in_named_module(ctx, cfg.module_name, cfg.address_type)
+    else {
+        return;
+    };
+    let Some(addr_type_type_id) =
+        lookup_type_in_named_module(ctx, cfg.module_name, cfg.address_type_type)
+    else {
+        return;
+    };
+
+    // Resolve specific variant types.
+    let specific_type_ids: Vec<TypeId> = cfg
+        .specific_types
+        .iter()
+        .filter_map(|name| lookup_type_in_named_module(ctx, cfg.module_name, name))
+        .collect();
+
+    // Collect check info before emitting diagnostics.
+    struct PairingCheck {
+        ir_mod: Option<IrModuleId>,
+        span: Span,
+        name: String,
+        check: PairingCheckKind,
+    }
+    enum PairingCheckKind {
+        MissingSibling,
+        Subtyped { sibling_name: String },
+        Specific { variant_name: String },
+    }
+
+    let mut checks: Vec<PairingCheck> = Vec::new();
+
+    // Build IR lookup for object syntax (needed for subtyped/SIZE checks).
+    let mut obj_syntax_map: HashMap<(IrModuleId, String), &ir::TypeSyntax> = HashMap::new();
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        for def in &m.definitions {
+            if let ir::Definition::ObjectType(ot) = def {
+                obj_syntax_map.insert((ir_id, ot.name.clone()), &ot.syntax);
+            }
+        }
+    }
+
+    let object_ids: Vec<ObjectId> = (0..ctx.mib.objects_slice().len())
+        .map(|i| ObjectId::new(i as u32))
+        .collect();
+
+    for oid in &object_ids {
+        let obj = ctx.mib.object(*oid);
+        let Some(type_id) = obj.type_id() else {
+            continue;
+        };
+        let Some(node_id) = obj.node() else {
+            continue;
+        };
+        if ctx.mib.tree().get(node_id).kind != Kind::Column {
+            continue;
+        }
+        let ir_mod = obj
+            .module()
+            .and_then(|m| ctx.resolved_to_module.get(&m).copied());
+        let obj_name = obj.name().to_string();
+        let obj_span = obj.span();
+
+        // Check 1: address column without address-type sibling.
+        if is_derived_from_type(ctx, type_id, addr_type_id) {
+            if let Some(row_id) = row_object_for_column(ctx, node_id) {
+                let has_sibling = row_column_objects(ctx, row_id).iter().any(|&col| {
+                    ctx.mib
+                        .object(col)
+                        .type_id()
+                        .is_some_and(|ct| is_derived_from_type(ctx, ct, addr_type_type_id))
+                });
+                if !has_sibling {
+                    checks.push(PairingCheck {
+                        ir_mod,
+                        span: obj_span,
+                        name: obj_name,
+                        check: PairingCheckKind::MissingSibling,
+                    });
+                }
+            }
+            continue;
+        }
+
+        // Check 2: address-type column with enum refinement but address sibling lacks SIZE.
+        if is_derived_from_type(ctx, type_id, addr_type_type_id) {
+            // Only check if the OBJECT-TYPE SYNTAX has explicit enum refinement.
+            let has_enum_syntax = ir_mod.is_some_and(|ir_id| {
+                obj_syntax_map
+                    .get(&(ir_id, obj_name.clone()))
+                    .is_some_and(|s| matches!(s, ir::TypeSyntax::IntegerEnum { .. }))
+            });
+            if has_enum_syntax
+                && let Some(row_id) = row_object_for_column(ctx, node_id)
+            {
+                for col in row_column_objects(ctx, row_id) {
+                    let col_obj = ctx.mib.object(col);
+                    let Some(col_type) = col_obj.type_id() else {
+                        continue;
+                    };
+                    if !is_derived_from_type(ctx, col_type, addr_type_id) {
+                        continue;
+                    }
+                    // Check whether the sibling has an explicit SIZE constraint.
+                    let col_name = col_obj.name().to_string();
+                    let has_size = ir_mod.is_some_and(|ir_id| {
+                        obj_syntax_map
+                            .get(&(ir_id, col_name.clone()))
+                            .is_some_and(|s| {
+                                matches!(
+                                    s,
+                                    ir::TypeSyntax::Constrained {
+                                        constraint: ir::Constraint::Size { .. },
+                                        ..
+                                    }
+                                )
+                            })
+                    });
+                    if !has_size {
+                        checks.push(PairingCheck {
+                            ir_mod,
+                            span: obj_span,
+                            name: obj_name.clone(),
+                            check: PairingCheckKind::Subtyped {
+                                sibling_name: col_name,
+                            },
+                        });
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // Check 3: specific variant used instead of generic address type.
+        for &specific_id in &specific_type_ids {
+            if is_derived_from_type(ctx, type_id, specific_id) {
+                let variant_name = ctx.mib.type_(specific_id).name().to_string();
+                checks.push(PairingCheck {
+                    ir_mod,
+                    span: obj_span,
+                    name: obj_name.clone(),
+                    check: PairingCheckKind::Specific { variant_name },
+                });
                 break;
             }
         }
-        if !found {
-            let ir_mod = obj
-                .module()
-                .and_then(|m| ctx.resolved_to_module.get(&m).copied());
-            ctx.emit_diagnostic(
-                diag,
-                ir_mod,
-                obj.span(),
-                format!(
-                    "{:?}: {} column has no sibling with {} type",
-                    obj.name(),
-                    address_name,
-                    address_type_name
-                ),
-            );
+    }
+
+    for check in checks {
+        match check.check {
+            PairingCheckKind::MissingSibling => {
+                ctx.emit_diagnostic(
+                    cfg.diag_pairing,
+                    check.ir_mod,
+                    check.span,
+                    format!(
+                        "{:?}: {} column has no sibling with {} type",
+                        check.name, cfg.address_type, cfg.address_type_type
+                    ),
+                );
+            }
+            PairingCheckKind::Subtyped { sibling_name } => {
+                ctx.emit_diagnostic(
+                    cfg.diag_subtyped,
+                    check.ir_mod,
+                    check.span,
+                    format!(
+                        "{:?}: {} is subtyped but sibling {:?} ({}) has no SIZE constraint",
+                        check.name, cfg.address_type_type, sibling_name, cfg.address_type
+                    ),
+                );
+            }
+            PairingCheckKind::Specific { variant_name } => {
+                ctx.emit_diagnostic(
+                    cfg.diag_specific,
+                    check.ir_mod,
+                    check.span,
+                    format!(
+                        "{:?}: {} is a specific variant, use {} with {}",
+                        check.name, variant_name, cfg.address_type, cfg.address_type_type
+                    ),
+                );
+            }
         }
     }
 }
@@ -1819,6 +2178,1209 @@ fn sequence_types_compatible(field_type: &str, col_type: &str, col_base: BaseTyp
         return true;
     }
     false
+}
+
+// --- DEFVAL validation ---
+
+/// Validate DEFVAL values against the object's type.
+fn check_defval_constraints(ctx: &mut ResolverContext) {
+    use crate::mib::types::DefValValue;
+
+    // Collect all info we need before mutating ctx.
+    struct DefvalCheck {
+        ir_mod: Option<IrModuleId>,
+        span: Span,
+        name: String,
+        base: BaseType,
+        dv_value: DefValValue,
+        ranges: Vec<crate::mib::types::Range>,
+        enums: Vec<crate::mib::types::NamedValue>,
+        bits: Vec<crate::mib::types::NamedValue>,
+    }
+
+    let mut checks = Vec::new();
+
+    for i in 0..ctx.mib.objects_slice().len() {
+        let obj_id = ObjectId::new(i as u32);
+        let obj = ctx.mib.object(obj_id);
+        let dv = match obj.default_value() {
+            Some(dv) => dv,
+            None => continue,
+        };
+        let type_id = match obj.type_id() {
+            Some(t) => t,
+            None => continue,
+        };
+        let t = ctx.mib.type_(type_id);
+        let base = t.effective_base(ctx.mib.types_slice());
+        let module_id = obj.module();
+        let ir_mod = module_id.and_then(|m| ctx.resolved_to_module.get(&m).copied());
+
+        checks.push(DefvalCheck {
+            ir_mod,
+            span: obj.span(),
+            name: obj.name().to_string(),
+            base,
+            dv_value: dv.value.clone(),
+            ranges: obj.effective_ranges().to_vec(),
+            enums: obj.effective_enums().to_vec(),
+            bits: obj.effective_bits().to_vec(),
+        });
+    }
+
+    for check in checks {
+        // Counter32 and Counter64 must not have DEFVAL.
+        if check.base == BaseType::Counter32 || check.base == BaseType::Counter64 {
+            ctx.emit_diagnostic(
+                DiagCode::CounterDefvalIllegal,
+                check.ir_mod,
+                check.span,
+                format!("{:?}: DEFVAL not allowed for counter type", check.name),
+            );
+            continue;
+        }
+
+        match &check.dv_value {
+            DefValValue::Int(v) => {
+                check_defval_numeric(
+                    ctx, check.ir_mod, check.span, &check.name, *v, check.base, &check.ranges, &check.enums,
+                );
+            }
+            DefValValue::Uint(uv) => {
+                check_defval_unsigned(
+                    ctx, check.ir_mod, check.span, &check.name, *uv, check.base, &check.ranges, &check.enums,
+                );
+            }
+            DefValValue::Enum(label) => {
+                if !check.enums.is_empty()
+                    && !check.enums.iter().any(|e| e.label == *label)
+                {
+                    ctx.emit_diagnostic(
+                        DiagCode::DefvalEnum,
+                        check.ir_mod,
+                        check.span,
+                        format!(
+                            "{:?}: DEFVAL enum label {:?} not defined in type",
+                            check.name, label
+                        ),
+                    );
+                }
+            }
+            DefValValue::Bits(labels) => {
+                for label in labels {
+                    if !check.bits.iter().any(|b| b.label == *label) {
+                        ctx.emit_diagnostic(
+                            DiagCode::DefvalBits,
+                            check.ir_mod,
+                            check.span,
+                            format!(
+                                "{:?}: DEFVAL BITS label {:?} not defined in type",
+                                check.name, label
+                            ),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_defval_numeric(
+    ctx: &mut ResolverContext,
+    ir_mod: Option<IrModuleId>,
+    span: Span,
+    name: &str,
+    v: i64,
+    base: BaseType,
+    ranges: &[crate::mib::types::Range],
+    enums: &[crate::mib::types::NamedValue],
+) {
+    // Check basetype limits.
+    match base {
+        BaseType::Integer32 => {
+            if v < i32::MIN as i64 || v > i32::MAX as i64 {
+                ctx.emit_diagnostic(
+                    DiagCode::DefvalBasetype,
+                    ir_mod,
+                    span,
+                    format!("{name:?}: DEFVAL {v} exceeds Integer32 range"),
+                );
+            }
+        }
+        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
+            if v < 0 || v > u32::MAX as i64 {
+                ctx.emit_diagnostic(
+                    DiagCode::DefvalBasetype,
+                    ir_mod,
+                    span,
+                    format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
+                );
+            }
+        }
+        _ => {}
+    }
+    // Check RANGE constraints.
+    if !ranges.is_empty() && !value_in_ranges(v, ranges) {
+        ctx.emit_diagnostic(
+            DiagCode::DefvalRange,
+            ir_mod,
+            span,
+            format!("{name:?}: DEFVAL {v} outside RANGE constraint"),
+        );
+    }
+    // Check enum membership.
+    if !enums.is_empty() && !enums.iter().any(|e| e.value == v) {
+        ctx.emit_diagnostic(
+            DiagCode::DefvalEnum,
+            ir_mod,
+            span,
+            format!("{name:?}: DEFVAL {v} does not match any enumeration value"),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_defval_unsigned(
+    ctx: &mut ResolverContext,
+    ir_mod: Option<IrModuleId>,
+    span: Span,
+    name: &str,
+    v: u64,
+    base: BaseType,
+    ranges: &[crate::mib::types::Range],
+    enums: &[crate::mib::types::NamedValue],
+) {
+    match base {
+        BaseType::Integer32 => {
+            if v > i32::MAX as u64 {
+                ctx.emit_diagnostic(
+                    DiagCode::DefvalBasetype,
+                    ir_mod,
+                    span,
+                    format!("{name:?}: DEFVAL {v} exceeds Integer32 range"),
+                );
+            }
+        }
+        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
+            if v > u32::MAX as u64 {
+                ctx.emit_diagnostic(
+                    DiagCode::DefvalBasetype,
+                    ir_mod,
+                    span,
+                    format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
+                );
+            }
+        }
+        _ => {}
+    }
+    if !ranges.is_empty() && v <= i64::MAX as u64 {
+        let in_range = ranges.iter().any(|r| {
+            if r.max < 0 {
+                return false;
+            }
+            let min = if r.min > 0 { r.min as u64 } else { 0 };
+            v >= min && v <= r.max as u64
+        });
+        if !in_range {
+            ctx.emit_diagnostic(
+                DiagCode::DefvalRange,
+                ir_mod,
+                span,
+                format!("{name:?}: DEFVAL {v} outside RANGE constraint"),
+            );
+        }
+    }
+    if !enums.is_empty() {
+        let found = enums.iter().any(|e| e.value >= 0 && e.value as u64 == v);
+        if !found {
+            ctx.emit_diagnostic(
+                DiagCode::DefvalEnum,
+                ir_mod,
+                span,
+                format!("{name:?}: DEFVAL {v} does not match any enumeration value"),
+            );
+        }
+    }
+}
+
+fn value_in_ranges(v: i64, ranges: &[crate::mib::types::Range]) -> bool {
+    ranges.iter().any(|r| v >= r.min && v <= r.max)
+}
+
+// --- Index validation ---
+
+fn check_index_constraints(ctx: &mut ResolverContext) {
+    // Collect data first, then emit diagnostics.
+    let mut diags = Vec::new();
+    let mut oid_length_check_ids: Vec<ObjectId> = Vec::new();
+
+    for i in 0..ctx.mib.objects_slice().len() {
+        let obj_id = ObjectId::new(i as u32);
+        let obj = ctx.mib.object(obj_id);
+        let index = obj.index();
+        if index.is_empty() {
+            continue;
+        }
+
+        let module_id = obj.module();
+        let ir_mod = module_id.and_then(|m| ctx.resolved_to_module.get(&m).copied());
+        let lang = module_id.map(|m| ctx.mib.module(m).language()).unwrap_or(Language::Unknown);
+        let span = obj.span();
+        let obj_name = obj.name().to_string();
+
+        for entry in index {
+            let idx_obj_id = match entry.object {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let idx_obj = ctx.mib.object(idx_obj_id);
+            let idx_name = idx_obj.name().to_string();
+
+            // INDEX column access checks.
+            match lang {
+                Language::SMIv2 => {
+                    if idx_obj.access() != Access::NotAccessible {
+                        diags.push((
+                            DiagCode::IndexAccessible,
+                            ir_mod,
+                            span,
+                            format!(
+                                "INDEX {:?} of {:?} should be not-accessible in SMIv2",
+                                idx_name, obj_name
+                            ),
+                        ));
+                    }
+                }
+                Language::SMIv1 => {
+                    if idx_obj.access() == Access::NotAccessible {
+                        diags.push((
+                            DiagCode::IndexNotAccessible,
+                            ir_mod,
+                            span,
+                            format!(
+                                "INDEX {:?} of {:?} should be accessible in SMIv1",
+                                idx_name, obj_name
+                            ),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+
+            // INDEX elements should not have DEFVAL.
+            if idx_obj.default_value().is_some() {
+                diags.push((
+                    DiagCode::IndexDefval,
+                    ir_mod,
+                    span,
+                    format!("INDEX {:?} of {:?} has a DEFVAL", idx_name, obj_name),
+                ));
+            }
+
+            let type_id = match idx_obj.type_id() {
+                Some(t) => t,
+                None => continue,
+            };
+            let t = ctx.mib.type_(type_id);
+            let base = t.effective_base(ctx.mib.types_slice());
+
+            if base == BaseType::Counter32 {
+                diags.push((
+                    DiagCode::IndexCounterIllegal,
+                    ir_mod,
+                    span,
+                    format!("INDEX {:?} of {:?} has counter base type", idx_name, obj_name),
+                ));
+            } else if !is_legal_index_basetype(base) {
+                diags.push((
+                    DiagCode::IndexIllegalBasetype,
+                    ir_mod,
+                    span,
+                    format!(
+                        "INDEX {:?} of {:?} has illegal base type {:?}",
+                        idx_name, obj_name, base
+                    ),
+                ));
+                continue;
+            }
+
+            // OCTET STRING/Opaque index elements must have SIZE.
+            if base == BaseType::OctetString || base == BaseType::Opaque {
+                if idx_obj.effective_sizes().is_empty() {
+                    diags.push((
+                        DiagCode::IndexElementNoSize,
+                        ir_mod,
+                        span,
+                        format!("INDEX {:?} of {:?} has no SIZE restriction", idx_name, obj_name),
+                    ));
+                }
+                continue;
+            }
+
+            if base != BaseType::Integer32 {
+                continue;
+            }
+
+            let ranges = idx_obj.effective_ranges();
+            let enums = idx_obj.effective_enums();
+
+            // Enum-valued indexes: check for negative enum values.
+            if !enums.is_empty() {
+                for e in enums {
+                    if e.value < 0 {
+                        diags.push((
+                            DiagCode::IndexNegativeRange,
+                            ir_mod,
+                            span,
+                            format!(
+                                "INDEX {:?} of {:?} has negative enumeration value {:?}",
+                                idx_name, obj_name, e.label
+                            ),
+                        ));
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            // No range restriction on an integer index.
+            if ranges.is_empty() {
+                diags.push((
+                    DiagCode::IndexIntegerNoRange,
+                    ir_mod,
+                    span,
+                    format!("INDEX {:?} of {:?} has no range restriction", idx_name, obj_name),
+                ));
+                continue;
+            }
+
+            // Range includes negative values.
+            for r in ranges {
+                if r.min < 0 {
+                    diags.push((
+                        DiagCode::IndexNegativeRange,
+                        ir_mod,
+                        span,
+                        format!(
+                            "INDEX {:?} of {:?} has range permitting negative values",
+                            idx_name, obj_name
+                        ),
+                    ));
+                    break;
+                }
+            }
+        }
+
+        oid_length_check_ids.push(obj_id);
+    }
+
+    emit_all(ctx, diags);
+
+    // Check total index OID length against the 128 sub-identifier limit.
+    for obj_id in oid_length_check_ids {
+        check_index_oid_length(ctx, obj_id);
+    }
+}
+
+fn is_legal_index_basetype(base: BaseType) -> bool {
+    matches!(
+        base,
+        BaseType::Integer32
+            | BaseType::Unsigned32
+            | BaseType::Gauge32
+            | BaseType::TimeTicks
+            | BaseType::Counter32
+            | BaseType::Counter64
+            | BaseType::OctetString
+            | BaseType::Opaque
+            | BaseType::IpAddress
+            | BaseType::ObjectIdentifier
+    )
+}
+
+fn check_index_oid_length(ctx: &mut ResolverContext, obj_id: ObjectId) {
+    let obj = ctx.mib.object(obj_id);
+    let node_id = match obj.node() {
+        Some(n) => n,
+        None => return,
+    };
+    let row_oid = ctx.mib.tree().oid_of(node_id);
+    let mut total_len = row_oid.len();
+
+    for entry in obj.index() {
+        let n = match index_element_sub_ids(ctx, entry) {
+            Some(n) => n,
+            None => return, // can't compute, skip
+        };
+        total_len += n;
+    }
+
+    if total_len > 128 {
+        let excess = total_len - 128;
+        let ir_mod = obj
+            .module()
+            .and_then(|m| ctx.resolved_to_module.get(&m).copied());
+        ctx.emit_diagnostic(
+            DiagCode::IndexExceedsTooLarge,
+            ir_mod,
+            obj.span(),
+            format!(
+                "{:?} index OID exceeds 128 sub-identifiers by {}",
+                obj.name(),
+                excess
+            ),
+        );
+    }
+}
+
+fn index_element_sub_ids(
+    ctx: &ResolverContext,
+    entry: &crate::mib::types::IndexEntry,
+) -> Option<usize> {
+    use crate::types::IndexEncoding;
+    match entry.encoding {
+        IndexEncoding::Integer => Some(1),
+        IndexEncoding::IpAddress => Some(4),
+        IndexEncoding::FixedString => {
+            let obj_id = entry.object?;
+            let obj = ctx.mib.object(obj_id);
+            let sizes = obj.effective_sizes();
+            if sizes.is_empty() {
+                return None;
+            }
+            Some(sizes[0].max as usize)
+        }
+        IndexEncoding::LengthPrefixed => None,
+        IndexEncoding::Implied => {
+            // Implied: uses trailing octets without length prefix.
+            // Conservative: return 1 to avoid false positives.
+            Some(1)
+        }
+        IndexEncoding::Unknown => None,
+    }
+}
+
+// --- Enum subtyping ---
+
+fn check_enum_subtyping(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let (name, syntax, span) = match def {
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                _ => continue,
+            };
+
+            check_enum_subtyping_syntax(&mut diags, ctx, ir_id, name, syntax, span);
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+fn check_enum_subtyping_syntax(
+    diags: &mut Vec<Diag>,
+    ctx: &ResolverContext,
+    ir_id: IrModuleId,
+    name: &str,
+    syntax: &ir::TypeSyntax,
+    span: Span,
+) {
+    let (base_name, named_numbers) = match syntax {
+        ir::TypeSyntax::IntegerEnum {
+            base,
+            named_numbers,
+            ..
+        } if !base.is_empty() && !named_numbers.is_empty() => (base.as_str(), named_numbers),
+        _ => return,
+    };
+
+    let parent_type_id = match ctx.lookup_type_for_module(ir_id, base_name) {
+        Some((id, _)) => id,
+        None => return,
+    };
+
+    let parent_type = ctx.mib.type_(parent_type_id);
+    let parent_bits = parent_type.effective_bits(ctx.mib.types_slice());
+    let parent_enums = parent_type.effective_enums(ctx.mib.types_slice());
+
+    let (parent_values, diag_code, label) = if !parent_bits.is_empty() {
+        (parent_bits, DiagCode::SubtypeBitsIllegal, "BITS value")
+    } else if !parent_enums.is_empty() {
+        (parent_enums, DiagCode::SubtypeEnumIllegal, "enum value")
+    } else {
+        return;
+    };
+
+    for nn in named_numbers {
+        let found = parent_values
+            .iter()
+            .any(|pv| pv.label == nn.name && pv.value == nn.value);
+        if !found {
+            diags.push((
+                diag_code,
+                Some(ir_id),
+                span,
+                format!(
+                    "{:?}: {} {}({}) not in parent type {:?}",
+                    name, label, nn.name, nn.value, base_name
+                ),
+            ));
+        }
+    }
+}
+
+// --- Hyphen in label ---
+
+fn check_hyphen_in_label(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if m.language != Language::SMIv2 || base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let (name, syntax, span) = match def {
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                _ => continue,
+            };
+            check_hyphen_in_syntax(&mut diags, ir_id, name, syntax, span);
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+fn check_hyphen_in_syntax(
+    diags: &mut Vec<Diag>,
+    ir_id: IrModuleId,
+    name: &str,
+    syntax: &ir::TypeSyntax,
+    span: Span,
+) {
+    match syntax {
+        ir::TypeSyntax::IntegerEnum { named_numbers, .. } => {
+            for nn in named_numbers {
+                if nn.name.contains('-') {
+                    diags.push((
+                        DiagCode::HyphenInLabel,
+                        Some(ir_id),
+                        span,
+                        format!("{:?}: named number {:?} contains a hyphen", name, nn.name),
+                    ));
+                }
+            }
+        }
+        ir::TypeSyntax::Bits { named_bits, .. } => {
+            for nb in named_bits {
+                if nb.name.contains('-') {
+                    diags.push((
+                        DiagCode::HyphenInLabel,
+                        Some(ir_id),
+                        span,
+                        format!("{:?}: BITS label {:?} contains a hyphen", name, nb.name),
+                    ));
+                }
+            }
+        }
+        ir::TypeSyntax::Constrained { base, .. } => {
+            check_hyphen_in_syntax(diags, ir_id, name, base, span);
+        }
+        _ => {}
+    }
+}
+
+// --- Basetype imports ---
+
+fn check_basetype_imports(ctx: &mut ResolverContext) {
+    const SMI_BASE_TYPES: &[(&str, &str)] = &[
+        ("Integer32", "SNMPv2-SMI"),
+        ("Counter32", "SNMPv2-SMI"),
+        ("Counter64", "SNMPv2-SMI"),
+        ("Gauge32", "SNMPv2-SMI"),
+        ("Unsigned32", "SNMPv2-SMI"),
+        ("TimeTicks", "SNMPv2-SMI"),
+        ("IpAddress", "SNMPv2-SMI"),
+        ("Opaque", "SNMPv2-SMI"),
+    ];
+
+    let base_type_map: HashMap<&str, &str> = SMI_BASE_TYPES.iter().copied().collect();
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if m.language != Language::SMIv2 || base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        let imported: HashSet<&str> = m.imports.iter().map(|i| i.symbol.as_str()).collect();
+
+        let mut referenced: HashSet<&str> = HashSet::new();
+        for def in &m.definitions {
+            match def {
+                ir::Definition::ObjectType(ot) => {
+                    collect_syntax_basetype_refs(&ot.syntax, &base_type_map, &mut referenced);
+                }
+                ir::Definition::TypeDef(td) => {
+                    collect_syntax_basetype_refs(&td.syntax, &base_type_map, &mut referenced);
+                }
+                _ => {}
+            }
+        }
+
+        for type_name in referenced {
+            if imported.contains(type_name) {
+                continue;
+            }
+            let expected_mod = base_type_map.get(type_name).unwrap_or(&"SNMPv2-SMI");
+            diags.push((
+                DiagCode::BasetypeNotImported,
+                Some(ir_id),
+                m.span,
+                format!("{} used but not imported from {} in {}", type_name, expected_mod, m.name),
+            ));
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+fn collect_syntax_basetype_refs<'a>(
+    syntax: &'a ir::TypeSyntax,
+    base_types: &HashMap<&str, &str>,
+    refs: &mut HashSet<&'a str>,
+) {
+    match syntax {
+        ir::TypeSyntax::TypeRef { name, .. } => {
+            if base_types.contains_key(name.as_str()) {
+                refs.insert(name.as_str());
+            }
+        }
+        ir::TypeSyntax::Constrained { base, .. } => {
+            collect_syntax_basetype_refs(base, base_types, refs);
+        }
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => {
+            if base_types.contains_key(base.as_str()) {
+                refs.insert(base.as_str());
+            }
+        }
+        _ => {}
+    }
+}
+
+// --- Format hints ---
+
+fn check_format_hints(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let td = match def {
+                ir::Definition::TypeDef(td) if td.is_textual_convention => td,
+                _ => continue,
+            };
+
+            let type_id = match ctx
+                .module_symbol_to_type
+                .get(&ir_id)
+                .and_then(|syms| syms.get(&td.name))
+                .copied()
+            {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let t = ctx.mib.type_(type_id);
+            let base = t.effective_base(ctx.mib.types_slice());
+
+            if !td.display_hint.is_empty() {
+                let valid = match base {
+                    BaseType::Integer32 | BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
+                        validate_display_hint_integer(&td.display_hint)
+                    }
+                    BaseType::OctetString | BaseType::Opaque => {
+                        validate_display_hint_octet_string(&td.display_hint)
+                    }
+                    _ => false,
+                };
+                if !valid {
+                    diags.push((
+                        DiagCode::InvalidFormat,
+                        Some(ir_id),
+                        td.span,
+                        format!(
+                            "{:?}: invalid DISPLAY-HINT {:?} for base type {:?}",
+                            td.name, td.display_hint, base
+                        ),
+                    ));
+                }
+            } else if t.effective_display_hint(ctx.mib.types_slice()).is_empty()
+                && matches!(
+                    base,
+                    BaseType::OctetString | BaseType::Integer32 | BaseType::Unsigned32 | BaseType::Gauge32
+                )
+            {
+                diags.push((
+                    DiagCode::TypeWithoutFormat,
+                    Some(ir_id),
+                    td.span,
+                    format!("{:?}: textual convention without DISPLAY-HINT", td.name),
+                ));
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+fn validate_display_hint_integer(hint: &str) -> bool {
+    if hint.is_empty() {
+        return false;
+    }
+    let bytes = hint.as_bytes();
+    match bytes[0] {
+        b'x' | b'o' | b'b' => bytes.len() == 1,
+        b'd' => {
+            if bytes.len() == 1 {
+                return true;
+            }
+            if bytes.len() < 3 || bytes[1] != b'-' {
+                return false;
+            }
+            bytes[2..].iter().all(|b| b.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
+fn validate_display_hint_octet_string(hint: &str) -> bool {
+    if hint.is_empty() {
+        return false;
+    }
+    let bytes = hint.as_bytes();
+    let mut p = 0;
+    let mut last_spec_consumes = false;
+
+    while p < bytes.len() {
+        // Optional repeat indicator
+        let repeat = if bytes[p] == b'*' {
+            p += 1;
+            true
+        } else {
+            false
+        };
+
+        // Required octet count
+        let mut n = 0;
+        let mut take = 0;
+        while p < bytes.len() && bytes[p].is_ascii_digit() {
+            take = take * 10 + (bytes[p] - b'0') as usize;
+            p += 1;
+            n += 1;
+        }
+        if n == 0 {
+            return false;
+        }
+
+        // Required format character
+        if p >= bytes.len() {
+            return false;
+        }
+        match bytes[p] {
+            b'x' | b'd' | b'o' | b'a' | b't' => p += 1,
+            _ => return false,
+        }
+
+        // Optional separator character
+        if p < bytes.len() && bytes[p] != b'*' && !bytes[p].is_ascii_digit() {
+            p += 1;
+            // Optional repeat terminator
+            if repeat && p < bytes.len() && bytes[p] != b'*' && !bytes[p].is_ascii_digit() {
+                p += 1;
+            }
+        }
+
+        last_spec_consumes = take > 0 || repeat;
+    }
+
+    last_spec_consumes
+}
+
+// --- Capabilities status ---
+
+fn check_capabilities_status(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let ac = match def {
+                ir::Definition::AgentCapabilities(ac) => ac,
+                _ => continue,
+            };
+            if ac.status != Status::Current && ac.status != Status::Obsolete {
+                diags.push((
+                    DiagCode::StatusInvalidCapabilities,
+                    Some(ir_id),
+                    ac.span,
+                    format!(
+                        "{:?}: AGENT-CAPABILITIES STATUS must be current or obsolete, got {}",
+                        ac.name, ac.status
+                    ),
+                ));
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+// --- Type status usage ---
+
+fn check_type_status_usage(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for i in 0..ctx.mib.objects_slice().len() {
+        let obj_id = ObjectId::new(i as u32);
+        let obj = ctx.mib.object(obj_id);
+        let module_id = match obj.module() {
+            Some(m) => m,
+            None => continue,
+        };
+        if ctx.mib.module(module_id).is_base() {
+            continue;
+        }
+        let type_id = match obj.type_id() {
+            Some(t) => t,
+            None => continue,
+        };
+        let t = ctx.mib.type_(type_id);
+        let ir_mod = ctx.resolved_to_module.get(&module_id).copied();
+
+        match t.status() {
+            Status::Deprecated => {
+                diags.push((
+                    DiagCode::TypeStatusDeprecated,
+                    ir_mod,
+                    obj.span(),
+                    format!(
+                        "type {:?} used by {:?} is deprecated",
+                        t.name(),
+                        obj.name()
+                    ),
+                ));
+            }
+            Status::Obsolete => {
+                diags.push((
+                    DiagCode::TypeStatusObsolete,
+                    ir_mod,
+                    obj.span(),
+                    format!("type {:?} used by {:?} is obsolete", t.name(), obj.name()),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+// --- Compliance status ---
+
+fn check_compliance_status(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let comp = match def {
+                ir::Definition::ModuleCompliance(c) => c,
+                _ => continue,
+            };
+            if comp.status.is_smiv1() {
+                continue;
+            }
+
+            for cm in &comp.modules {
+                // Check mandatory groups.
+                for group_name in &cm.mandatory_groups {
+                    check_compliance_group_status_inner(
+                        &mut diags,
+                        ctx,
+                        ir_id,
+                        comp,
+                        &cm.module_name,
+                        group_name,
+                    );
+                }
+                // Check optional groups.
+                for cg in &cm.groups {
+                    check_compliance_group_status_inner(
+                        &mut diags,
+                        ctx,
+                        ir_id,
+                        comp,
+                        &cm.module_name,
+                        &cg.group,
+                    );
+                }
+                // Check refined objects.
+                for co in &cm.objects {
+                    check_compliance_object_status_inner(
+                        &mut diags,
+                        ctx,
+                        ir_id,
+                        comp,
+                        &cm.module_name,
+                        &co.object,
+                    );
+                }
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+fn check_compliance_group_status_inner(
+    diags: &mut Vec<Diag>,
+    ctx: &ResolverContext,
+    ir_id: IrModuleId,
+    comp: &ir::ModuleCompliance,
+    module_name: &str,
+    group_name: &str,
+) {
+    let node_id = lookup_compliance_member(ctx, ir_id, module_name, group_name);
+    let node_id = match node_id {
+        Some(n) => n,
+        None => return,
+    };
+    let group_id = match ctx.mib.tree().get(node_id).group {
+        Some(g) => g,
+        None => return,
+    };
+    let gs = ctx.mib.group(group_id).status();
+    if gs.is_smiv1() {
+        return;
+    }
+    if status_ord(gs) > status_ord(comp.status) {
+        diags.push((
+            DiagCode::ComplianceGroupStatus,
+            Some(ir_id),
+            comp.span,
+            format!(
+                "{} compliance {:?} references {} group {:?}",
+                comp.status, comp.name, gs, group_name
+            ),
+        ));
+    }
+}
+
+fn check_compliance_object_status_inner(
+    diags: &mut Vec<Diag>,
+    ctx: &ResolverContext,
+    ir_id: IrModuleId,
+    comp: &ir::ModuleCompliance,
+    module_name: &str,
+    object_name: &str,
+) {
+    let node_id = lookup_compliance_member(ctx, ir_id, module_name, object_name);
+    let node_id = match node_id {
+        Some(n) => n,
+        None => return,
+    };
+    let node = ctx.mib.tree().get(node_id);
+    let ms = match node.object {
+        Some(obj_id) => ctx.mib.object(obj_id).status(),
+        None => match node.notification {
+            Some(nid) => ctx.mib.notification(nid).status(),
+            None => return,
+        },
+    };
+    if ms.is_smiv1() {
+        return;
+    }
+    if status_ord(ms) > status_ord(comp.status) {
+        diags.push((
+            DiagCode::ComplianceObjectStatus,
+            Some(ir_id),
+            comp.span,
+            format!(
+                "{} compliance {:?} references {} object {:?}",
+                comp.status, comp.name, ms, object_name
+            ),
+        ));
+    }
+}
+
+fn lookup_compliance_member(
+    ctx: &ResolverContext,
+    comp_ir: IrModuleId,
+    module_name: &str,
+    name: &str,
+) -> Option<NodeId> {
+    if !module_name.is_empty()
+        && let Some(n) = ctx.lookup_node_in_module(module_name, name)
+    {
+        return Some(n);
+    }
+    ctx.lookup_node_for_module(comp_ir, name).map(|(n, _)| n)
+}
+
+/// Map status to an ordinal for comparison.
+fn status_ord(s: Status) -> u8 {
+    match s {
+        Status::Current => 0,
+        Status::Deprecated => 1,
+        Status::Obsolete => 2,
+        _ => 0,
+    }
+}
+
+// --- Group unreferenced ---
+
+fn check_group_unreferenced(ctx: &mut ResolverContext) {
+    let mut referenced_groups: HashSet<String> = HashSet::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        for def in &m.definitions {
+            match def {
+                ir::Definition::ModuleCompliance(c) => {
+                    for cm in &c.modules {
+                        for name in &cm.mandatory_groups {
+                            referenced_groups.insert(name.clone());
+                        }
+                        for g in &cm.groups {
+                            referenced_groups.insert(g.group.clone());
+                        }
+                    }
+                }
+                ir::Definition::AgentCapabilities(ac) => {
+                    for sup in &ac.supports {
+                        for name in &sup.includes {
+                            referenced_groups.insert(name.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            match def {
+                ir::Definition::ObjectGroup(g) => {
+                    if !referenced_groups.contains(&g.name) {
+                        diags.push((
+                            DiagCode::GroupUnreferenced,
+                            Some(ir_id),
+                            g.span,
+                            format!(
+                                "{:?}: OBJECT-GROUP not referenced in any compliance module",
+                                g.name
+                            ),
+                        ));
+                    }
+                }
+                ir::Definition::NotificationGroup(g) => {
+                    if !referenced_groups.contains(&g.name) {
+                        diags.push((
+                            DiagCode::GroupUnreferenced,
+                            Some(ir_id),
+                            g.span,
+                            format!(
+                                "{:?}: NOTIFICATION-GROUP not referenced in any compliance module",
+                                g.name
+                            ),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+// --- IpAddress deprecation ---
+
+fn check_ip_address_deprecation(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for i in 0..ctx.mib.objects_slice().len() {
+        let obj_id = ObjectId::new(i as u32);
+        let obj = ctx.mib.object(obj_id);
+        let module_id = match obj.module() {
+            Some(m) => m,
+            None => continue,
+        };
+        let module = ctx.mib.module(module_id);
+        if module.language() != Language::SMIv2 || module.is_base() {
+            continue;
+        }
+        let type_id = match obj.type_id() {
+            Some(t) => t,
+            None => continue,
+        };
+        let t = ctx.mib.type_(type_id);
+        if t.effective_base(ctx.mib.types_slice()) == BaseType::IpAddress {
+            let ir_mod = ctx.resolved_to_module.get(&module_id).copied();
+            diags.push((
+                DiagCode::IpAddressInSyntax,
+                ir_mod,
+                obj.span(),
+                format!(
+                    "{:?}: IpAddress is deprecated, use InetAddress (RFC 4001)",
+                    obj.name()
+                ),
+            ));
+        }
+    }
+
+    emit_all(ctx, diags);
 }
 
 /// Compare two RangeValue endpoints. Returns true if a > b.

@@ -7,11 +7,11 @@ use gomib::types::{Access, BaseType, Kind, Language, StrictnessLevel};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gomib/testdata/corpus/primary")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
 }
 
 fn problems_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gomib/testdata/corpus/problems")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/problems")
 }
 
 fn load_corpus(modules: &[&str]) -> gomib::load::LoadResult {

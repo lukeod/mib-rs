@@ -6,17 +6,17 @@ use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../gomib/testdata/corpus/primary")
+        .join("testdata/corpus/primary")
 }
 
 fn problems_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../gomib/testdata/corpus/problems")
+        .join("testdata/corpus/problems")
 }
 
 fn _strictness_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../gomib/testdata/strictness")
+        .join("testdata/strictness")
 }
 
 fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
