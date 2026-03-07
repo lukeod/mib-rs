@@ -12,6 +12,8 @@ pub mod symbol;
 pub mod typedef;
 pub mod types;
 
+pub(crate) mod resolver;
+
 pub use mib::Mib;
 pub use oid::{Oid, ParseOidError};
 pub use types::*;

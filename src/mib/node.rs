@@ -53,6 +53,64 @@ impl NodeData {
     }
 }
 
+impl NodeData {
+    pub fn arc(&self) -> u32 {
+        self.arc
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn parent(&self) -> Option<NodeId> {
+        self.parent
+    }
+
+    pub fn children(&self) -> &BTreeMap<u32, NodeId> {
+        &self.children
+    }
+
+    pub fn module(&self) -> Option<ModuleId> {
+        self.module
+    }
+
+    pub fn object(&self) -> Option<ObjectId> {
+        self.object
+    }
+
+    pub fn notification(&self) -> Option<NotificationId> {
+        self.notification
+    }
+
+    pub fn group(&self) -> Option<GroupId> {
+        self.group
+    }
+
+    pub fn compliance(&self) -> Option<ComplianceId> {
+        self.compliance
+    }
+
+    pub fn capability(&self) -> Option<CapabilityId> {
+        self.capability
+    }
+}
+
 /// Arena-allocated OID tree.
 ///
 /// All nodes are stored in a contiguous Vec. The tree is built during

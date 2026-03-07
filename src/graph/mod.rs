@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::DiGraph;
+pub use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
 /// A symbol in the dependency graph.
@@ -30,6 +31,8 @@ impl fmt::Display for Symbol {
 pub struct ResolutionResult {
     /// Symbols in topological (dependency) order.
     pub order: Vec<Symbol>,
+    /// Node indices in topological (dependency) order (parallel to `order`).
+    pub order_indices: Vec<NodeIndex>,
     /// Cycles detected as strongly connected components.
     pub cycles: Vec<Vec<Symbol>>,
 }
@@ -70,6 +73,7 @@ impl Graph {
         if self.inner.node_count() == 0 {
             return ResolutionResult {
                 order: Vec::new(),
+                order_indices: Vec::new(),
                 cycles: Vec::new(),
             };
         }
@@ -77,6 +81,7 @@ impl Graph {
         let sccs = petgraph::algo::tarjan_scc(&self.inner);
 
         let mut order = Vec::with_capacity(self.inner.node_count());
+        let mut order_indices = Vec::with_capacity(self.inner.node_count());
         let mut cycles = Vec::new();
 
         // petgraph returns SCCs in reverse topological order.
@@ -94,12 +99,17 @@ impl Graph {
             let mut scc_syms: Vec<(NodeIndex, &Symbol)> =
                 scc.iter().map(|&idx| (idx, &self.inner[idx])).collect();
             scc_syms.sort_by(|a, b| a.1.cmp(b.1));
-            for (_, sym) in scc_syms {
+            for (idx, sym) in scc_syms {
                 order.push(sym.clone());
+                order_indices.push(idx);
             }
         }
 
-        ResolutionResult { order, cycles }
+        ResolutionResult {
+            order,
+            order_indices,
+            cycles,
+        }
     }
 
     fn has_self_loop(&self, node: NodeIndex) -> bool {

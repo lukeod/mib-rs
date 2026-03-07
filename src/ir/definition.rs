@@ -5,7 +5,7 @@ use super::syntax::{DefVal, TypeSyntax};
 
 /// A normalized MIB definition. SMIv1 and SMIv2 forms are unified where
 /// appropriate (e.g. TRAP-TYPE and NOTIFICATION-TYPE become Notification).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Definition {
     ObjectType(ObjectType),
     ModuleIdentity(ModuleIdentity),
@@ -67,7 +67,7 @@ impl Definition {
 }
 
 /// OBJECT-TYPE definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectType {
     pub name: String,
     pub span: Span,
@@ -104,7 +104,7 @@ pub struct IndexItem {
 }
 
 /// MODULE-IDENTITY definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModuleIdentity {
     pub name: String,
     pub span: Span,
@@ -125,7 +125,7 @@ pub struct Revision {
 }
 
 /// OBJECT-IDENTITY definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectIdentity {
     pub name: String,
     pub span: Span,
@@ -136,7 +136,7 @@ pub struct ObjectIdentity {
 }
 
 /// Unified representation of TRAP-TYPE (SMIv1) and NOTIFICATION-TYPE (SMIv2).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Notification {
     pub name: String,
     pub span: Span,
@@ -159,7 +159,7 @@ pub struct TrapInfo {
 }
 
 /// Represents both TEXTUAL-CONVENTION and simple type assignments.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDef {
     pub name: String,
     pub span: Span,
@@ -182,7 +182,7 @@ pub struct TypeDef {
 }
 
 /// Plain OID value assignment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValueAssignment {
     pub name: String,
     pub span: Span,
@@ -192,7 +192,7 @@ pub struct ValueAssignment {
 }
 
 /// OBJECT-GROUP definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectGroup {
     pub name: String,
     pub span: Span,
@@ -204,7 +204,7 @@ pub struct ObjectGroup {
 }
 
 /// NOTIFICATION-GROUP definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NotificationGroup {
     pub name: String,
     pub span: Span,
@@ -216,7 +216,7 @@ pub struct NotificationGroup {
 }
 
 /// MODULE-COMPLIANCE definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModuleCompliance {
     pub name: String,
     pub span: Span,
@@ -258,7 +258,7 @@ pub struct ComplianceObject {
 }
 
 /// AGENT-CAPABILITIES definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AgentCapabilities {
     pub name: String,
     pub span: Span,

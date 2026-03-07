@@ -1,0 +1,1239 @@
+use crate::ir;
+use crate::mib::Oid;
+use crate::types::{Access, BaseType, Kind, Span};
+
+use super::super::capability::CapabilityData;
+use super::super::compliance::ComplianceData;
+use super::super::group::GroupData;
+use super::super::notification::NotificationData;
+use super::super::object::ObjectData;
+use super::super::types::*;
+use super::context::{IrModuleId, ResolverContext};
+
+/// Phase 5: Create resolved entities and run structural validation.
+pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
+    infer_node_kinds(ctx);
+    create_resolved_objects(ctx);
+    link_object_indexes(ctx);
+    create_resolved_notifications(ctx);
+    create_resolved_groups(ctx);
+    create_resolved_compliances(ctx);
+    create_resolved_capabilities(ctx);
+}
+
+/// Classify OBJECT-TYPE nodes into table/row/scalar/column.
+fn infer_node_kinds(ctx: &mut ResolverContext) {
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+
+        for def in &m.definitions {
+            let ot = match def {
+                ir::Definition::ObjectType(ot) => ot,
+                _ => continue,
+            };
+
+            let node_id = match ctx
+                .module_symbol_to_node
+                .get(&ir_id)
+                .and_then(|syms| syms.get(&ot.name))
+            {
+                Some(&id) => id,
+                None => continue,
+            };
+
+            let kind = if matches!(ot.syntax, ir::TypeSyntax::SequenceOf { .. }) {
+                Kind::Table
+            } else if !ot.index.is_empty() || !ot.augments.is_empty() {
+                Kind::Row
+            } else {
+                Kind::Scalar
+            };
+
+            ctx.mib.tree.set_kind(node_id, kind);
+        }
+    }
+
+    // Reclassify children of Row nodes as columns.
+    let all_nodes: Vec<NodeId> = ctx.mib.tree().all_nodes().collect();
+    for node_id in &all_nodes {
+        let kind = ctx.mib.tree().get(*node_id).kind;
+        if kind != Kind::Row {
+            continue;
+        }
+        let children: Vec<NodeId> = ctx
+            .mib
+            .tree()
+            .get(*node_id)
+            .children
+            .values()
+            .copied()
+            .collect();
+        for child_id in children {
+            if ctx.mib.tree().get(child_id).kind == Kind::Scalar {
+                ctx.mib.tree.set_kind(child_id, Kind::Column);
+            }
+        }
+    }
+}
+
+/// Create resolved Object instances from OBJECT-TYPE definitions.
+fn create_resolved_objects(ctx: &mut ResolverContext) {
+    // Collect (ir_mod_idx, def_idx) pairs to avoid borrowing ctx.modules during mutation.
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::ObjectType(_) => Some((idx, di)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let resolved_mod = ctx.module_to_resolved[&ir_id];
+        let ot = match &ctx.modules[mod_idx].definitions[def_idx] {
+            ir::Definition::ObjectType(ot) => ot,
+            _ => continue,
+        };
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(&ot.name))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        // Extract all data from ot before mutable operations.
+        let name = ot.name.clone();
+        let span = ot.span;
+        let status = ot.status;
+        let description = ot.description.clone();
+        let reference = ot.reference.clone();
+        let status_span = ot.status_span;
+        let desc_span = ot.description_span;
+        let ref_span = ot.reference_span;
+        let access = ot.access;
+        let units = ot.units.clone();
+        let syntax_span = ot.syntax_span;
+        let access_span = ot.access_span;
+        let units_span = ot.units_span;
+        let augments_span = ot.augments_span;
+        let defval_span = ot.defval_span;
+        let syntax = ot.syntax.clone();
+        let defval = ot.defval.clone();
+        let oid = ot.oid.clone();
+
+        let mut obj = ObjectData::new(name.clone());
+        obj.entity.span = span;
+        obj.entity.node = Some(node_id);
+        obj.entity.module = Some(resolved_mod);
+        obj.entity.status = status;
+        obj.entity.description = description;
+        obj.entity.reference = reference;
+        obj.entity.status_span = status_span;
+        obj.entity.desc_span = desc_span;
+        obj.entity.ref_span = ref_span;
+        obj.access = access;
+        obj.units = units;
+        obj.syntax_span = syntax_span;
+        obj.access_span = access_span;
+        obj.units_span = units_span;
+        obj.augments_span = augments_span;
+        obj.def_val_span = defval_span;
+
+        // Resolve type reference.
+        resolve_object_type(ctx, ir_id, &syntax, &mut obj);
+
+        // Convert DEFVAL.
+        if let Some(dv) = &defval {
+            obj.def_val = Some(convert_defval(ctx, ir_id, dv, &obj));
+        }
+
+        // Compute effective values from type chain.
+        compute_effective_values(ctx, &mut obj);
+
+        // Build OID refs from the OID assignment.
+        obj.entity.oid_refs = build_oid_refs(&oid);
+
+        // Store sequence type name for rows.
+        if let ir::TypeSyntax::SequenceOf { entry_type, .. } = &syntax {
+            obj.sequence_type_name = entry_type.clone();
+        }
+
+        let obj_id = ctx.mib.add_object(obj);
+
+        // Attach to node.
+        let existing_obj = ctx.mib.tree().get(node_id).object;
+        let existing_mod = ctx.mib.tree().get(node_id).module;
+        if existing_obj.is_none()
+            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+        {
+            ctx.mib.tree.attach_object(node_id, obj_id);
+        }
+
+        // Register in module.
+        ctx.mib.module_mut(resolved_mod).add_object(&name, obj_id);
+        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+    }
+}
+
+fn resolve_object_type(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    syntax: &ir::TypeSyntax,
+    obj: &mut ObjectData,
+) {
+    match syntax {
+        ir::TypeSyntax::TypeRef { name, span, .. } => {
+            if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, name) {
+                obj.typ = Some(type_id);
+                if used_import {
+                    ctx.mark_import_used(ir_mod, name);
+                }
+            } else if !is_sequence_type_def(ctx, ir_mod, name) {
+                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                ctx.record_unresolved_type(name, &mod_name, ir_mod, *span);
+            }
+        }
+        ir::TypeSyntax::IntegerEnum {
+            base,
+            named_numbers,
+            ..
+        } => {
+            // Look up named base type (e.g., INTEGER).
+            if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, base) {
+                obj.typ = Some(type_id);
+                if used_import {
+                    ctx.mark_import_used(ir_mod, base);
+                }
+            } else if !base.is_empty() {
+                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                ctx.record_unresolved_type(base, &mod_name, ir_mod, obj.syntax_span);
+            }
+            obj.enums = named_numbers
+                .iter()
+                .map(|nn| NamedValue {
+                    label: nn.name.clone(),
+                    value: nn.value,
+                    span: nn.span,
+                })
+                .collect();
+        }
+        ir::TypeSyntax::Bits { named_bits, .. } => {
+            // BITS resolves to the BITS primitive.
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "BITS") {
+                obj.typ = Some(type_id);
+            }
+            obj.bits = named_bits
+                .iter()
+                .map(|nb| NamedValue {
+                    label: nb.name.clone(),
+                    value: nb.position as i64,
+                    span: nb.span,
+                })
+                .collect();
+        }
+        ir::TypeSyntax::Constrained {
+            base, constraint, ..
+        } => {
+            resolve_object_type(ctx, ir_mod, base, obj);
+            extract_object_constraint(constraint, obj);
+        }
+        ir::TypeSyntax::SequenceOf { entry_type, .. } => {
+            obj.sequence_type_name = entry_type.clone();
+        }
+        ir::TypeSyntax::Sequence { .. } => {}
+        ir::TypeSyntax::OctetString => {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
+                obj.typ = Some(type_id);
+            }
+        }
+        ir::TypeSyntax::ObjectIdentifier => {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER")
+            {
+                obj.typ = Some(type_id);
+            }
+        }
+    }
+}
+
+fn extract_object_constraint(constraint: &ir::Constraint, obj: &mut ObjectData) {
+    match constraint {
+        ir::Constraint::Size { ranges, .. } => {
+            obj.sizes = ranges
+                .iter()
+                .filter_map(|r| super::types::resolve_range(r))
+                .collect();
+        }
+        ir::Constraint::Range { ranges, .. } => {
+            obj.ranges = ranges
+                .iter()
+                .filter_map(|r| super::types::resolve_range(r))
+                .collect();
+        }
+    }
+}
+
+/// Compute effective values by walking the type chain.
+fn compute_effective_values(ctx: &ResolverContext, obj: &mut ObjectData) {
+    let type_id = match obj.typ {
+        Some(id) => id,
+        None => return,
+    };
+
+    let types = ctx.mib.types_slice();
+    let t = &types[type_id.0 as usize];
+
+    // Display hint: object-level is empty, so walk type chain.
+    if obj.hint.is_empty() {
+        obj.hint = t.effective_display_hint(types).to_string();
+    }
+
+    // Sizes, ranges, enums, bits: object-level takes precedence.
+    if obj.sizes.is_empty() {
+        obj.sizes = t.effective_sizes(types).to_vec();
+    }
+    if obj.ranges.is_empty() {
+        obj.ranges = t.effective_ranges(types).to_vec();
+    }
+    if obj.enums.is_empty() {
+        obj.enums = t.effective_enums(types).to_vec();
+    }
+    if obj.bits.is_empty() {
+        obj.bits = t.effective_bits(types).to_vec();
+    }
+}
+
+/// Resolve INDEX and AUGMENTS references after all objects exist.
+fn link_object_indexes(ctx: &mut ResolverContext) {
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::ObjectType(_) => Some((idx, di)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+
+        // Extract needed data before mutable operations.
+        let (name, index_items, augments) = {
+            let ot = match &ctx.modules[mod_idx].definitions[def_idx] {
+                ir::Definition::ObjectType(ot) => ot,
+                _ => continue,
+            };
+            (ot.name.clone(), ot.index.clone(), ot.augments.clone())
+        };
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(&name))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        let obj_id = match ctx.mib.tree().get(node_id).object {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Resolve INDEX entries.
+        if !index_items.is_empty() {
+            let mut entries = Vec::new();
+            for item in &index_items {
+                let entry = resolve_index_entry(ctx, ir_id, &name, item);
+                entries.push(entry);
+            }
+            ctx.mib.object_mut(obj_id).index = entries;
+        }
+
+        // Resolve AUGMENTS.
+        if !augments.is_empty() {
+            let target = lookup_object_by_name(ctx, ir_id, &augments);
+            if let Some(target_obj_id) = target {
+                ctx.mib.object_mut(obj_id).augments = Some(target_obj_id);
+                ctx.mib
+                    .object_mut(target_obj_id)
+                    .augmented_by
+                    .push(obj_id);
+            } else {
+                let mod_name = ctx.modules[mod_idx].name.clone();
+                ctx.record_unresolved_oid(
+                    &name,
+                    &mod_name,
+                    "augments_target_not_found",
+                    ir_id,
+                    ctx.mib.object(obj_id).augments_span,
+                );
+            }
+        }
+    }
+}
+
+fn resolve_index_entry(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    row_name: &str,
+    item: &ir::definition::IndexItem,
+) -> IndexEntry {
+    if is_bare_type_index(&item.object) {
+        return IndexEntry {
+            object: None,
+            type_name: item.object.clone(),
+            implied: item.implied,
+            encoding: crate::types::IndexEncoding::Unknown,
+            span: item.span,
+        };
+    }
+
+    let obj = lookup_object_by_name(ctx, ir_mod, &item.object);
+    if obj.is_none() {
+        let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+        ctx.record_unresolved_index(
+            row_name,
+            &item.object,
+            &mod_name,
+            "index_object_not_found",
+            ir_mod,
+            item.span,
+        );
+    }
+
+    let encoding = if let Some(obj_id) = obj {
+        let o = ctx.mib.object(obj_id);
+        let base = o.typ.map_or(BaseType::Unknown, |tid| {
+            ctx.mib.type_(tid).effective_base(ctx.mib.types_slice())
+        });
+        let sizes = if !o.sizes.is_empty() {
+            &o.sizes
+        } else if let Some(tid) = o.typ {
+            ctx.mib.type_(tid).effective_sizes(ctx.mib.types_slice())
+        } else {
+            &[]
+        };
+        classify_index_encoding(base, item.implied, sizes)
+    } else {
+        crate::types::IndexEncoding::Unknown
+    };
+
+    IndexEntry {
+        object: obj,
+        type_name: item.object.clone(),
+        implied: item.implied,
+        encoding,
+        span: item.span,
+    }
+}
+
+// Primitive/global type names that can appear directly in INDEX clauses.
+fn is_bare_type_index(name: &str) -> bool {
+    matches!(
+        name,
+        "INTEGER"
+            | "OCTET STRING"
+            | "BITS"
+            | "Integer32"
+            | "Counter32"
+            | "Counter64"
+            | "Gauge32"
+            | "Unsigned32"
+            | "TimeTicks"
+            | "IpAddress"
+            | "Opaque"
+            | "Counter"
+            | "Gauge"
+            | "NetworkAddress"
+    )
+}
+
+fn lookup_object_by_name(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    name: &str,
+) -> Option<ObjectId> {
+    // Check current module's resolved objects.
+    if let Some(&resolved_mod) = ctx.module_to_resolved.get(&ir_mod) {
+        if let Some(obj_id) = ctx.mib.module(resolved_mod).object_by_name(name) {
+            return Some(obj_id);
+        }
+    }
+    // Check imported modules.
+    if let Some(&source_ir) = ctx
+        .module_imports
+        .get(&ir_mod)
+        .and_then(|imps| imps.get(name))
+    {
+        if let Some(&source_resolved) = ctx.module_to_resolved.get(&source_ir) {
+            if let Some(obj_id) = ctx.mib.module(source_resolved).object_by_name(name) {
+                ctx.mark_import_used(ir_mod, name);
+                return Some(obj_id);
+            }
+        }
+    }
+    // Permissive global fallback via node lookup.
+    if ctx.diag_config.allow_best_guess_fallbacks() {
+        if let Some(node_id) = ctx.lookup_node_global(name) {
+            return ctx.mib.tree().get(node_id).object;
+        }
+    }
+    None
+}
+
+/// Create resolved Notification instances.
+fn create_resolved_notifications(ctx: &mut ResolverContext) {
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::Notification(_) => Some((idx, di)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let resolved_mod = ctx.module_to_resolved[&ir_id];
+
+        // Extract data before mutable operations.
+        let (name, span, objects, status, description, reference, trap_info, oid) = {
+            let notif = match &ctx.modules[mod_idx].definitions[def_idx] {
+                ir::Definition::Notification(n) => n,
+                _ => continue,
+            };
+            (
+                notif.name.clone(),
+                notif.span,
+                notif.objects.clone(),
+                notif.status,
+                notif.description.clone(),
+                notif.reference.clone(),
+                notif.trap_info.clone(),
+                notif.oid.clone(),
+            )
+        };
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(&name))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        let mut nd = NotificationData::new(name.clone());
+        nd.entity.span = span;
+        nd.entity.node = Some(node_id);
+        nd.entity.module = Some(resolved_mod);
+        nd.entity.status = status;
+        nd.entity.description = description;
+        nd.entity.reference = reference;
+
+        // Resolve OBJECTS list.
+        for obj_name in &objects {
+            let obj = lookup_object_by_name(ctx, ir_id, obj_name);
+            if let Some(obj_id) = obj {
+                nd.objects.push(obj_id);
+            } else {
+                let mod_name = ctx.modules[mod_idx].name.clone();
+                ctx.record_unresolved_notification_object(
+                    &name,
+                    obj_name,
+                    &mod_name,
+                    "object_not_found",
+                    ir_id,
+                    span,
+                );
+            }
+        }
+
+        // Set TrapInfo.
+        if let Some(ti) = &trap_info {
+            nd.trap_info = Some(TrapInfo {
+                enterprise: ti.enterprise.clone(),
+                trap_number: ti.trap_number,
+            });
+        }
+
+        // Build OID refs.
+        if let Some(oid) = &oid {
+            nd.entity.oid_refs = build_oid_refs(oid);
+        }
+
+        let notif_id = ctx.mib.add_notification(nd);
+
+        let existing = ctx.mib.tree().get(node_id).notification;
+        if existing.is_none() {
+            ctx.mib.tree.attach_notification(node_id, notif_id);
+        }
+
+        ctx.mib
+            .module_mut(resolved_mod)
+            .add_notification(&name, notif_id);
+        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+    }
+}
+
+/// Create resolved Group instances (both OBJECT-GROUP and NOTIFICATION-GROUP).
+fn create_resolved_groups(ctx: &mut ResolverContext) {
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::ObjectGroup(_) | ir::Definition::NotificationGroup(_) => {
+                        Some((idx, di))
+                    }
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let resolved_mod = ctx.module_to_resolved[&ir_id];
+
+        let (name, span, members, status, description, reference, oid, is_notif) = {
+            let def = &ctx.modules[mod_idx].definitions[def_idx];
+            match def {
+                ir::Definition::ObjectGroup(g) => (
+                    g.name.clone(),
+                    g.span,
+                    g.objects.clone(),
+                    g.status,
+                    g.description.clone(),
+                    g.reference.clone(),
+                    g.oid.clone(),
+                    false,
+                ),
+                ir::Definition::NotificationGroup(g) => (
+                    g.name.clone(),
+                    g.span,
+                    g.notifications.clone(),
+                    g.status,
+                    g.description.clone(),
+                    g.reference.clone(),
+                    g.oid.clone(),
+                    true,
+                ),
+                _ => continue,
+            }
+        };
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(name.as_str()))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        let mut gd = GroupData::new(name.clone());
+        gd.entity.span = span;
+        gd.entity.node = Some(node_id);
+        gd.entity.module = Some(resolved_mod);
+        gd.entity.status = status;
+        gd.entity.description = description;
+        gd.entity.reference = reference;
+        gd.is_notification_group = is_notif;
+        gd.entity.oid_refs = build_oid_refs(&oid);
+
+        // Resolve members.
+        for member_name in &members {
+            if let Some((member_node, used_import)) =
+                ctx.lookup_node_for_module(ir_id, member_name)
+            {
+                if used_import {
+                    ctx.mark_import_used(ir_id, member_name);
+                }
+                gd.members.push(member_node);
+            }
+        }
+
+        let group_id = ctx.mib.add_group(gd);
+
+        let existing = ctx.mib.tree().get(node_id).group;
+        if existing.is_none() {
+            ctx.mib.tree.attach_group(node_id, group_id);
+        }
+
+        ctx.mib.module_mut(resolved_mod).add_group(&name, group_id);
+        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+    }
+}
+
+/// Create resolved Compliance instances.
+fn create_resolved_compliances(ctx: &mut ResolverContext) {
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::ModuleCompliance(_) => Some((idx, di)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let resolved_mod = ctx.module_to_resolved[&ir_id];
+        let ir_mod_name = ctx.modules[mod_idx].name.clone();
+
+        let mc = match &ctx.modules[mod_idx].definitions[def_idx] {
+            ir::Definition::ModuleCompliance(mc) => mc,
+            _ => continue,
+        };
+
+        let name = mc.name.clone();
+        let span = mc.span;
+        let status = mc.status;
+        let description = mc.description.clone();
+        let reference = mc.reference.clone();
+        let oid = mc.oid.clone();
+
+        // Convert compliance modules while we still borrow mc.
+        let mut comp_modules = Vec::new();
+        for cm in &mc.modules {
+            let module_name = if cm.module_name.is_empty() {
+                ir_mod_name.clone()
+            } else {
+                cm.module_name.clone()
+            };
+
+            let groups: Vec<ComplianceGroup> = cm
+                .groups
+                .iter()
+                .map(|g| ComplianceGroup {
+                    group: g.group.clone(),
+                    description: g.description.clone(),
+                    span: g.span,
+                })
+                .collect();
+
+            let objects: Vec<ComplianceObject> = cm
+                .objects
+                .iter()
+                .map(|o| ComplianceObject {
+                    object: o.object.clone(),
+                    syntax: None,
+                    write_syntax: None,
+                    min_access: o.min_access,
+                    description: o.description.clone(),
+                    span: o.span,
+                })
+                .collect();
+
+            comp_modules.push(ComplianceModule {
+                module_name,
+                mandatory_groups: cm.mandatory_groups.clone(),
+                groups,
+                objects,
+                span: cm.span,
+            });
+        }
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(&name))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        let mut cd = ComplianceData::new(name.clone());
+        cd.entity.span = span;
+        cd.entity.node = Some(node_id);
+        cd.entity.module = Some(resolved_mod);
+        cd.entity.status = status;
+        cd.entity.description = description;
+        cd.entity.reference = reference;
+        cd.entity.oid_refs = build_oid_refs(&oid);
+        cd.modules = comp_modules;
+
+        let comp_id = ctx.mib.add_compliance(cd);
+
+        let existing = ctx.mib.tree().get(node_id).compliance;
+        if existing.is_none() {
+            ctx.mib.tree.attach_compliance(node_id, comp_id);
+        }
+
+        ctx.mib
+            .module_mut(resolved_mod)
+            .add_compliance(&name, comp_id);
+        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+    }
+}
+
+/// Create resolved Capability instances.
+fn create_resolved_capabilities(ctx: &mut ResolverContext) {
+    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
+        .flat_map(|idx| {
+            ctx.modules[idx]
+                .definitions
+                .iter()
+                .enumerate()
+                .filter_map(move |(di, def)| match def {
+                    ir::Definition::AgentCapabilities(_) => Some((idx, di)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    for (mod_idx, def_idx) in work {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let resolved_mod = ctx.module_to_resolved[&ir_id];
+
+        // Extract all needed data from IR.
+        let ac = match &ctx.modules[mod_idx].definitions[def_idx] {
+            ir::Definition::AgentCapabilities(ac) => ac,
+            _ => continue,
+        };
+
+        let name = ac.name.clone();
+        let span = ac.span;
+        let status = ac.status;
+        let description = ac.description.clone();
+        let reference = ac.reference.clone();
+        let product_release = ac.product_release.clone();
+        let oid = ac.oid.clone();
+
+        // Pre-extract supports data.
+        struct VariationData {
+            name: String,
+            access: Option<Access>,
+            description: String,
+            span: Span,
+            creation_requires: Vec<String>,
+        }
+        struct SupportsData {
+            module_name: String,
+            includes: Vec<String>,
+            variations: Vec<VariationData>,
+            span: Span,
+        }
+
+        let supports_data: Vec<SupportsData> = ac
+            .supports
+            .iter()
+            .map(|sm| SupportsData {
+                module_name: sm.module_name.clone(),
+                includes: sm.includes.clone(),
+                variations: sm
+                    .variations
+                    .iter()
+                    .map(|v| VariationData {
+                        name: v.name.clone(),
+                        access: v.access,
+                        description: v.description.clone(),
+                        span: v.span,
+                        creation_requires: v.creation_requires.clone(),
+                    })
+                    .collect(),
+                span: sm.span,
+            })
+            .collect();
+
+        // End borrow on ctx.modules.
+        let _ = ac;
+
+        let node_id = match ctx
+            .module_symbol_to_node
+            .get(&ir_id)
+            .and_then(|syms| syms.get(&name))
+        {
+            Some(&id) => id,
+            None => continue,
+        };
+
+        let mut cap = CapabilityData::new(name.clone());
+        cap.entity.span = span;
+        cap.entity.node = Some(node_id);
+        cap.entity.module = Some(resolved_mod);
+        cap.entity.status = status;
+        cap.entity.description = description;
+        cap.entity.reference = reference;
+        cap.product_release = product_release;
+        cap.entity.oid_refs = build_oid_refs(&oid);
+
+        for sd in &supports_data {
+            let mut obj_vars = Vec::new();
+            let mut notif_vars = Vec::new();
+
+            for var in &sd.variations {
+                let is_notif = ctx
+                    .lookup_node_for_module(ir_id, &var.name)
+                    .map(|(nid, _)| ctx.mib.tree().get(nid).kind == Kind::Notification)
+                    .unwrap_or(false);
+
+                if is_notif {
+                    notif_vars.push(NotificationVariation {
+                        notification: var.name.clone(),
+                        access: var.access,
+                        description: var.description.clone(),
+                        span: var.span,
+                    });
+                } else {
+                    obj_vars.push(ObjectVariation {
+                        object: var.name.clone(),
+                        syntax: None,
+                        write_syntax: None,
+                        access: var.access,
+                        creation_requires: var.creation_requires.clone(),
+                        def_val: None,
+                        description: var.description.clone(),
+                        span: var.span,
+                    });
+                }
+            }
+
+            cap.supports.push(CapabilitiesModule {
+                module_name: sd.module_name.clone(),
+                includes: sd.includes.clone(),
+                object_variations: obj_vars,
+                notification_variations: notif_vars,
+                span: sd.span,
+            });
+        }
+
+        let cap_id = ctx.mib.add_capability(cap);
+
+        let existing = ctx.mib.tree().get(node_id).capability;
+        if existing.is_none() {
+            ctx.mib.tree.attach_capability(node_id, cap_id);
+        }
+
+        ctx.mib
+            .module_mut(resolved_mod)
+            .add_capability(&name, cap_id);
+        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+    }
+}
+
+/// Convert an IR DEFVAL to a resolved DefVal.
+fn convert_defval(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    dv: &ir::syntax::DefVal,
+    obj: &ObjectData,
+) -> DefVal {
+    match dv {
+        ir::syntax::DefVal::Integer(v) => DefVal::int(*v, v.to_string()),
+        ir::syntax::DefVal::Unsigned(v) => DefVal::uint(*v, v.to_string()),
+        ir::syntax::DefVal::String(s) => DefVal::string(s.clone(), format!("\"{s}\"")),
+        ir::syntax::DefVal::HexString(s) => {
+            let raw = format!("'{s}'H");
+            if s.chars().any(|c| !c.is_ascii_hexdigit() && !c.is_ascii_whitespace()) {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::MalformedHexDefval,
+                    Some(ir_mod),
+                    obj.def_val_span,
+                    format!("malformed hex DEFVAL {raw:?}"),
+                );
+                return DefVal::unset();
+            }
+            let bytes = hex_decode(s);
+            DefVal::bytes(bytes, raw)
+        }
+        ir::syntax::DefVal::BinaryString(s) => {
+            let raw = format!("'{s}'B");
+            if s.chars().any(|c| c != '0' && c != '1' && !c.is_ascii_whitespace()) {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::MalformedBinDefval,
+                    Some(ir_mod),
+                    obj.def_val_span,
+                    format!("binary DEFVAL contains non-binary digits: {raw:?}"),
+                );
+            }
+            let is_bits = obj.typ.is_some_and(|tid| {
+                let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
+                base == BaseType::Bits
+            });
+            let bytes = binary_decode(s, is_bits);
+            DefVal::bytes(bytes, raw)
+        }
+        ir::syntax::DefVal::Enum(label) => {
+            // Check if this is an OID reference by checking the object's base type.
+            let is_oid = obj.typ.is_some_and(|tid| {
+                let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
+                base == BaseType::ObjectIdentifier
+            });
+            if is_oid {
+                // Try to look up as an OID reference.
+                if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, label) {
+                    let oid = ctx.mib.tree().oid_of(node_id).clone();
+                    return DefVal::oid(oid, label.clone());
+                }
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    obj.def_val_span,
+                    format!("DEFVAL OID reference {:?} could not be resolved", label),
+                );
+            }
+            DefVal::enumeration(label.clone(), label.clone())
+        }
+        ir::syntax::DefVal::Bits { labels } => {
+            let raw = format!("{{ {} }}", labels.join(", "));
+            DefVal::bits(labels.clone(), raw)
+        }
+        ir::syntax::DefVal::OidRef(name) => {
+            if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, name) {
+                let oid = ctx.mib.tree().oid_of(node_id).clone();
+                DefVal::oid(oid, name.clone())
+            } else {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    obj.def_val_span,
+                    format!("DEFVAL OID reference {:?} could not be resolved", name),
+                );
+                return DefVal::unset();
+            }
+        }
+        ir::syntax::DefVal::OidValue { components } => {
+            // Try to resolve the OID from components.
+            let raw = format_oid_components(components);
+            if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, obj.def_val_span) {
+                DefVal::oid(oid, raw)
+            } else {
+                DefVal::unset()
+            }
+        }
+        ir::syntax::DefVal::Unparsed => DefVal::unset(),
+    }
+}
+
+fn resolve_defval_oid(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    components: &[ir::OidComponent],
+    defval_span: Span,
+) -> Option<Oid> {
+    if components.is_empty() {
+        ctx.emit_diagnostic(
+            crate::types::DiagCode::DefvalUnresolved,
+            Some(ir_mod),
+            defval_span,
+            "DEFVAL OID value has no components".to_string(),
+        );
+        return None;
+    }
+
+    let (mut arcs, start_idx) = match &components[0] {
+        ir::OidComponent::Name { name, .. } | ir::OidComponent::NamedNumber { name, .. } => {
+            if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, name) {
+                (ctx.mib.tree().oid_of(node_id).to_vec(), 1)
+            } else {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    defval_span,
+                    format!("DEFVAL OID root {:?} could not be resolved", name),
+                );
+                return None;
+            }
+        }
+        ir::OidComponent::QualifiedName { module, name, .. }
+        | ir::OidComponent::QualifiedNamedNumber { module, name, .. } => {
+            if let Some(node_id) = ctx.lookup_node_in_module(module, name) {
+                (ctx.mib.tree().oid_of(node_id).to_vec(), 1)
+            } else {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    defval_span,
+                    format!("DEFVAL OID root {:?} could not be resolved", name),
+                );
+                return None;
+            }
+        }
+        _ => {
+            ctx.emit_diagnostic(
+                crate::types::DiagCode::DefvalUnresolved,
+                Some(ir_mod),
+                defval_span,
+                "DEFVAL OID value has no named root component".to_string(),
+            );
+            return None;
+        }
+    };
+
+    for comp in &components[start_idx..] {
+        match comp {
+            ir::OidComponent::Number { value, .. } => arcs.push(*value),
+            ir::OidComponent::NamedNumber { number, .. } => arcs.push(*number),
+            ir::OidComponent::QualifiedNamedNumber { number, .. } => arcs.push(*number),
+            ir::OidComponent::Name { name, .. } => {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    defval_span,
+                    format!("DEFVAL OID component {:?} has no numeric value", name),
+                );
+                return None;
+            }
+            ir::OidComponent::QualifiedName { module, name, .. } => {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::DefvalUnresolved,
+                    Some(ir_mod),
+                    defval_span,
+                    format!(
+                        "DEFVAL OID component {:?} has no numeric value",
+                        format!("{module}.{name}")
+                    ),
+                );
+                return None;
+            }
+        }
+    }
+    Some(Oid::from(arcs))
+}
+
+fn format_oid_components(components: &[ir::OidComponent]) -> String {
+    let parts: Vec<String> = components
+        .iter()
+        .map(|c| match c {
+            ir::OidComponent::Number { value, .. } => value.to_string(),
+            ir::OidComponent::Name { name, .. } => name.clone(),
+            ir::OidComponent::NamedNumber { name, number, .. } => {
+                format!("{name}({number})")
+            }
+            ir::OidComponent::QualifiedName { module, name, .. } => {
+                format!("{module}.{name}")
+            }
+            ir::OidComponent::QualifiedNamedNumber {
+                module,
+                name,
+                number,
+                ..
+            } => format!("{module}.{name}({number})"),
+        })
+        .collect();
+    format!("{{ {} }}", parts.join(" "))
+}
+
+fn hex_decode(s: &str) -> Vec<u8> {
+    let mut clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.len() % 2 != 0 {
+        clean.insert(0, '0');
+    }
+    let mut bytes = Vec::new();
+    let mut chars = clean.chars();
+    while let Some(hi) = chars.next() {
+        let lo = chars.next().unwrap_or('0');
+        let byte = u8::from_str_radix(&format!("{hi}{lo}"), 16).unwrap_or(0);
+        bytes.push(byte);
+    }
+    bytes
+}
+
+fn binary_decode(s: &str, right_pad: bool) -> Vec<u8> {
+    let clean: String = s.chars().filter(|c| *c == '0' || *c == '1').collect();
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    // Pad to byte boundary.
+    let padded_len = (clean.len() + 7) / 8 * 8;
+    let padded = if right_pad {
+        format!("{:0<width$}", clean, width = padded_len)
+    } else {
+        format!("{:0>width$}", clean, width = padded_len)
+    };
+    let mut bytes = Vec::new();
+    for chunk in padded.as_bytes().chunks(8) {
+        let s = std::str::from_utf8(chunk).unwrap_or("00000000");
+        let byte = u8::from_str_radix(s, 2).unwrap_or(0);
+        bytes.push(byte);
+    }
+    bytes
+}
+
+/// Check if a name refers to a SEQUENCE type definition (used to suppress
+/// spurious unresolved type diagnostics for row SYNTAX references).
+fn is_sequence_type_def(ctx: &ResolverContext, ir_mod: IrModuleId, name: &str) -> bool {
+    fn has_sequence_def(m: &ir::Module, name: &str) -> bool {
+        m.definitions.iter().any(|def| {
+            if let ir::Definition::TypeDef(td) = def {
+                td.name == name && matches!(td.syntax, ir::TypeSyntax::Sequence { .. })
+            } else {
+                false
+            }
+        })
+    }
+
+    let m = &ctx.modules[ir_mod.0 as usize];
+    if has_sequence_def(m, name) {
+        return true;
+    }
+    if let Some(&source) = ctx
+        .module_imports
+        .get(&ir_mod)
+        .and_then(|imps| imps.get(name))
+    {
+        let src_mod = &ctx.modules[source.0 as usize];
+        if has_sequence_def(src_mod, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
+    let mut refs = Vec::new();
+    for comp in &oid.components {
+        match comp {
+            ir::OidComponent::Name { name, span } => {
+                refs.push(OidRef {
+                    name: name.clone(),
+                    span: *span,
+                });
+            }
+            ir::OidComponent::NamedNumber { name, span, .. } => {
+                refs.push(OidRef {
+                    name: name.clone(),
+                    span: *span,
+                });
+            }
+            ir::OidComponent::QualifiedName { name, span, .. } => {
+                refs.push(OidRef {
+                    name: name.clone(),
+                    span: *span,
+                });
+            }
+            ir::OidComponent::QualifiedNamedNumber { name, span, .. } => {
+                refs.push(OidRef {
+                    name: name.clone(),
+                    span: *span,
+                });
+            }
+            _ => {}
+        }
+    }
+    refs
+}
