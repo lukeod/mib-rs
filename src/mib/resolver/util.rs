@@ -7,3 +7,16 @@ pub(super) fn language_rank(lang: Language) -> u8 {
         Language::Unknown => 0,
     }
 }
+
+/// Normalize timestamps: expand 10-digit (YYMMDDHHmmZ) to 12-digit (YYYYMMDDHHmmZ).
+pub(super) fn normalize_timestamp(ts: &str) -> String {
+    if ts.len() == 11 {
+        // YYMMDDHHmmZ format
+        let year_digits = &ts[..2];
+        let year: u32 = year_digits.parse().unwrap_or(0);
+        let prefix = if year >= 70 { "19" } else { "20" };
+        format!("{prefix}{ts}")
+    } else {
+        ts.to_string()
+    }
+}

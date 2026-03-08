@@ -195,18 +195,7 @@ fn find_candidate_with_all_symbols(
         .map(|s| s.mod_id)
 }
 
-/// Normalize timestamps: expand 10-digit (YYMMDDHHmmZ) to 12-digit.
-fn normalize_timestamp(ts: &str) -> String {
-    if ts.len() == 11 {
-        // YYMMDDHHmmZ format
-        let year_digits = &ts[..2];
-        let year: u32 = year_digits.parse().unwrap_or(0);
-        let prefix = if year >= 70 { "19" } else { "20" };
-        format!("{prefix}{ts}")
-    } else {
-        ts.to_string()
-    }
-}
+use super::util::normalize_timestamp;
 
 fn base_module_import_alias(name: &str) -> Option<&'static str> {
     match name {

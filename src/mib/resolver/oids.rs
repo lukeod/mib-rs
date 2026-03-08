@@ -7,7 +7,7 @@ use crate::types::{Kind, Span};
 
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext};
-use super::util::language_rank;
+use super::util::{language_rank, normalize_timestamp};
 
 /// An OID definition collected for resolution.
 struct OidDef {
@@ -742,8 +742,8 @@ pub(super) fn should_prefer_module(
     }
 
     // Same language rank - use LAST-UPDATED as tiebreaker (newer wins).
-    let new_ts = ctx.extract_last_updated(new_ir);
-    let current_ts = ctx.extract_last_updated(current_ir);
+    let new_ts = normalize_timestamp(&ctx.extract_last_updated(new_ir));
+    let current_ts = normalize_timestamp(&ctx.extract_last_updated(current_ir));
     if new_ts != current_ts {
         return new_ts > current_ts;
     }

@@ -699,3 +699,32 @@ fn duplicate_import_first_wins() {
         "first import should win"
     );
 }
+
+#[test]
+fn timestamp_normalization_in_module_preference() {
+    // IEEE802dot11-MIB has LAST-UPDATED "0208300000Z" (SMIv1 10-digit, means 2002-08-30).
+    // IEEE8023-LAG-MIB has LAST-UPDATED "200006270000Z" (SMIv2 12-digit, means 2000-06-27).
+    // Both define member-body(1.2) and us(1.2.840). IEEE802dot11-MIB is newer, so it
+    // should win after normalizing the timestamps. Without normalization, raw string
+    // comparison picks IEEE8023-LAG-MIB (wrong: "0" < "2" in ASCII).
+    let r = load_corpus(&["IEEE802dot11-MIB", "IEEE8023-LAG-MIB"]);
+    let mib = &r.mib;
+
+    for name in &["member-body", "us"] {
+        let node_id = mib
+            .node_by_name(name)
+            .unwrap_or_else(|| panic!("node {name} not found"));
+        let mod_id = mib
+            .tree()
+            .get(node_id)
+            .module()
+            .unwrap_or_else(|| panic!("module not set for {name}"));
+        let module = mib.module(mod_id);
+        assert_eq!(
+            module.name(),
+            "IEEE802dot11-MIB",
+            "{name}: expected IEEE802dot11-MIB (newer after timestamp normalization), got {}",
+            module.name()
+        );
+    }
+}
