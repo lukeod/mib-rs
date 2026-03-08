@@ -558,3 +558,84 @@ fn modules_importing_symbol() {
         "DisplayString should be imported by IF-MIB"
     );
 }
+
+// --- Base module priority ---
+
+#[test]
+fn base_module_ownership() {
+    // Load vendor MIBs that redeclare well-known OIDs as path prefixes:
+    //   IEEE8023-LAG-MIB: { iso(1) member-body(2) us(840) ... }
+    //   RAPID-CITY: { iso org(3) dod(6) ... }
+    let r = load_corpus(&["IEEE8023-LAG-MIB", "RAPID-CITY"]);
+    let mib = &r.mib;
+
+    // These OIDs are defined by multiple base modules (SNMPv2-SMI and
+    // RFC1155-SMI both define org, dod, internet, etc.). Either base module
+    // is acceptable; the key invariant is that no vendor module owns them.
+    let well_known = ["iso", "org", "dod", "internet", "mgmt", "enterprises"];
+
+    for name in &well_known {
+        let node_id = mib
+            .node_by_name(name)
+            .unwrap_or_else(|| panic!("node {name} not found"));
+        let mod_id = mib
+            .tree()
+            .get(node_id)
+            .module()
+            .unwrap_or_else(|| panic!("module not set for {name}"));
+        let module = mib.module(mod_id);
+        assert!(
+            module.is_base(),
+            "{name}: expected base module, got {}",
+            module.name()
+        );
+    }
+}
+
+#[test]
+fn base_module_beats_vendor_with_newer_timestamp() {
+    // RAPID-CITY is SMIv2 with a recent LAST-UPDATED. Base modules (SMIv1,
+    // no timestamp) should still win for well-known OIDs.
+    let r = load_corpus(&["RAPID-CITY"]);
+    let mib = &r.mib;
+
+    for name in &["org", "dod"] {
+        let node_id = mib
+            .node_by_name(name)
+            .unwrap_or_else(|| panic!("node {name} not found"));
+        let mod_id = mib
+            .tree()
+            .get(node_id)
+            .module()
+            .unwrap_or_else(|| panic!("module not set for {name}"));
+        let module = mib.module(mod_id);
+        assert!(
+            module.is_base(),
+            "{name}: expected base module, got {}",
+            module.name()
+        );
+    }
+}
+
+#[test]
+fn snmp_oid_owned_by_snmpv2_mib() {
+    // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the synthetic
+    // SNMPv2-SMI. Verify the synthetic base doesn't claim it.
+    let r = load_corpus(&["SNMPv2-MIB"]);
+    let mib = &r.mib;
+
+    let node_id = mib
+        .node_by_name("snmp")
+        .expect("snmp node not found");
+    let mod_id = mib
+        .tree()
+        .get(node_id)
+        .module()
+        .expect("module not set for snmp");
+    let module = mib.module(mod_id);
+    assert_eq!(
+        module.name(),
+        "SNMPv2-MIB",
+        "snmp OID should be owned by SNMPv2-MIB"
+    );
+}

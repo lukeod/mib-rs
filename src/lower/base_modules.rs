@@ -402,12 +402,6 @@ fn create_oid_definitions() -> Vec<ir::Definition> {
             "A value used for null identifiers. Used as a default value when no valid OID is applicable.",
             rfc2578,
         ),
-        make_oid_value(
-            "snmp",
-            vec![oid_name("mib-2"), oid_num(11)],
-            "SNMP protocol statistics and administrative objects.",
-            rfc2578,
-        ),
     ]);
     defs
 }

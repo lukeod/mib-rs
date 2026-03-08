@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::graph;
 use crate::ir;
+use crate::lower::base_modules;
 use crate::types::{Kind, Span};
 
 use super::super::types::*;
@@ -396,14 +397,7 @@ fn resolve_oid_component(
                 .or_default()
                 .insert(name.clone(), child);
             if !is_last {
-                ctx.mib.tree.set_name(child, name.clone());
-                if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
-                    ctx.mib.tree.set_module(child, resolved_mod);
-                }
-                ctx.mib.register_node(name, child);
-                if ctx.mib.tree().get(child).kind == Kind::Internal {
-                    ctx.mib.tree.set_kind(child, Kind::Node);
-                }
+                set_intermediate_node(ctx, od, child, name);
             } else if ctx.mib.tree().get(child).name.is_empty() {
                 ctx.mib.tree.set_name(child, name.clone());
             }
@@ -432,19 +426,39 @@ fn resolve_oid_component(
                 .or_default()
                 .insert(name.clone(), child);
             if !is_last {
-                ctx.mib.tree.set_name(child, name.clone());
-                if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
-                    ctx.mib.tree.set_module(child, resolved_mod);
-                }
-                ctx.mib.register_node(name, child);
-                if ctx.mib.tree().get(child).kind == Kind::Internal {
-                    ctx.mib.tree.set_kind(child, Kind::Node);
-                }
+                set_intermediate_node(ctx, od, child, name);
             } else if ctx.mib.tree().get(child).name.is_empty() {
                 ctx.mib.tree.set_name(child, name.clone());
             }
             Some(child)
         }
+    }
+}
+
+/// Set name and module for an intermediate (non-leaf) OID path component,
+/// gated behind should_prefer_module so that path-declaring vendor modules
+/// don't overwrite ownership of well-known OIDs.
+fn set_intermediate_node(
+    ctx: &mut ResolverContext,
+    od: &OidDef,
+    child: NodeId,
+    name: &str,
+) {
+    let existing_mod = ctx.mib.tree().get(child).module;
+    let existing_name = ctx.mib.tree().get(child).name.clone();
+
+    let prefer = existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod);
+    if prefer || existing_name.is_empty() {
+        ctx.mib.tree.set_name(child, name.to_string());
+    }
+    if prefer {
+        if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
+            ctx.mib.tree.set_module(child, resolved_mod);
+        }
+    }
+    ctx.mib.register_node(name, child);
+    if ctx.mib.tree().get(child).kind == Kind::Internal {
+        ctx.mib.tree.set_kind(child, Kind::Node);
     }
 }
 
@@ -534,26 +548,6 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         ctx.emit_diagnostic(code, Some(od.ir_mod), def_span, msg);
     }
 
-    // Set node name.
-    if existing_name.is_empty() || existing_name == od.name {
-        ctx.mib.tree.set_name(node_id, od.name.clone());
-    } else if existing_name != od.name {
-        // Name conflict - check if we should prefer the new module.
-        let existing_mod = ctx.mib.tree().get(node_id).module;
-        let existing_resolved = existing_mod;
-        if should_prefer_module(ctx, existing_resolved, od.ir_mod) {
-            ctx.mib.tree.set_name(node_id, od.name.clone());
-        }
-    }
-
-    // Set kind.
-    let node_kind = od.kind.to_node_kind();
-    if ctx.mib.tree().get(node_id).kind == Kind::Internal
-        || ctx.mib.tree().get(node_id).kind == Kind::Unknown
-    {
-        ctx.mib.tree.set_kind(node_id, node_kind);
-    }
-
     // RFC 2578 section 7.10: for administrative assignments the last
     // sub-identifier must not be zero (except zeroDotZero).
     if !matches!(
@@ -573,28 +567,38 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         }
     }
 
-    // Set span.
-    ctx.mib.tree.set_span(node_id, def_span);
-
-    // Set description and reference for value assignments.
-    if let Some((description, reference)) = value_assignment_text {
-        if !description.is_empty() {
-            ctx.mib.tree.set_description(node_id, description);
-        }
-        if !reference.is_empty() {
-            ctx.mib.tree.set_reference(node_id, reference);
-        }
-    }
-
-    // Module preference.
+    // The node's kind, name, span, description, and module all reflect the
+    // preferred module. Gate all of them behind the same preference check
+    // so they stay in sync.
     let existing_mod = ctx.mib.tree().get(node_id).module;
-    if existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod) {
+    let prefer = existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod);
+
+    if prefer {
+        ctx.mib.tree.set_name(node_id, od.name.clone());
+
+        let node_kind = od.kind.to_node_kind();
+        ctx.mib.tree.set_kind(node_id, node_kind);
+
+        ctx.mib.tree.set_span(node_id, def_span);
+
+        if let Some((description, reference)) = value_assignment_text {
+            if !description.is_empty() {
+                ctx.mib.tree.set_description(node_id, description);
+            }
+            if !reference.is_empty() {
+                ctx.mib.tree.set_reference(node_id, reference);
+            }
+        }
+
         ctx.mib.tree.set_module(node_id, resolved_mod_id);
-        // Set module OID for MODULE-IDENTITY definitions.
         if od.kind == OidDefKind::ModuleIdentity {
             let oid = ctx.mib.tree().oid_of(node_id).clone();
             ctx.mib.module_mut(resolved_mod_id).oid = Some(oid);
         }
+    } else if existing_name.is_empty() {
+        // No prior name - set name even if module isn't preferred, so the
+        // node isn't left unnamed.
+        ctx.mib.tree.set_name(node_id, od.name.clone());
     }
 
     // Register symbol -> node mapping.
@@ -721,6 +725,15 @@ pub(super) fn should_prefer_module(
         Some(&m) => m,
     };
 
+    // Base modules always win. They are the authoritative source for
+    // well-known OIDs (iso, org, dod, internet, etc.).
+    let new_is_base = base_modules::is_base_module(&ctx.modules[new_ir.0 as usize].name);
+    let current_is_base =
+        base_modules::is_base_module(&ctx.modules[current_ir.0 as usize].name);
+    if new_is_base != current_is_base {
+        return new_is_base;
+    }
+
     let new_rank = language_rank(ctx.module_language(new_ir));
     let current_rank = language_rank(ctx.module_language(current_ir));
 
@@ -728,7 +741,16 @@ pub(super) fn should_prefer_module(
         return new_rank > current_rank;
     }
 
+    // Same language rank - use LAST-UPDATED as tiebreaker (newer wins).
     let new_ts = ctx.extract_last_updated(new_ir);
     let current_ts = ctx.extract_last_updated(current_ir);
-    new_ts > current_ts
+    if new_ts != current_ts {
+        return new_ts > current_ts;
+    }
+
+    // Deterministic fallback: lexicographic module name for stable results
+    // across implementations. No semantic basis, but reproducible.
+    let new_name = &ctx.modules[new_ir.0 as usize].name;
+    let current_name = &ctx.modules[current_ir.0 as usize].name;
+    new_name < current_name
 }
