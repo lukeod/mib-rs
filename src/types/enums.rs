@@ -43,22 +43,49 @@ impl_display!(Severity {
     Info => "info",
 });
 
-/// StrictnessLevel defines preset strictness configurations.
-/// Higher values are stricter and report more diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// ResolverStrictness controls resolver fallback behavior.
+/// Ordered from strictest (fewest fallbacks) to most permissive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum StrictnessLevel {
-    Silent = 0,
-    Permissive = 1,
-    Normal = 3,
-    Strict = 6,
+pub enum ResolverStrictness {
+    Strict = 0,
+    Normal = 1,
+    Permissive = 2,
 }
 
-impl_display!(StrictnessLevel {
-    Silent => "silent",
-    Permissive => "permissive",
-    Normal => "normal",
+impl ResolverStrictness {
+    /// Reports whether tier-2 constrained fallbacks are enabled (Normal+).
+    pub fn allow_constrained_fallbacks(self) -> bool {
+        self != ResolverStrictness::Strict
+    }
+
+    /// Reports whether tier-3 global fallbacks are enabled (Permissive only).
+    pub fn allow_global_fallbacks(self) -> bool {
+        self == ResolverStrictness::Permissive
+    }
+}
+
+impl_display!(ResolverStrictness {
     Strict => "strict",
+    Normal => "normal",
+    Permissive => "permissive",
+});
+
+/// ReportingLevel controls diagnostic reporting verbosity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ReportingLevel {
+    Silent = 0,
+    Quiet = 1,
+    Default = 2,
+    Verbose = 3,
+}
+
+impl_display!(ReportingLevel {
+    Silent => "silent",
+    Quiet => "quiet",
+    Default => "default",
+    Verbose => "verbose",
 });
 
 /// Kind identifies what an OID node represents.

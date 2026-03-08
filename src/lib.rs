@@ -21,5 +21,5 @@ pub use source::{FindResult, Source};
 pub use token::{Token, TokenKind};
 pub use types::{
     Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,
-    Language, Severity, Status, StrictnessLevel,
+    Language, ReportingLevel, ResolverStrictness, Severity, Status,
 };

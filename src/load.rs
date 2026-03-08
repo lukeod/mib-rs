@@ -13,12 +13,13 @@ use crate::parser;
 use crate::scan;
 use crate::searchpath;
 use crate::source::{FindResult, Source};
-use crate::types::{DiagnosticConfig, StrictnessLevel};
+use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 /// Options for loading MIB modules.
 pub struct LoadOptions {
     sources: Vec<Box<dyn Source>>,
     modules: Option<Vec<String>>,
+    resolver_strictness: ResolverStrictness,
     diag_config: DiagnosticConfig,
     system_paths: bool,
 }
@@ -34,6 +35,7 @@ impl LoadOptions {
         LoadOptions {
             sources: Vec::new(),
             modules: None,
+            resolver_strictness: ResolverStrictness::Normal,
             diag_config: DiagnosticConfig::default(),
             system_paths: false,
         }
@@ -59,15 +61,15 @@ impl LoadOptions {
         self
     }
 
-    /// Set the diagnostic configuration for strictness control.
+    /// Set the diagnostic configuration for reporting/failure policy.
     pub fn diagnostic_config(mut self, config: DiagnosticConfig) -> Self {
         self.diag_config = config;
         self
     }
 
-    /// Set the strictness level using a preset configuration.
-    pub fn strictness(mut self, level: StrictnessLevel) -> Self {
-        self.diag_config = DiagnosticConfig::for_level(level);
+    /// Set the resolver strictness level.
+    pub fn resolver_strictness(mut self, strictness: ResolverStrictness) -> Self {
+        self.resolver_strictness = strictness;
         self
     }
 
@@ -98,6 +100,7 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
         return Err(LoadError::NoSources);
     }
 
+    let strictness = options.resolver_strictness;
     let diag_config = options.diag_config;
 
     let (ir_modules, requested_names) = if let Some(names) = options.modules {
@@ -108,7 +111,7 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
         (mods, None)
     };
 
-    let mib = crate::mib::resolver::resolve(ir_modules, &diag_config);
+    let mib = crate::mib::resolver::resolve(ir_modules, strictness, &diag_config);
 
     let warnings = check_load_result(&mib, &diag_config, requested_names.as_deref())?;
 

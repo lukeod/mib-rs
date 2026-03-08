@@ -595,7 +595,7 @@ mod tests {
     }
 
     fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<SpanDiagnostic>) {
-        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::strict());
+        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::verbose());
         lexer.tokenize()
     }
 

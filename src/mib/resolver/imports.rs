@@ -4,7 +4,6 @@ use crate::types::{DiagCode, Language, Span};
 
 use super::context::{IrModuleId, ResolverContext, REASON_MODULE_NOT_FOUND, REASON_SYMBOL_NOT_EXPORTED};
 use super::registration::group_imports;
-use super::util::language_rank;
 
 /// Well-known macro names that are syntactic constructs, not resolvable symbols.
 const MACRO_NAMES: &[&str] = &[
@@ -75,8 +74,8 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             continue;
         }
 
-        // Fallback chain (requires safe fallbacks).
-        if ctx.diag_config.allow_safe_fallbacks() {
+        // Fallback chain (constrained, Normal+).
+        if ctx.strictness.allow_constrained_fallbacks() {
             // Fallback 1: Module aliases.
             if let Some(alias) = base_module_import_alias(from_module) {
                 let alias_candidates = ctx.module_index.get(alias).cloned().unwrap_or_default();
@@ -242,18 +241,14 @@ fn candidate_import_source_module<'a>(
 }
 
 fn best_candidate(ctx: &ResolverContext, candidates: &[IrModuleId]) -> Option<IrModuleId> {
-    let mut scored: Vec<(IrModuleId, u8, String)> = candidates
+    // Pick the module with the newest LAST-UPDATED timestamp.
+    // Falls back to the first candidate when no timestamps are present.
+    let mut scored: Vec<(IrModuleId, String)> = candidates
         .iter()
         .copied()
-        .map(|id| {
-            (
-                id,
-                language_rank(ctx.module_language(id)),
-                normalize_timestamp(&ctx.extract_last_updated(id)),
-            )
-        })
+        .map(|id| (id, normalize_timestamp(&ctx.extract_last_updated(id))))
         .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)));
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
     scored.first().map(|s| s.0)
 }
 

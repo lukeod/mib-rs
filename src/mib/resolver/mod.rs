@@ -8,7 +8,7 @@ mod types;
 mod util;
 
 use crate::ir;
-use crate::types::DiagnosticConfig;
+use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 use super::mib::Mib;
 use context::ResolverContext;
@@ -17,8 +17,12 @@ use context::ResolverContext;
 ///
 /// Runs five sequential phases: registration, imports, types, OIDs, semantics.
 /// All phases are single-threaded and infallible (errors become diagnostics).
-pub fn resolve(modules: Vec<ir::Module>, diag_config: &DiagnosticConfig) -> Mib {
-    let mut ctx = ResolverContext::new(modules, diag_config.clone());
+pub fn resolve(
+    modules: Vec<ir::Module>,
+    strictness: ResolverStrictness,
+    diag_config: &DiagnosticConfig,
+) -> Mib {
+    let mut ctx = ResolverContext::new(modules, strictness, diag_config.clone());
 
     registration::register_modules(&mut ctx);
     imports::resolve_imports(&mut ctx);

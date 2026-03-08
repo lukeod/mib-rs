@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use super::{DiagCode, Severity, StrictnessLevel};
+use super::{DiagCode, ReportingLevel, Severity};
 
 /// Represents an issue found during parsing or resolution.
 #[derive(Debug, Clone)]
@@ -31,10 +31,13 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// Controls strictness and diagnostic filtering.
+/// Controls diagnostic reporting and failure policy.
+///
+/// This is purely about reporting - it does NOT control resolver behavior.
+/// Resolver fallback behavior is controlled by `ResolverStrictness`.
 #[derive(Debug, Clone)]
 pub struct DiagnosticConfig {
-    pub level: StrictnessLevel,
+    pub reporting: ReportingLevel,
     pub fail_at: Severity,
     pub overrides: HashMap<DiagCode, Severity>,
     pub ignore: Vec<String>,
@@ -43,7 +46,7 @@ pub struct DiagnosticConfig {
 impl Default for DiagnosticConfig {
     fn default() -> Self {
         DiagnosticConfig {
-            level: StrictnessLevel::Normal,
+            reporting: ReportingLevel::Default,
             fail_at: Severity::Severe,
             overrides: HashMap::new(),
             ignore: Vec::new(),
@@ -52,44 +55,41 @@ impl Default for DiagnosticConfig {
 }
 
 impl DiagnosticConfig {
-    /// Returns the diagnostic configuration preset for the given strictness level.
-    pub fn for_level(level: StrictnessLevel) -> Self {
+    /// Returns the diagnostic configuration preset for the given reporting level.
+    pub fn for_reporting(level: ReportingLevel) -> Self {
         match level {
-            StrictnessLevel::Strict => Self::strict(),
-            StrictnessLevel::Normal => Self::default(),
-            StrictnessLevel::Permissive => Self::permissive(),
-            StrictnessLevel::Silent => Self::silent(),
+            ReportingLevel::Verbose => Self::verbose(),
+            ReportingLevel::Default => Self::default(),
+            ReportingLevel::Quiet => Self::quiet(),
+            ReportingLevel::Silent => Self::silent(),
         }
     }
 
-    /// Strict configuration for RFC compliance checking.
-    pub fn strict() -> Self {
+    /// Verbose reporting profile - report all diagnostics.
+    pub fn verbose() -> Self {
         DiagnosticConfig {
-            level: StrictnessLevel::Strict,
+            reporting: ReportingLevel::Verbose,
             fail_at: Severity::Severe,
             overrides: HashMap::new(),
             ignore: Vec::new(),
         }
     }
 
-    /// Permissive configuration for legacy/vendor MIBs.
-    pub fn permissive() -> Self {
+    /// Low-noise reporting profile.
+    pub fn quiet() -> Self {
         DiagnosticConfig {
-            level: StrictnessLevel::Permissive,
-            fail_at: Severity::Fatal,
+            reporting: ReportingLevel::Quiet,
+            fail_at: Severity::Severe,
             overrides: HashMap::new(),
-            ignore: vec![
-                "identifier-underscore".to_string(),
-                "identifier-length-32".to_string(),
-                "bad-identifier-case".to_string(),
-            ],
+            ignore: Vec::new(),
         }
     }
 
     /// Silent configuration that suppresses all diagnostics.
+    /// Only fatal errors that prevent parsing are reported.
     pub fn silent() -> Self {
         DiagnosticConfig {
-            level: StrictnessLevel::Silent,
+            reporting: ReportingLevel::Silent,
             fail_at: Severity::Fatal,
             overrides: HashMap::new(),
             ignore: Vec::new(),
@@ -127,27 +127,19 @@ impl DiagnosticConfig {
         sev <= self.fail_at
     }
 
-    /// Returns true if strict RFC compliance is required.
-    pub fn is_strict(&self) -> bool {
-        self.level > StrictnessLevel::Normal
-    }
-
-    /// Returns true if safe fallback strategies should be used.
-    pub fn allow_safe_fallbacks(&self) -> bool {
-        self.level <= StrictnessLevel::Normal
-    }
-
-    /// Returns true if best-guess fallback strategies should be used.
-    pub fn allow_best_guess_fallbacks(&self) -> bool {
-        self.level <= StrictnessLevel::Permissive
-    }
-
+    /// Returns the maximum severity number (least severe) that should be
+    /// reported at the current reporting level.
+    ///
+    /// - Verbose: report all diagnostics (sev 0-6)
+    /// - Default: report Minor and above (sev 0-3)
+    /// - Quiet: report Error and above (sev 0-2)
+    /// - Silent: report nothing (except fatal, handled by caller)
     fn max_reported_severity(&self) -> Option<Severity> {
-        match self.level {
-            l if l >= StrictnessLevel::Strict => Some(Severity::Info),
-            l if l >= StrictnessLevel::Normal => Some(Severity::Minor),
-            l if l >= StrictnessLevel::Permissive => Some(Severity::Warning),
-            _ => None, // Silent: report nothing (fatal handled above)
+        match self.reporting {
+            ReportingLevel::Verbose => Some(Severity::Info),
+            ReportingLevel::Default => Some(Severity::Minor),
+            ReportingLevel::Quiet => Some(Severity::Error),
+            ReportingLevel::Silent => None,
         }
     }
 }
@@ -231,16 +223,26 @@ mod tests {
     #[test]
     fn should_report_respects_level() {
         let config = DiagnosticConfig::default();
-        // Normal reports Minor and above (sev 0-3)
+        // Default reports Minor and above (sev 0-3)
         assert!(config.should_report(DiagCode::ParseError));
         assert!(config.should_report(DiagCode::MacroNotImported));
         assert!(!config.should_report(DiagCode::IdentifierUnderscore));
     }
 
     #[test]
-    fn should_report_ignores() {
-        let config = DiagnosticConfig::permissive();
+    fn should_report_silent() {
+        let config = DiagnosticConfig::silent();
+        // Silent reports nothing except fatal
+        assert!(!config.should_report(DiagCode::ImportNotFound));
         assert!(!config.should_report(DiagCode::IdentifierUnderscore));
+    }
+
+    #[test]
+    fn should_report_verbose() {
+        let config = DiagnosticConfig::verbose();
+        // Verbose reports everything
+        assert!(config.should_report(DiagCode::ParseError));
+        assert!(config.should_report(DiagCode::IdentifierUnderscore));
     }
 
     #[test]
@@ -249,5 +251,15 @@ mod tests {
         assert!(config.should_fail(Severity::Fatal));
         assert!(config.should_fail(Severity::Severe));
         assert!(!config.should_fail(Severity::Error));
+    }
+
+    #[test]
+    fn for_reporting_presets() {
+        let verbose = DiagnosticConfig::for_reporting(ReportingLevel::Verbose);
+        assert!(matches!(verbose.reporting, ReportingLevel::Verbose));
+
+        let silent = DiagnosticConfig::for_reporting(ReportingLevel::Silent);
+        assert!(matches!(silent.reporting, ReportingLevel::Silent));
+        assert!(matches!(silent.fail_at, Severity::Fatal));
     }
 }

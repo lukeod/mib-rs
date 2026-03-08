@@ -1184,7 +1184,7 @@ mod tests {
             },
         }));
 
-        let cfg = DiagnosticConfig::strict();
+        let cfg = DiagnosticConfig::verbose();
         let lowered = lower(module, source, &cfg);
 
         assert!(lowered

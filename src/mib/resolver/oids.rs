@@ -16,7 +16,7 @@ struct OidDef {
     kind: OidDefKind,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum OidDefKind {
     ObjectType,
     ModuleIdentity,
@@ -391,7 +391,20 @@ fn resolve_oid_component(
             // Fall back to creating a named child.
             let parent = current.unwrap_or_else(|| ctx.mib.tree().root());
             let child = ctx.mib.tree.get_or_create_child(parent, *number);
-            if is_last || ctx.mib.tree().get(child).name.is_empty() {
+            ctx.module_symbol_to_node
+                .entry(od.ir_mod)
+                .or_default()
+                .insert(name.clone(), child);
+            if !is_last {
+                ctx.mib.tree.set_name(child, name.clone());
+                if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
+                    ctx.mib.tree.set_module(child, resolved_mod);
+                }
+                ctx.mib.register_node(name, child);
+                if ctx.mib.tree().get(child).kind == Kind::Internal {
+                    ctx.mib.tree.set_kind(child, Kind::Node);
+                }
+            } else if ctx.mib.tree().get(child).name.is_empty() {
                 ctx.mib.tree.set_name(child, name.clone());
             }
             Some(child)
@@ -414,7 +427,20 @@ fn resolve_oid_component(
             }
             let parent = current.unwrap_or_else(|| ctx.mib.tree().root());
             let child = ctx.mib.tree.get_or_create_child(parent, *number);
-            if ctx.mib.tree().get(child).name.is_empty() {
+            ctx.module_symbol_to_node
+                .entry(od.ir_mod)
+                .or_default()
+                .insert(name.clone(), child);
+            if !is_last {
+                ctx.mib.tree.set_name(child, name.clone());
+                if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
+                    ctx.mib.tree.set_module(child, resolved_mod);
+                }
+                ctx.mib.register_node(name, child);
+                if ctx.mib.tree().get(child).kind == Kind::Internal {
+                    ctx.mib.tree.set_kind(child, Kind::Node);
+                }
+            } else if ctx.mib.tree().get(child).name.is_empty() {
                 ctx.mib.tree.set_name(child, name.clone());
             }
             Some(child)
@@ -445,8 +471,8 @@ fn resolve_name_component(
         return Some(node);
     }
 
-    // Permissive: SMI global OID roots.
-    if ctx.diag_config.allow_best_guess_fallbacks() {
+    // Constrained (Normal+): SMI global OID roots.
+    if ctx.strictness.allow_constrained_fallbacks() {
         if let Some(node) = lookup_smi_global_oid_root(ctx, name) {
             return Some(node);
         }
@@ -564,6 +590,11 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     let existing_mod = ctx.mib.tree().get(node_id).module;
     if existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod) {
         ctx.mib.tree.set_module(node_id, resolved_mod_id);
+        // Set module OID for MODULE-IDENTITY definitions.
+        if od.kind == OidDefKind::ModuleIdentity {
+            let oid = ctx.mib.tree().oid_of(node_id).clone();
+            ctx.mib.module_mut(resolved_mod_id).oid = Some(oid);
+        }
     }
 
     // Register symbol -> node mapping.
@@ -635,7 +666,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
                     ctx.mark_import_used(od.ir_mod, &enterprise_name);
                 }
                 Some(node)
-            } else if ctx.diag_config.allow_best_guess_fallbacks() {
+            } else if ctx.strictness.allow_constrained_fallbacks() {
                 ctx.lookup_node_global(&enterprise_name)
             } else {
                 None

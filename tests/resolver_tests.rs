@@ -3,7 +3,7 @@
 use gomib::load::{load, LoadOptions};
 use gomib::mib::Oid;
 use gomib::source::dir_source;
-use gomib::types::{Access, BaseType, Kind, Language, StrictnessLevel};
+use gomib::types::{Access, BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
@@ -22,7 +22,8 @@ fn load_corpus(modules: &[&str]) -> gomib::load::LoadResult {
     let src = dir_source(&dir).expect("failed to create corpus source");
     let opts = LoadOptions::new()
         .source(src)
-        .strictness(StrictnessLevel::Permissive)
+        .resolver_strictness(ResolverStrictness::Permissive)
+        .diagnostic_config(DiagnosticConfig::silent())
         .modules(modules.iter().copied());
     load(opts).expect("load failed")
 }
@@ -35,7 +36,8 @@ fn load_all_corpus() -> gomib::load::LoadResult {
     let src = dir_source(&dir).expect("failed to create corpus source");
     let opts = LoadOptions::new()
         .source(src)
-        .strictness(StrictnessLevel::Permissive);
+        .resolver_strictness(ResolverStrictness::Permissive)
+        .diagnostic_config(DiagnosticConfig::silent());
     load(opts).expect("load failed")
 }
 
@@ -491,7 +493,8 @@ fn problems_corpus_no_panics() {
     let opts = LoadOptions::new()
         .source(src)
         .source(primary_src)
-        .strictness(StrictnessLevel::Permissive);
+        .resolver_strictness(ResolverStrictness::Permissive)
+        .diagnostic_config(DiagnosticConfig::silent());
     let r = load(opts).expect("load failed");
     eprintln!(
         "problems corpus: {} modules, {} objects",
@@ -512,7 +515,8 @@ fn smiv1_module() {
     let src = dir_source(&dir).expect("failed to create corpus source");
     let opts = LoadOptions::new()
         .source(src)
-        .strictness(StrictnessLevel::Permissive)
+        .resolver_strictness(ResolverStrictness::Permissive)
+        .diagnostic_config(DiagnosticConfig::silent())
         .modules(["RFC1213-MIB"]);
     let r = match load(opts) {
         Ok(r) => r,

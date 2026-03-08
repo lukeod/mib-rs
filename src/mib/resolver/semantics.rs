@@ -169,11 +169,15 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         let obj_id = ctx.mib.add_object(obj);
 
-        // Attach to node.
+        // Attach to node - prefer SMIv2 modules when multiple modules
+        // define the same OID (e.g., TCP-MIB and RFC1213-MIB both define
+        // tcpConnTable). Compare the existing object's source module, not
+        // the node's module from OID phase.
         let existing_obj = ctx.mib.tree().get(node_id).object;
-        let existing_mod = ctx.mib.tree().get(node_id).module;
+        let existing_obj_mod = existing_obj
+            .and_then(|oid| ctx.mib.object(oid).module());
         if existing_obj.is_none()
-            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+            || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
         {
             ctx.mib.tree.attach_object(node_id, obj_id);
         }
@@ -207,15 +211,22 @@ fn resolve_object_type(
             named_numbers,
             ..
         } => {
-            // Look up named base type (e.g., INTEGER).
-            if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, base) {
-                obj.typ = Some(type_id);
-                if used_import {
-                    ctx.mark_import_used(ir_mod, base);
+            // Look up named base type (e.g., TPSPRateType { kbps(1) }).
+            if !base.is_empty() {
+                if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, base) {
+                    obj.typ = Some(type_id);
+                    if used_import {
+                        ctx.mark_import_used(ir_mod, base);
+                    }
+                } else {
+                    let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                    ctx.record_unresolved_type(base, &mod_name, ir_mod, obj.syntax_span);
                 }
-            } else if !base.is_empty() {
-                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-                ctx.record_unresolved_type(base, &mod_name, ir_mod, obj.syntax_span);
+            } else {
+                // Bare INTEGER { ... } enum with no named base.
+                if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
+                    obj.typ = Some(type_id);
+                }
             }
             obj.enums = named_numbers
                 .iter()
@@ -485,8 +496,8 @@ fn lookup_object_by_name(
             }
         }
     }
-    // Permissive global fallback via node lookup.
-    if ctx.diag_config.allow_best_guess_fallbacks() {
+    // Global fallback via node lookup (Permissive only).
+    if ctx.strictness.allow_global_fallbacks() {
         if let Some(node_id) = ctx.lookup_node_global(name) {
             return ctx.mib.tree().get(node_id).object;
         }
@@ -582,7 +593,11 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         let notif_id = ctx.mib.add_notification(nd);
 
         let existing = ctx.mib.tree().get(node_id).notification;
-        if existing.is_none() {
+        let existing_mod = existing
+            .and_then(|id| ctx.mib.notification(id).module());
+        if existing.is_none()
+            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+        {
             ctx.mib.tree.attach_notification(node_id, notif_id);
         }
 
@@ -675,7 +690,11 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         let group_id = ctx.mib.add_group(gd);
 
         let existing = ctx.mib.tree().get(node_id).group;
-        if existing.is_none() {
+        let existing_mod = existing
+            .and_then(|id| ctx.mib.group(id).module());
+        if existing.is_none()
+            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+        {
             ctx.mib.tree.attach_group(node_id, group_id);
         }
 
@@ -779,7 +798,11 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         let comp_id = ctx.mib.add_compliance(cd);
 
         let existing = ctx.mib.tree().get(node_id).compliance;
-        if existing.is_none() {
+        let existing_mod = existing
+            .and_then(|id| ctx.mib.compliance(id).module());
+        if existing.is_none()
+            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+        {
             ctx.mib.tree.attach_compliance(node_id, comp_id);
         }
 
@@ -924,7 +947,11 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         let cap_id = ctx.mib.add_capability(cap);
 
         let existing = ctx.mib.tree().get(node_id).capability;
-        if existing.is_none() {
+        let existing_mod = existing
+            .and_then(|id| ctx.mib.capability(id).module());
+        if existing.is_none()
+            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
+        {
             ctx.mib.tree.attach_capability(node_id, cap_id);
         }
 

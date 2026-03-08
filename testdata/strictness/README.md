@@ -72,14 +72,34 @@ MIBs that pass at permissive level but have warnings at strict level.
 | 5 | Warning | Basically correct but might cause issues |
 | 6 | Info | Auxiliary notices |
 
-## gomib Strictness Mapping
+## Two Independent Knobs
 
-| gomib --level | Internal | smilint Level | Use Case |
-|---------------|----------|---------------|----------|
-| 6 | Strict | 0-6 | RFC compliance validation |
-| 3 | Normal | 0-3 | Default, balanced |
-| 1 | Permissive | 0-5 | Legacy/vendor MIBs |
-| 0 | Silent | - | Maximum compatibility |
+gomib uses two independent controls:
+
+**ResolverStrictness** controls resolver fallback behavior (what the resolver *does*):
+
+| Value | Constrained Fallbacks | Global Fallbacks | Use Case |
+|-------|----------------------|------------------|----------|
+| Strict | off | off | RFC compliance validation |
+| Normal | on | off | Default, balanced |
+| Permissive | on | on | Legacy/vendor MIBs |
+
+**ReportingLevel** controls diagnostic visibility (what gets *reported*):
+
+| Value | Reports | Use Case |
+|-------|---------|----------|
+| Silent | Fatal only | Suppress all output |
+| Quiet | Fatal-Error (0-2) | Minimal output |
+| Default | Fatal-Minor (0-3) | Balanced reporting |
+| Verbose | All (0-6) | Full diagnostic output |
+
+These are orthogonal: you can run a permissive resolver with verbose reporting to see all diagnostics while still using fallback resolution, or a strict resolver with quiet reporting to only see errors.
+
+## Fallback Tiers
+
+- **Tier 1 (deterministic):** Always enabled. ASN.1 primitive types (INTEGER, OCTET STRING, etc.) resolve from SNMPv2-SMI unconditionally.
+- **Tier 2 (constrained):** Enabled in Normal and Permissive. Well-known SMI globals, SMIv1 types, SNMPv2-TC types. Alias table fallback for imports.
+- **Tier 3 (global):** Enabled only in Permissive. Global type/OID search across all modules. Notification/group/variation global lookups.
 
 ## Usage
 
@@ -91,6 +111,10 @@ SMIPATH=../corpus/primary/ietf:../corpus/primary/iana:strict smilint -l 1 strict
 gomib load --strict -p . STRICT-TEST-MIB          # Should pass
 gomib load --strict -p . UNDERSCORE-TEST-MIB      # Should emit identifier-underscore
 gomib load --permissive -p . UNDERSCORE-TEST-MIB  # Should pass (suppressed)
+
+# Test reporting levels independently
+gomib load --report verbose -p . IF-MIB           # See all diagnostics
+gomib load --report silent -p . IF-MIB            # Suppress diagnostics
 ```
 
 ## net-snmp Flags

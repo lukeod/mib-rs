@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
-use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Span};
+use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness, Span};
 
 use super::super::mib::Mib;
 use super::super::types::*;
@@ -63,7 +63,10 @@ pub(super) struct ResolverContext {
     pub unresolved_indexes: Vec<UnresolvedTracking>,
     pub unresolved_notif_objects: Vec<UnresolvedTracking>,
 
-    /// Diagnostic configuration and collected diagnostics.
+    /// Resolver strictness controls fallback behavior.
+    pub strictness: ResolverStrictness,
+
+    /// Diagnostic configuration controls reporting only.
     pub diag_config: DiagnosticConfig,
 }
 
@@ -76,7 +79,11 @@ pub(super) struct UnresolvedTracking {
 }
 
 impl ResolverContext {
-    pub fn new(modules: Vec<ir::Module>, diag_config: DiagnosticConfig) -> Self {
+    pub fn new(
+        modules: Vec<ir::Module>,
+        strictness: ResolverStrictness,
+        diag_config: DiagnosticConfig,
+    ) -> Self {
         Self {
             mib: Mib::new(),
             modules,
@@ -97,6 +104,7 @@ impl ResolverContext {
             unresolved_oids: Vec::new(),
             unresolved_indexes: Vec::new(),
             unresolved_notif_objects: Vec::new(),
+            strictness,
             diag_config,
         }
     }
@@ -213,10 +221,12 @@ impl ResolverContext {
         None
     }
 
-    /// Try well-known type fallbacks. ASN.1 primitives always resolve.
-    /// SMI global types resolve only in permissive mode.
+    /// Try well-known type fallbacks.
+    /// Tier 1 (always): ASN.1 primitives.
+    /// Tier 2 (constrained, Normal+): SMI globals, SMIv1, SNMPv2-TC.
+    /// Tier 3 (global, Permissive only): not handled here (see global lookup).
     fn try_well_known_type_fallbacks(&self, name: &str) -> Option<TypeId> {
-        // ASN.1 primitives always resolve from SNMPv2-SMI
+        // Tier 1: ASN.1 primitives always resolve from SNMPv2-SMI
         if matches!(name, "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS") {
             if let Some(smi) = self.snmpv2_smi {
                 return self
@@ -226,7 +236,8 @@ impl ResolverContext {
                     .copied();
             }
         }
-        if !self.diag_config.allow_best_guess_fallbacks() {
+        // Tier 2: constrained fallbacks (Normal+)
+        if !self.strictness.allow_constrained_fallbacks() {
             return None;
         }
         // SMI global types from SNMPv2-SMI

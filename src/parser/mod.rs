@@ -2306,7 +2306,7 @@ mod tests {
     }
 
     fn parse_strict(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), DiagnosticConfig::strict())
+        parse(input.as_bytes(), DiagnosticConfig::verbose())
     }
 
     #[test]

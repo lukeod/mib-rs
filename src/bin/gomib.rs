@@ -5,7 +5,7 @@ use clap::Parser;
 use gomib::load::{load, LoadOptions};
 use gomib::mib::Mib;
 use gomib::source::dir_source;
-use gomib::types::{Kind, StrictnessLevel};
+use gomib::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
 
 #[derive(Parser)]
 #[command(name = "gomib", about = "SNMP MIB parser and resolver")]
@@ -28,12 +28,15 @@ enum Command {
     Load {
         /// Module names to load (omit to load all)
         modules: Vec<String>,
-        /// Use strict diagnostics
+        /// Use strict resolver mode
         #[arg(long)]
         strict: bool,
-        /// Use permissive diagnostics
+        /// Use permissive resolver mode
         #[arg(long)]
         permissive: bool,
+        /// Reporting level (silent, quiet, default, verbose)
+        #[arg(long, default_value = "default")]
+        report: String,
         /// Show detailed stats
         #[arg(long)]
         stats: bool,
@@ -110,8 +113,9 @@ fn main() {
             modules,
             strict,
             permissive,
+            report,
             stats,
-        } => cmd_load(&cli.paths, modules, strict, permissive, stats),
+        } => cmd_load(&cli.paths, modules, strict, permissive, &report, stats),
         Command::Get {
             query,
             modules,
@@ -150,12 +154,16 @@ fn load_mib(
     paths: &[String],
     modules: Vec<String>,
     all: bool,
-    level: StrictnessLevel,
+    strictness: ResolverStrictness,
+    diag_config: DiagnosticConfig,
 ) -> Result<Mib, i32> {
     let sources = build_sources(paths);
     let use_system = sources.is_empty();
 
-    let mut opts = LoadOptions::new().sources(sources).strictness(level);
+    let mut opts = LoadOptions::new()
+        .sources(sources)
+        .resolver_strictness(strictness)
+        .diagnostic_config(diag_config);
 
     if use_system {
         opts = opts.system_paths();
@@ -179,23 +187,34 @@ fn load_mib(
     }
 }
 
+fn parse_reporting_level(s: &str) -> ReportingLevel {
+    match s {
+        "silent" => ReportingLevel::Silent,
+        "quiet" => ReportingLevel::Quiet,
+        "verbose" => ReportingLevel::Verbose,
+        _ => ReportingLevel::Default,
+    }
+}
+
 fn cmd_load(
     paths: &[String],
     modules: Vec<String>,
     strict: bool,
     permissive: bool,
+    report: &str,
     stats: bool,
 ) -> i32 {
-    let level = if strict {
-        StrictnessLevel::Strict
+    let strictness = if strict {
+        ResolverStrictness::Strict
     } else if permissive {
-        StrictnessLevel::Permissive
+        ResolverStrictness::Permissive
     } else {
-        StrictnessLevel::Normal
+        ResolverStrictness::Normal
     };
+    let diag_config = DiagnosticConfig::for_reporting(parse_reporting_level(report));
 
     let all = modules.is_empty();
-    let mib = match load_mib(paths, modules, all, level) {
+    let mib = match load_mib(paths, modules, all, strictness, diag_config) {
         Ok(m) => m,
         Err(code) => return code,
     };
@@ -241,7 +260,13 @@ fn cmd_get(
     full: bool,
 ) -> i32 {
     let load_all = all || modules.is_empty();
-    let mib = match load_mib(paths, modules, load_all, StrictnessLevel::Permissive) {
+    let mib = match load_mib(
+        paths,
+        modules,
+        load_all,
+        ResolverStrictness::Permissive,
+        DiagnosticConfig::silent(),
+    ) {
         Ok(m) => m,
         Err(code) => return code,
     };
@@ -422,7 +447,7 @@ fn cmd_paths(paths: &[String]) -> i32 {
 
 fn cmd_lint(paths: &[String], modules: Vec<String>) -> i32 {
     let all = modules.is_empty();
-    let mib = match load_mib(paths, modules, all, StrictnessLevel::Strict) {
+    let mib = match load_mib(paths, modules, all, ResolverStrictness::Strict, DiagnosticConfig::verbose()) {
         Ok(m) => m,
         Err(code) => return code,
     };
@@ -451,7 +476,13 @@ fn cmd_find(
     count: bool,
 ) -> i32 {
     let load_all = all || modules.is_empty();
-    let mib = match load_mib(paths, modules, load_all, StrictnessLevel::Permissive) {
+    let mib = match load_mib(
+        paths,
+        modules,
+        load_all,
+        ResolverStrictness::Permissive,
+        DiagnosticConfig::silent(),
+    ) {
         Ok(m) => m,
         Err(code) => return code,
     };
