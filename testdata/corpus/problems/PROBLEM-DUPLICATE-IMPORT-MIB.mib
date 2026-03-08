@@ -1,0 +1,29 @@
+-- Synthetic MIB: imports the same symbol from two different modules.
+-- Used by duplicate import diagnostic tests.
+
+PROBLEM-DUPLICATE-IMPORT-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    DisplayString
+        FROM RFC1213-MIB
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC
+    ;
+
+problemDuplicateImportMIB MODULE-IDENTITY
+    LAST-UPDATED "200901010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION  "Tests duplicate import diagnostic."
+    ::= { enterprises 99999 }
+
+problemDupObject OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Object using the duplicated import."
+    ::= { problemDuplicateImportMIB 1 }
+
+END

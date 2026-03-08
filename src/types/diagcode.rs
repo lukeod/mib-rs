@@ -200,6 +200,7 @@ diag_codes! {
     resolver,   ComplianceMemberNotLocal,   "compliance-member-not-local",           Warning;
     resolver,   TimeticksRangeIllegal,      "timeticks-range-illegal",               Error;
     resolver,   StatusInvalidCapabilities,  "status-invalid-capabilities",           Error;
+    resolver,   ImportDuplicate,            "import-duplicate",                      Minor;
     resolver,   ImportUnused,               "import-unused",                         Style;
     resolver,   BasetypeNotImported,        "basetype-not-imported",                 Minor;
     resolver,   DescriptionMissing,         "description-missing",                   Minor;

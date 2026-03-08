@@ -3,7 +3,7 @@
 use gomib::load::{load, LoadOptions};
 use gomib::mib::Oid;
 use gomib::source::dir_source;
-use gomib::types::{Access, BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
+use gomib::types::{Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
@@ -637,5 +637,65 @@ fn snmp_oid_owned_by_snmpv2_mib() {
         module.name(),
         "SNMPv2-MIB",
         "snmp OID should be owned by SNMPv2-MIB"
+    );
+}
+
+// --- Duplicate import diagnostic tests ---
+
+fn load_problems(modules: &[&str]) -> gomib::load::LoadResult {
+    let dir = problems_dir();
+    let corpus = corpus_dir();
+    let src = gomib::source::multi_source(vec![
+        dir_source(&dir).expect("failed to create problems source"),
+        dir_source(&corpus).expect("failed to create corpus source"),
+    ]);
+    let opts = LoadOptions::new()
+        .source(src)
+        .resolver_strictness(ResolverStrictness::Normal)
+        .diagnostic_config(DiagnosticConfig::verbose())
+        .modules(modules.iter().copied());
+    load(opts).expect("load failed")
+}
+
+#[test]
+fn duplicate_import_from_different_modules_emits_diagnostic() {
+    let r = load_problems(&["PROBLEM-DUPLICATE-IMPORT-MIB"]);
+    let diags = r.mib.diagnostics();
+    let dup = diags
+        .iter()
+        .find(|d| d.code == DiagCode::ImportDuplicate)
+        .expect("expected import-duplicate diagnostic");
+    assert!(
+        dup.message.contains("RFC1213-MIB"),
+        "diagnostic should mention first module: {}",
+        dup.message
+    );
+    assert!(
+        dup.message.contains("SNMPv2-TC"),
+        "diagnostic should mention second module: {}",
+        dup.message
+    );
+}
+
+#[test]
+fn duplicate_import_first_wins() {
+    // DisplayString imported from RFC1213-MIB first, then SNMPv2-TC.
+    // The resolved import should point to RFC1213-MIB's version.
+    let r = load_problems(&["PROBLEM-DUPLICATE-IMPORT-MIB"]);
+    let mib = &r.mib;
+
+    let mod_id = mib
+        .module_by_name("PROBLEM-DUPLICATE-IMPORT-MIB")
+        .expect("module not found");
+    let module = mib.module(mod_id);
+    let imports = module.imports();
+    // Find the import group that contains DisplayString.
+    let ds_import = imports
+        .iter()
+        .find(|imp| imp.symbols.iter().any(|s| s.name == "DisplayString"))
+        .expect("DisplayString import not found");
+    assert_eq!(
+        ds_import.module, "RFC1213-MIB",
+        "first import should win"
     );
 }

@@ -38,16 +38,56 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         return;
     }
 
-    // Group imports by source module name.
+    // Group imports by source module, preserving the order in which source
+    // modules first appear. Symbols that appear in multiple groups (e.g.,
+    // DisplayString imported from both RFC1213-MIB and SNMPv2-TC) are kept
+    // only in the first group, so that iteration order is deterministic and
+    // matches the MIB's import ordering.
+    struct DuplicateImport {
+        symbol: String,
+        first_module: String,
+        second_module: String,
+        span: Span,
+    }
+    let mut order: Vec<String> = Vec::new();
     let mut by_module: HashMap<String, Vec<(String, Span)>> = HashMap::new();
+    let mut seen_symbols: HashMap<String, String> = HashMap::new(); // symbol -> first module
+    let mut duplicates: Vec<DuplicateImport> = Vec::new();
     for imp in &m.imports {
+        if let Some(first_mod) = seen_symbols.get(&imp.symbol) {
+            if *first_mod != imp.module {
+                duplicates.push(DuplicateImport {
+                    symbol: imp.symbol.clone(),
+                    first_module: first_mod.clone(),
+                    second_module: imp.module.clone(),
+                    span: imp.span,
+                });
+            }
+            continue;
+        }
+        seen_symbols.insert(imp.symbol.clone(), imp.module.clone());
+        if !by_module.contains_key(&imp.module) {
+            order.push(imp.module.clone());
+        }
         by_module
             .entry(imp.module.clone())
             .or_default()
             .push((imp.symbol.clone(), imp.span));
     }
+    for dup in duplicates {
+        ctx.emit_diagnostic(
+            DiagCode::ImportDuplicate,
+            Some(ir_mod),
+            dup.span,
+            format!(
+                "duplicate import: {:?} already imported from {:?}, ignoring import from {:?}",
+                dup.symbol, dup.first_module, dup.second_module,
+            ),
+        );
+    }
 
-    for (from_module, symbols) in &by_module {
+    for from_module in &order {
+        let symbols = by_module.get(from_module).unwrap();
         // Filter out MACRO symbols.
         let non_macro: Vec<&(String, Span)> = symbols
             .iter()
