@@ -2161,9 +2161,14 @@ impl<'src> Parser<'src> {
 
             if self.check(TokenKind::Comma) {
                 self.advance();
+            } else if !self.check(TokenKind::RBrace) && !self.is_eof() {
+                // Recovery: missing comma before another named number.
+                self.emit_diagnostic(
+                    DiagCode::MissingComma,
+                    self.current_span(),
+                    "missing comma in named number list",
+                );
             }
-            // No comma is tolerated - continue parsing if the next token
-            // looks like another named number (vendor MIBs sometimes omit commas).
         }
 
         Ok(items)
@@ -2901,6 +2906,12 @@ END
 "#;
         let modules = parse_str(input);
         assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        let missing_comma_count = modules[0]
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::MissingComma)
+            .count();
+        assert_eq!(missing_comma_count, 2, "expected 2 missing-comma diagnostics");
         match &modules[0].body[0] {
             Definition::TypeAssignment(d) => {
                 match &d.syntax {

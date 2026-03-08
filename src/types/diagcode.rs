@@ -68,6 +68,7 @@ diag_codes! {
     parser,     KeywordReserved,            "keyword-reserved",                      Severe;
     parser,     InvalidHexRange,            "invalid-hex-range",                     Error;
     parser,     NumberLeadingZero,          "number-leading-zero",                   Minor;
+    parser,     MissingComma,              "missing-comma",                         Minor;
 
     // Lowering
     lowering,   MissingModuleIdentity,      "missing-module-identity",               Warning;
