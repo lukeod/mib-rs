@@ -238,11 +238,7 @@ fn count_directly_resolved_symbols(
     symbols
         .iter()
         .filter(|(name, _)| {
-            candidates.iter().any(|cand| {
-                ctx.module_def_names
-                    .get(cand)
-                    .is_some_and(|defs| defs.contains(name.as_str()))
-            })
+            resolve_imported_symbol(ctx, candidates, name).is_some()
         })
         .count()
 }
@@ -391,22 +387,12 @@ fn try_partial_resolution(
     symbols: &[&(String, Span)],
 ) {
     for (name, span) in symbols {
-        let mut found = false;
-        for &cand in candidates {
-            if ctx
-                .module_def_names
-                .get(&cand)
-                .is_some_and(|dn| dn.contains(name.as_str()))
-            {
-                ctx.module_imports
-                    .entry(ir_mod)
-                    .or_default()
-                    .insert(name.to_string(), cand);
-                found = true;
-                break;
-            }
-        }
-        if !found {
+        if let Some(source) = resolve_imported_symbol(ctx, candidates, name) {
+            ctx.module_imports
+                .entry(ir_mod)
+                .or_default()
+                .insert(name.to_string(), source);
+        } else {
             ctx.record_unresolved_import(
                 name,
                 importing_module,
@@ -417,6 +403,35 @@ fn try_partial_resolution(
             );
         }
     }
+}
+
+fn resolve_imported_symbol(
+    ctx: &ResolverContext,
+    candidates: &[IrModuleId],
+    symbol: &str,
+) -> Option<IrModuleId> {
+    for &cand in candidates {
+        if ctx
+            .module_def_names
+            .get(&cand)
+            .is_some_and(|defs| defs.contains(symbol))
+        {
+            return Some(cand);
+        }
+
+        if let Some(source_name) = candidate_import_source_module(ctx, cand, symbol) {
+            let source_candidates = ctx
+                .module_index
+                .get(source_name)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(source) = best_candidate(ctx, &source_candidates) {
+                return Some(source);
+            }
+        }
+    }
+
+    None
 }
 
 /// Collapse multi-hop import chains to point directly at the defining module.

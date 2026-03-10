@@ -441,6 +441,38 @@ fn import_forwarding_oid_resolution() {
 }
 
 #[test]
+fn mixed_import_group_keeps_forwarded_oid_symbol() {
+    let mib = load_at_strictness("PRVT-SERV-MIB", ResolverStrictness::Normal);
+
+    assert_eq!(
+        count_module_diagnostics(&mib, "PRVT-SERV-MIB", DiagCode::ImportNotFound),
+        5
+    );
+    assert_eq!(
+        count_module_diagnostics(&mib, "PRVT-SERV-MIB", DiagCode::OidOrphan),
+        0
+    );
+    assert_eq!(
+        count_module_diagnostics(&mib, "PRVT-SERV-MIB", DiagCode::IndexUnresolved),
+        0
+    );
+
+    let row = require_object(&mib, "sapBaseInfoEntry");
+    assert_eq!(row.index().len(), 3);
+    assert_eq!(mib.object(row.index()[0].object.expect("svcId index")).name(), "svcId");
+    assert_eq!(
+        mib.object(row.index()[1].object.expect("sapPortId index"))
+            .name(),
+        "sapPortId"
+    );
+    assert_eq!(
+        mib.object(row.index()[2].object.expect("sapEncapValue index"))
+            .name(),
+        "sapEncapValue"
+    );
+}
+
+#[test]
 fn strict_mode_index_resolution() {
     for strictness in [
         ResolverStrictness::Strict,
