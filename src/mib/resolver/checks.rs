@@ -685,7 +685,15 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         .get(&ir_id)
                         .and_then(|syms| syms.get(&td.name))
                         .copied()
-                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()));
+                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))
+                        .and_then(|base| {
+                            if base == BaseType::Unknown {
+                                diagnostic_base_from_syntax(&td.syntax)
+                            } else {
+                                Some(base)
+                            }
+                        })
+                        .or_else(|| diagnostic_base_from_syntax(&td.syntax));
                     collect_range_diags(&mut diags, ir_id, &td.name, &td.syntax, td.span, base);
                 }
                 ir::Definition::ObjectType(ot) => {
@@ -705,6 +713,43 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
     }
 
     emit_all(ctx, diags);
+}
+
+fn diagnostic_base_from_syntax(syntax: &ir::TypeSyntax) -> Option<BaseType> {
+    match syntax {
+        ir::TypeSyntax::IntegerEnum { base, .. } => {
+            if base.is_empty() {
+                Some(BaseType::Integer32)
+            } else {
+                diagnostic_base_from_name(base)
+            }
+        }
+        ir::TypeSyntax::Bits { .. } => Some(BaseType::Bits),
+        ir::TypeSyntax::OctetString => Some(BaseType::OctetString),
+        ir::TypeSyntax::ObjectIdentifier => Some(BaseType::ObjectIdentifier),
+        ir::TypeSyntax::Constrained { base, .. } => diagnostic_base_from_syntax(base),
+        ir::TypeSyntax::TypeRef { name, .. } => diagnostic_base_from_name(name),
+        ir::TypeSyntax::Sequence { .. } | ir::TypeSyntax::SequenceOf { .. } => None,
+    }
+}
+
+fn diagnostic_base_from_name(name: &str) -> Option<BaseType> {
+    match name {
+        "INTEGER" | "Integer32" => Some(BaseType::Integer32),
+        "OCTET STRING" => Some(BaseType::OctetString),
+        "OBJECT IDENTIFIER" | "ObjectName" | "NotificationName" => {
+            Some(BaseType::ObjectIdentifier)
+        }
+        "BITS" => Some(BaseType::Bits),
+        "Counter" | "Counter32" => Some(BaseType::Counter32),
+        "Counter64" => Some(BaseType::Counter64),
+        "Gauge" | "Gauge32" => Some(BaseType::Gauge32),
+        "Unsigned32" => Some(BaseType::Unsigned32),
+        "TimeTicks" => Some(BaseType::TimeTicks),
+        "IpAddress" | "NetworkAddress" => Some(BaseType::IpAddress),
+        "Opaque" => Some(BaseType::Opaque),
+        _ => None,
+    }
 }
 
 fn collect_range_diags(
@@ -2714,6 +2759,7 @@ fn is_legal_index_basetype(base: BaseType) -> bool {
             | BaseType::TimeTicks
             | BaseType::Counter32
             | BaseType::Counter64
+            | BaseType::Bits
             | BaseType::OctetString
             | BaseType::Opaque
             | BaseType::IpAddress
@@ -2996,7 +3042,14 @@ fn check_format_hints(ctx: &mut ResolverContext) {
             };
 
             let t = ctx.mib.type_(type_id);
-            let base = t.effective_base(ctx.mib.types_slice());
+            let base = {
+                let effective = t.effective_base(ctx.mib.types_slice());
+                if effective == BaseType::Unknown {
+                    diagnostic_base_from_syntax(&td.syntax).unwrap_or(BaseType::Unknown)
+                } else {
+                    effective
+                }
+            };
 
             if !td.display_hint.is_empty() {
                 let valid = match base {

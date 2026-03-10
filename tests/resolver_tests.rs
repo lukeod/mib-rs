@@ -43,6 +43,23 @@ fn load_all_corpus() -> mib_rs::load::LoadResult {
     load(opts).expect("load failed")
 }
 
+fn load_corpus_with_diags(
+    modules: &[&str],
+    strictness: ResolverStrictness,
+) -> mib_rs::load::LoadResult {
+    let dir = corpus_dir();
+    if !dir.exists() {
+        panic!("corpus dir not found: {}", dir.display());
+    }
+    let src = dir_source(&dir).expect("failed to create corpus source");
+    let opts = LoadOptions::new()
+        .source(src)
+        .resolver_strictness(strictness)
+        .diagnostic_config(DiagnosticConfig::verbose())
+        .modules(modules.iter().copied());
+    load(opts).expect("load failed")
+}
+
 // --- Basic loading tests ---
 
 #[test]
@@ -1216,4 +1233,53 @@ fn effective_indexes_bare_type() {
         indexes[0].type_name, "INTEGER",
         "bare type index should preserve type name"
     );
+}
+
+#[test]
+fn juniper_integer64_size_is_accepted() {
+    let r = load_corpus_with_diags(&["JUNIPER-SMI"], ResolverStrictness::Strict);
+    let count = r
+        .mib
+        .diagnostics()
+        .iter()
+        .filter(|d| {
+            d.module.as_deref() == Some("JUNIPER-SMI")
+                && d.code == DiagCode::SizeIllegal
+                && d.message.contains("Integer64")
+        })
+        .count();
+    assert_eq!(count, 0, "Integer64 should not emit size-illegal");
+}
+
+#[test]
+fn cm_common_decimal32_requires_display_hint() {
+    let r = load_corpus_with_diags(&["CM-COMMON-MIB"], ResolverStrictness::Strict);
+    let count = r
+        .mib
+        .diagnostics()
+        .iter()
+        .filter(|d| {
+            d.module.as_deref() == Some("CM-COMMON-MIB")
+                && d.code == DiagCode::TypeWithoutFormat
+                && d.message.contains("Decimal32")
+        })
+        .count();
+    assert_eq!(count, 1, "Decimal32 should emit type-without-format");
+}
+
+#[test]
+fn fs_alarm_input_bits_index_is_accepted() {
+    let r = load_corpus_with_diags(&["FS-MIB"], ResolverStrictness::Strict);
+    let count = r
+        .mib
+        .diagnostics()
+        .iter()
+        .filter(|d| {
+            d.module.as_deref() == Some("FS-MIB")
+                && d.code == DiagCode::IndexIllegalBasetype
+                && d.message.contains("switchAlarmInputEntry")
+                && d.message.contains("alarmInputStatus")
+        })
+        .count();
+    assert_eq!(count, 0, "BITS-based alarm input index should not emit");
 }

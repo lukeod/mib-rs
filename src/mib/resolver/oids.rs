@@ -684,6 +684,26 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     }
 }
 
+fn finalize_trap_type_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {
+    let resolved_mod_id = ctx.module_to_resolved[&od.ir_mod];
+    let existing_mod = ctx.mib.tree().get(node_id).module;
+    let prefer = existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod);
+
+    if prefer {
+        ctx.mib.tree.set_name(node_id, od.name.clone());
+        ctx.mib.tree.set_kind(node_id, Kind::Notification);
+        ctx.mib.tree.set_module(node_id, resolved_mod_id);
+    } else if ctx.mib.tree().get(node_id).name.is_empty() {
+        ctx.mib.tree.set_name(node_id, od.name.clone());
+    }
+
+    ctx.module_symbol_to_node
+        .entry(od.ir_mod)
+        .or_default()
+        .insert(od.name.clone(), node_id);
+    ctx.mib.register_node(&od.name, node_id);
+}
+
 fn is_registered_kind(kind: Kind) -> bool {
     matches!(
         kind,
@@ -769,7 +789,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
             ctx.mib.tree.get_or_create_child(zero, trap_number)
         };
 
-        finalize_oid_definition(ctx, od, trap_node);
+        finalize_trap_type_definition(ctx, od, trap_node);
     }
 }
 
