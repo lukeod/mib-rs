@@ -54,7 +54,11 @@ fn primary_corpus_lowering_no_panics() {
             total_modules += 1;
             total_defs += module.definitions.len();
             // Every module should have a name
-            assert!(!module.name.is_empty(), "module has empty name in {:?}", file);
+            assert!(
+                !module.name.is_empty(),
+                "module has empty name in {:?}",
+                file
+            );
             // Language should be detected
             assert_ne!(
                 module.language,

@@ -26,32 +26,34 @@ pub(super) fn check_module_identity_dates(
     // Check revision ordering: must be reverse chronological (descending).
     for i in 1..revs.len() {
         if let (Some(prev), Some(curr)) = (&revs[i - 1].0, &revs[i].0)
-            && !curr.before(prev) {
-                ctx.emit_diagnostic(
-                    DiagCode::RevisionNotDescending,
-                    revs[i].1,
-                    format!(
-                        "revision {} is not in reverse chronological order",
-                        revision_dates[i].0
-                    ),
-                );
-            }
+            && !curr.before(prev)
+        {
+            ctx.emit_diagnostic(
+                DiagCode::RevisionNotDescending,
+                revs[i].1,
+                format!(
+                    "revision {} is not in reverse chronological order",
+                    revision_dates[i].0
+                ),
+            );
+        }
     }
 
     // Check revision-after-update: no revision may exceed LAST-UPDATED.
     if last_updated_valid {
         for (i, rev) in revs.iter().enumerate() {
             if let Some(t) = &rev.0
-                && t.after(&last_updated_time) {
-                    ctx.emit_diagnostic(
-                        DiagCode::RevisionAfterUpdate,
-                        rev.1,
-                        format!(
-                            "revision {} is after LAST-UPDATED {}",
-                            revision_dates[i].0, last_updated
-                        ),
-                    );
-                }
+                && t.after(&last_updated_time)
+            {
+                ctx.emit_diagnostic(
+                    DiagCode::RevisionAfterUpdate,
+                    rev.1,
+                    format!(
+                        "revision {} is after LAST-UPDATED {}",
+                        revision_dates[i].0, last_updated
+                    ),
+                );
+            }
         }
     }
 }

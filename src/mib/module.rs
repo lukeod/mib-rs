@@ -301,7 +301,7 @@ impl ModuleData {
                     || self.groups_by_name.contains_key(name)
                     || self.compliances_by_name.contains_key(name)
                     || self.capabilities_by_name.contains_key(name))
-                    .then_some(id)
+                .then_some(id)
             })
             .collect();
 

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gomib::load::{load, LoadOptions};
+use gomib::load::{LoadOptions, load};
 use gomib::mib::Mib;
 use gomib::source::dir_source;
 use gomib::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
@@ -219,10 +219,7 @@ fn status_equivalent(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
-    matches!(
-        (a, b),
-        ("mandatory", "current") | ("current", "mandatory")
-    )
+    matches!((a, b), ("mandatory", "current") | ("current", "mandatory"))
 }
 
 fn access_equivalent(a: &str, b: &str, is_smiv1: bool) -> bool {
@@ -331,99 +328,112 @@ fn for_each_fixture_node(
 #[test]
 fn fixture_node_type() {
     let mib = load_fixture_mib();
-    let failures = for_each_fixture_node(&mib, |_| true, |mib, _, fn_, failures| {
-        let got = normalize_node_type(mib, &fn_.name);
-        if !types_equivalent(&got, &fn_.node_type) {
-            failures.push(format!(
-                "{}: node type: got={got:?} fixture={:?}",
-                fn_.name, fn_.node_type
-            ));
-        }
-    });
-    assert!(failures.is_empty(), "node type divergences:\n{}", failures.join("\n"));
+    let failures = for_each_fixture_node(
+        &mib,
+        |_| true,
+        |mib, _, fn_, failures| {
+            let got = normalize_node_type(mib, &fn_.name);
+            if !types_equivalent(&got, &fn_.node_type) {
+                failures.push(format!(
+                    "{}: node type: got={got:?} fixture={:?}",
+                    fn_.name, fn_.node_type
+                ));
+            }
+        },
+    );
+    assert!(
+        failures.is_empty(),
+        "node type divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn fixture_oids() {
     let mib = load_fixture_mib();
-    let failures = for_each_fixture_node(&mib, |_| true, |mib, _, fn_, failures| {
-        let Some(node_id) = mib.node_by_name(&fn_.name) else {
-            failures.push(format!("{}: not found in mib-rs", fn_.name));
-            return;
-        };
-        let got = mib.tree().oid_of(node_id).to_string();
-        if got != fn_.oid {
-            failures.push(format!(
-                "{}: OID: got={got} fixture={}",
-                fn_.name, fn_.oid
-            ));
-        }
-    });
-    assert!(failures.is_empty(), "OID divergences:\n{}", failures.join("\n"));
+    let failures = for_each_fixture_node(
+        &mib,
+        |_| true,
+        |mib, _, fn_, failures| {
+            let Some(node_id) = mib.node_by_name(&fn_.name) else {
+                failures.push(format!("{}: not found in mib-rs", fn_.name));
+                return;
+            };
+            let got = mib.tree().oid_of(node_id).to_string();
+            if got != fn_.oid {
+                failures.push(format!("{}: OID: got={got} fixture={}", fn_.name, fn_.oid));
+            }
+        },
+    );
+    assert!(
+        failures.is_empty(),
+        "OID divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn fixture_types() {
     let mib = load_fixture_mib();
-    let failures = for_each_fixture_node(
-        &mib,
-        is_object_type_node,
-        |mib, _, fn_, failures| {
-            let Some(obj_id) = mib.object_by_name(&fn_.name) else {
-                failures.push(format!("{}: object not found", fn_.name));
-                return;
-            };
-            let obj = mib.object(obj_id);
+    let failures = for_each_fixture_node(&mib, is_object_type_node, |mib, _, fn_, failures| {
+        let Some(obj_id) = mib.object_by_name(&fn_.name) else {
+            failures.push(format!("{}: object not found", fn_.name));
+            return;
+        };
+        let obj = mib.object(obj_id);
 
-            // Base type
-            let got_type = match obj.type_id() {
-                Some(tid) => {
-                    let base = mib.type_(tid).effective_base(mib.types_slice());
-                    normalize_base_type(base).to_string()
+        // Base type
+        let got_type = match obj.type_id() {
+            Some(tid) => {
+                let base = mib.type_(tid).effective_base(mib.types_slice());
+                normalize_base_type(base).to_string()
+            }
+            None => String::new(),
+        };
+        if !types_equivalent(&got_type, &fn_.typ) {
+            failures.push(format!(
+                "{}: type: got={got_type:?} fixture={:?}",
+                fn_.name, fn_.typ
+            ));
+        }
+
+        // TC name
+        let got_tc = match obj.type_id() {
+            Some(tid) => {
+                let t = mib.type_(tid);
+                if t.is_textual_convention() {
+                    t.name().to_string()
+                } else {
+                    String::new()
                 }
-                None => String::new(),
-            };
-            if !types_equivalent(&got_type, &fn_.typ) {
+            }
+            None => String::new(),
+        };
+        if !fn_.tc_name.is_empty() || !got_tc.is_empty() {
+            if got_tc != fn_.tc_name {
                 failures.push(format!(
-                    "{}: type: got={got_type:?} fixture={:?}",
-                    fn_.name, fn_.typ
+                    "{}: TC name: got={got_tc:?} fixture={:?}",
+                    fn_.name, fn_.tc_name
                 ));
             }
+        }
 
-            // TC name
-            let got_tc = match obj.type_id() {
-                Some(tid) => {
-                    let t = mib.type_(tid);
-                    if t.is_textual_convention() {
-                        t.name().to_string()
-                    } else {
-                        String::new()
-                    }
-                }
-                None => String::new(),
-            };
-            if !fn_.tc_name.is_empty() || !got_tc.is_empty() {
-                if got_tc != fn_.tc_name {
-                    failures.push(format!(
-                        "{}: TC name: got={got_tc:?} fixture={:?}",
-                        fn_.name, fn_.tc_name
-                    ));
-                }
+        // Display hint
+        let got_hint = obj.effective_display_hint();
+        if !fn_.hint.is_empty() || !got_hint.is_empty() {
+            if !hints_equivalent(got_hint, &fn_.hint) {
+                failures.push(format!(
+                    "{}: hint: got={got_hint:?} fixture={:?}",
+                    fn_.name, fn_.hint
+                ));
             }
-
-            // Display hint
-            let got_hint = obj.effective_display_hint();
-            if !fn_.hint.is_empty() || !got_hint.is_empty() {
-                if !hints_equivalent(got_hint, &fn_.hint) {
-                    failures.push(format!(
-                        "{}: hint: got={got_hint:?} fixture={:?}",
-                        fn_.name, fn_.hint
-                    ));
-                }
-            }
-        },
+        }
+    });
+    assert!(
+        failures.is_empty(),
+        "type divergences:\n{}",
+        failures.join("\n")
     );
-    assert!(failures.is_empty(), "type divergences:\n{}", failures.join("\n"));
 }
 
 #[test]
@@ -448,7 +458,11 @@ fn fixture_enums() {
             }
         },
     );
-    assert!(failures.is_empty(), "enum divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "enum divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -473,7 +487,11 @@ fn fixture_bits() {
             }
         },
     );
-    assert!(failures.is_empty(), "bits divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "bits divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -543,7 +561,11 @@ fn fixture_tables() {
             }
         },
     );
-    assert!(failures.is_empty(), "table divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "table divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -571,7 +593,11 @@ fn fixture_access() {
             }
         },
     );
-    assert!(failures.is_empty(), "access divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "access divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -597,7 +623,11 @@ fn fixture_status() {
             }
         },
     );
-    assert!(failures.is_empty(), "status divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "status divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -627,67 +657,64 @@ fn fixture_ranges() {
                 .map(|r| (r.low, r.high))
                 .collect();
             if !ranges_equivalent(&got, &fix) {
-                failures.push(format!(
-                    "{}: ranges: got={got:?} fixture={fix:?}",
-                    fn_.name
-                ));
+                failures.push(format!("{}: ranges: got={got:?} fixture={fix:?}", fn_.name));
             }
         },
     );
-    assert!(failures.is_empty(), "range divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "range divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn fixture_notifications() {
     let mib = load_fixture_mib();
-    let failures = for_each_fixture_node(
-        &mib,
-        is_notification_node,
-        |mib, _, fn_, failures| {
-            let Some(notif_id) = mib.notification_by_name(&fn_.name) else {
-                failures.push(format!("{}: notification not found", fn_.name));
-                return;
-            };
-            let notif = mib.notification(notif_id);
+    let failures = for_each_fixture_node(&mib, is_notification_node, |mib, _, fn_, failures| {
+        let Some(notif_id) = mib.notification_by_name(&fn_.name) else {
+            failures.push(format!("{}: notification not found", fn_.name));
+            return;
+        };
+        let notif = mib.notification(notif_id);
 
-            // OID
-            if let Some(node_id) = notif.node() {
-                let got_oid = mib.tree().oid_of(node_id).to_string();
-                if got_oid != fn_.oid {
-                    failures.push(format!(
-                        "{}: notification OID: got={got_oid} fixture={}",
-                        fn_.name, fn_.oid
-                    ));
-                }
+        // OID
+        if let Some(node_id) = notif.node() {
+            let got_oid = mib.tree().oid_of(node_id).to_string();
+            if got_oid != fn_.oid {
+                failures.push(format!(
+                    "{}: notification OID: got={got_oid} fixture={}",
+                    fn_.name, fn_.oid
+                ));
             }
+        }
 
-            // Varbinds
-            if let Some(ref fix_varbinds) = fn_.varbinds {
-                let got: Vec<String> = notif
-                    .objects()
-                    .iter()
-                    .map(|&oid| mib.object(oid).name().to_string())
-                    .collect();
-                if got != *fix_varbinds {
-                    failures.push(format!(
-                        "{}: varbinds: got={got:?} fixture={fix_varbinds:?}",
-                        fn_.name
-                    ));
-                }
+        // Varbinds
+        if let Some(ref fix_varbinds) = fn_.varbinds {
+            let got: Vec<String> = notif
+                .objects()
+                .iter()
+                .map(|&oid| mib.object(oid).name().to_string())
+                .collect();
+            if got != *fix_varbinds {
+                failures.push(format!(
+                    "{}: varbinds: got={got:?} fixture={fix_varbinds:?}",
+                    fn_.name
+                ));
             }
+        }
 
-            // Status
-            if !fn_.status.is_empty() {
-                let got = notif.status().to_string();
-                if !status_equivalent(&got, &fn_.status) {
-                    failures.push(format!(
-                        "{}: notification status: got={got:?} fixture={:?}",
-                        fn_.name, fn_.status
-                    ));
-                }
+        // Status
+        if !fn_.status.is_empty() {
+            let got = notif.status().to_string();
+            if !status_equivalent(&got, &fn_.status) {
+                failures.push(format!(
+                    "{}: notification status: got={got:?} fixture={:?}",
+                    fn_.name, fn_.status
+                ));
             }
-        },
-    );
+        }
+    });
     assert!(
         failures.is_empty(),
         "notification divergences:\n{}",
@@ -715,51 +742,55 @@ fn fixture_units() {
             }
         },
     );
-    assert!(failures.is_empty(), "units divergences:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "units divergences:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn fixture_defval() {
     let mib = load_fixture_mib();
-    let failures = for_each_fixture_node(
-        &mib,
-        is_object_type_node,
-        |mib, _, fn_, failures| {
-            let Some(obj_id) = mib.object_by_name(&fn_.name) else {
-                failures.push(format!("{}: object not found", fn_.name));
-                return;
-            };
-            let obj = mib.object(obj_id);
-            let got = match obj.default_value() {
-                Some(dv) if !dv.is_unset() => dv.to_string(),
-                _ => String::new(),
-            };
-            if fn_.default_value.is_empty() && got.is_empty() {
-                return;
-            }
-            if !fn_.default_value.is_empty() && got.is_empty() {
-                failures.push(format!(
-                    "{}: defval: mib-rs has none, fixture={:?}",
-                    fn_.name, fn_.default_value
-                ));
-                return;
-            }
-            if fn_.default_value.is_empty() && !got.is_empty() {
-                failures.push(format!(
-                    "{}: defval: mib-rs={got:?}, fixture has none",
-                    fn_.name
-                ));
-                return;
-            }
-            if !defval_equivalent(&got, &fn_.default_value) {
-                failures.push(format!(
-                    "{}: defval: got={got:?} fixture={:?}",
-                    fn_.name, fn_.default_value
-                ));
-            }
-        },
+    let failures = for_each_fixture_node(&mib, is_object_type_node, |mib, _, fn_, failures| {
+        let Some(obj_id) = mib.object_by_name(&fn_.name) else {
+            failures.push(format!("{}: object not found", fn_.name));
+            return;
+        };
+        let obj = mib.object(obj_id);
+        let got = match obj.default_value() {
+            Some(dv) if !dv.is_unset() => dv.to_string(),
+            _ => String::new(),
+        };
+        if fn_.default_value.is_empty() && got.is_empty() {
+            return;
+        }
+        if !fn_.default_value.is_empty() && got.is_empty() {
+            failures.push(format!(
+                "{}: defval: mib-rs has none, fixture={:?}",
+                fn_.name, fn_.default_value
+            ));
+            return;
+        }
+        if fn_.default_value.is_empty() && !got.is_empty() {
+            failures.push(format!(
+                "{}: defval: mib-rs={got:?}, fixture has none",
+                fn_.name
+            ));
+            return;
+        }
+        if !defval_equivalent(&got, &fn_.default_value) {
+            failures.push(format!(
+                "{}: defval: got={got:?} fixture={:?}",
+                fn_.name, fn_.default_value
+            ));
+        }
+    });
+    assert!(
+        failures.is_empty(),
+        "defval divergences:\n{}",
+        failures.join("\n")
     );
-    assert!(failures.is_empty(), "defval divergences:\n{}", failures.join("\n"));
 }
 
 #[test]

@@ -1,0 +1,39 @@
+-- Mixed valid/invalid symbols in the same import group.
+-- Confirms that strict-mode import handling resolves valid symbols per symbol
+-- instead of requiring the whole group to succeed.
+
+PROBLEM-PARTIAL-IMPORTS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32,
+    enterprises, missingParent
+        FROM SNMPv2-SMI
+    DisplayString, MissingType
+        FROM SNMPv2-TC;
+
+problemPartialImportsMIB MODULE-IDENTITY
+    LAST-UPDATED "202603090000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests per-symbol partial import resolution"
+    REVISION     "202603090000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 38 }
+
+problemPartialObjects OBJECT IDENTIFIER ::= { problemPartialImportsMIB 1 }
+
+problemPartialString OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Valid imported type should still resolve"
+    ::= { problemPartialObjects 1 }
+
+problemPartialInteger OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Valid imported OID parent should still resolve"
+    ::= { enterprises 99998 38 2 }
+
+END

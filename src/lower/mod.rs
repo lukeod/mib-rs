@@ -48,11 +48,7 @@ impl LoweringContext {
 /// Transforms an AST module into a normalized Module IR. The AST is not
 /// needed after lowering. Source is the original source text used to compute
 /// diagnostic line/column from byte offset spans.
-pub fn lower(
-    ast_module: ast::Module,
-    source: &[u8],
-    diag_config: &DiagnosticConfig,
-) -> ir::Module {
+pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticConfig) -> ir::Module {
     let mut ctx = LoweringContext::new(source, diag_config.clone());
 
     let mut module = ir::Module::new(ast_module.name.name.clone(), ast_module.span);
@@ -96,11 +92,13 @@ pub fn lower(
 }
 
 fn is_smiv2_import(name: &str) -> bool {
-    base_modules::base_module_from_name(name)
-        .is_some_and(|bm| bm.language == Language::SMIv2)
+    base_modules::base_module_from_name(name).is_some_and(|bm| bm.language == Language::SMIv2)
 }
 
-fn lower_imports(import_clauses: &[ast::ImportClause], ctx: &mut LoweringContext) -> Vec<ir::Import> {
+fn lower_imports(
+    import_clauses: &[ast::ImportClause],
+    ctx: &mut LoweringContext,
+) -> Vec<ir::Import> {
     let mut imports = Vec::new();
 
     for clause in import_clauses {
@@ -128,40 +126,40 @@ fn lower_imports(import_clauses: &[ast::ImportClause], ctx: &mut LoweringContext
 
 fn lower_definition(def: &ast::Definition, ctx: &mut LoweringContext) -> Option<ir::Definition> {
     match def {
-        ast::Definition::ObjectType(d) => Some(ir::Definition::ObjectType(lower_object_type(d, ctx))),
-        ast::Definition::ModuleIdentity(d) => {
-            Some(ir::Definition::ModuleIdentity(lower_module_identity(d, ctx)))
+        ast::Definition::ObjectType(d) => {
+            Some(ir::Definition::ObjectType(lower_object_type(d, ctx)))
         }
-        ast::Definition::ObjectIdentity(d) => {
-            Some(ir::Definition::ObjectIdentity(lower_object_identity(d, ctx)))
-        }
-        ast::Definition::NotificationType(d) => {
-            Some(ir::Definition::Notification(lower_notification_type(d, ctx)))
-        }
-        ast::Definition::TrapType(d) => {
-            Some(ir::Definition::Notification(lower_trap_type(d, ctx)))
-        }
+        ast::Definition::ModuleIdentity(d) => Some(ir::Definition::ModuleIdentity(
+            lower_module_identity(d, ctx),
+        )),
+        ast::Definition::ObjectIdentity(d) => Some(ir::Definition::ObjectIdentity(
+            lower_object_identity(d, ctx),
+        )),
+        ast::Definition::NotificationType(d) => Some(ir::Definition::Notification(
+            lower_notification_type(d, ctx),
+        )),
+        ast::Definition::TrapType(d) => Some(ir::Definition::Notification(lower_trap_type(d, ctx))),
         ast::Definition::TextualConvention(d) => {
             Some(ir::Definition::TypeDef(lower_textual_convention(d, ctx)))
         }
         ast::Definition::TypeAssignment(d) => {
             Some(ir::Definition::TypeDef(lower_type_assignment(d, ctx)))
         }
-        ast::Definition::ValueAssignment(d) => {
-            Some(ir::Definition::ValueAssignment(lower_value_assignment(d, ctx)))
-        }
+        ast::Definition::ValueAssignment(d) => Some(ir::Definition::ValueAssignment(
+            lower_value_assignment(d, ctx),
+        )),
         ast::Definition::ObjectGroup(d) => {
             Some(ir::Definition::ObjectGroup(lower_object_group(d, ctx)))
         }
-        ast::Definition::NotificationGroup(d) => {
-            Some(ir::Definition::NotificationGroup(lower_notification_group(d, ctx)))
-        }
-        ast::Definition::ModuleCompliance(d) => {
-            Some(ir::Definition::ModuleCompliance(lower_module_compliance(d, ctx)))
-        }
-        ast::Definition::AgentCapabilities(d) => {
-            Some(ir::Definition::AgentCapabilities(lower_agent_capabilities(d, ctx)))
-        }
+        ast::Definition::NotificationGroup(d) => Some(ir::Definition::NotificationGroup(
+            lower_notification_group(d, ctx),
+        )),
+        ast::Definition::ModuleCompliance(d) => Some(ir::Definition::ModuleCompliance(
+            lower_module_compliance(d, ctx),
+        )),
+        ast::Definition::AgentCapabilities(d) => Some(ir::Definition::AgentCapabilities(
+            lower_agent_capabilities(d, ctx),
+        )),
         ast::Definition::MacroDefinition(d) => {
             if !base_modules::is_base_module(&ctx.module_name) {
                 ctx.emit_diagnostic(
@@ -215,13 +213,14 @@ fn check_empty_optional(
     code: DiagCode,
 ) {
     if let Some(qs) = qs
-        && qs.value.is_empty() {
-            ctx.emit_diagnostic(
-                code,
-                span,
-                format!("{:?}: empty {} clause", def_name, clause),
-            );
-        }
+        && qs.value.is_empty()
+    {
+        ctx.emit_diagnostic(
+            code,
+            span,
+            format!("{:?}: empty {} clause", def_name, clause),
+        );
+    }
 }
 
 fn check_empty_required(
@@ -254,11 +253,7 @@ fn check_module_name_suffix(ctx: &mut LoweringContext, module: &ir::Module) {
     }
 }
 
-fn check_module_identity(
-    ctx: &mut LoweringContext,
-    ast_module: &ast::Module,
-    module: &ir::Module,
-) {
+fn check_module_identity(ctx: &mut LoweringContext, ast_module: &ast::Module, module: &ir::Module) {
     let mut module_identities: Vec<(usize, &ir::ModuleIdentity)> = Vec::new();
     for (i, def) in module.definitions.iter().enumerate() {
         if let ir::Definition::ModuleIdentity(mi) = def {
@@ -334,25 +329,18 @@ fn check_revision_last_updated(ctx: &mut LoweringContext, mi: &ir::ModuleIdentit
     ctx.emit_diagnostic(
         DiagCode::RevisionLastUpdated,
         mi.span,
-        format!(
-            "revision for LAST-UPDATED {} is missing",
-            mi.last_updated
-        ),
+        format!("revision for LAST-UPDATED {} is missing", mi.last_updated),
     );
 }
 
-fn check_macro_imports(
-    ctx: &mut LoweringContext,
-    ast_module: &ast::Module,
-    module: &ir::Module,
-) {
+fn check_macro_imports(ctx: &mut LoweringContext, ast_module: &ast::Module, module: &ir::Module) {
     let mut imported_macros = HashSet::new();
     for clause in &ast_module.imports {
         for sym in &clause.symbols {
             match sym.name.as_str() {
-                "MODULE-IDENTITY" | "OBJECT-IDENTITY" | "OBJECT-TYPE"
-                | "NOTIFICATION-TYPE" | "TEXTUAL-CONVENTION" | "OBJECT-GROUP"
-                | "NOTIFICATION-GROUP" | "MODULE-COMPLIANCE" | "AGENT-CAPABILITIES" => {
+                "MODULE-IDENTITY" | "OBJECT-IDENTITY" | "OBJECT-TYPE" | "NOTIFICATION-TYPE"
+                | "TEXTUAL-CONVENTION" | "OBJECT-GROUP" | "NOTIFICATION-GROUP"
+                | "MODULE-COMPLIANCE" | "AGENT-CAPABILITIES" => {
                     imported_macros.insert(sym.name.as_str());
                 }
                 _ => {}
@@ -413,9 +401,30 @@ fn check_macro_imports(
 
 fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext) -> ir::ObjectType {
     let name = &def.name.name;
-    check_empty_optional(ctx, &def.description, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
-    check_empty_optional(ctx, &def.units, def.span, name, "UNITS", DiagCode::EmptyUnits);
+    check_empty_optional(
+        ctx,
+        &def.description,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
+    check_empty_optional(
+        ctx,
+        &def.units,
+        def.span,
+        name,
+        "UNITS",
+        DiagCode::EmptyUnits,
+    );
 
     let augments = def
         .augments
@@ -423,16 +432,8 @@ fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext) -> ir:
         .map(|a| a.target.name.clone())
         .unwrap_or_default();
 
-    let access = def
-        .access
-        .as_ref()
-        .map(|a| a.value)
-        .unwrap_or_default();
-    let access_keyword = def
-        .access
-        .as_ref()
-        .map(|a| a.keyword)
-        .unwrap_or_default();
+    let access = def.access.as_ref().map(|a| a.value).unwrap_or_default();
+    let access_keyword = def.access.as_ref().map(|a| a.keyword).unwrap_or_default();
     let syntax = if let Some(s) = def.syntax.as_ref() {
         lower_type_syntax(&s.syntax, ctx)
     } else {
@@ -482,9 +483,30 @@ fn lower_module_identity(
     ctx: &mut LoweringContext,
 ) -> ir::ModuleIdentity {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_required(ctx, &def.organization.value, def.span, name, "ORGANIZATION", DiagCode::EmptyOrganization);
-    check_empty_required(ctx, &def.contact_info.value, def.span, name, "CONTACT-INFO", DiagCode::EmptyContact);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_required(
+        ctx,
+        &def.organization.value,
+        def.span,
+        name,
+        "ORGANIZATION",
+        DiagCode::EmptyOrganization,
+    );
+    check_empty_required(
+        ctx,
+        &def.contact_info.value,
+        def.span,
+        name,
+        "CONTACT-INFO",
+        DiagCode::EmptyContact,
+    );
 
     let revisions = def
         .revisions
@@ -513,8 +535,22 @@ fn lower_object_identity(
     ctx: &mut LoweringContext,
 ) -> ir::ObjectIdentity {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     ir::ObjectIdentity {
         name: name.clone(),
@@ -531,8 +567,22 @@ fn lower_notification_type(
     ctx: &mut LoweringContext,
 ) -> ir::Notification {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     let oid = lower_oid_assignment(&def.oid);
     ir::Notification {
@@ -550,8 +600,22 @@ fn lower_notification_type(
 
 fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext) -> ir::Notification {
     let name = &def.name.name;
-    check_empty_optional(ctx, &def.description, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_optional(
+        ctx,
+        &def.description,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     ir::Notification {
         name: name.clone(),
@@ -574,9 +638,30 @@ fn lower_textual_convention(
     ctx: &mut LoweringContext,
 ) -> ir::TypeDef {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
-    check_empty_optional(ctx, &def.display_hint, def.span, name, "DISPLAY-HINT", DiagCode::EmptyFormat);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
+    check_empty_optional(
+        ctx,
+        &def.display_hint,
+        def.span,
+        name,
+        "DISPLAY-HINT",
+        DiagCode::EmptyFormat,
+    );
 
     ir::TypeDef {
         name: name.clone(),
@@ -596,10 +681,7 @@ fn lower_textual_convention(
     }
 }
 
-fn lower_type_assignment(
-    def: &ast::TypeAssignmentDef,
-    ctx: &mut LoweringContext,
-) -> ir::TypeDef {
+fn lower_type_assignment(def: &ast::TypeAssignmentDef, ctx: &mut LoweringContext) -> ir::TypeDef {
     ir::TypeDef {
         name: def.name.name.clone(),
         span: def.span,
@@ -631,13 +713,24 @@ fn lower_value_assignment(
     }
 }
 
-fn lower_object_group(
-    def: &ast::ObjectGroupDef,
-    ctx: &mut LoweringContext,
-) -> ir::ObjectGroup {
+fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext) -> ir::ObjectGroup {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     ir::ObjectGroup {
         name: name.clone(),
@@ -655,8 +748,22 @@ fn lower_notification_group(
     ctx: &mut LoweringContext,
 ) -> ir::NotificationGroup {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     ir::NotificationGroup {
         name: name.clone(),
@@ -674,8 +781,22 @@ fn lower_module_compliance(
     ctx: &mut LoweringContext,
 ) -> ir::ModuleCompliance {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     let modules = def
         .modules
@@ -753,8 +874,22 @@ fn lower_agent_capabilities(
     ctx: &mut LoweringContext,
 ) -> ir::AgentCapabilities {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_optional(ctx, &def.reference, def.span, name, "REFERENCE", DiagCode::EmptyReference);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        &def.reference,
+        def.span,
+        name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
 
     let supports = def
         .supports
@@ -774,10 +909,7 @@ fn lower_agent_capabilities(
     }
 }
 
-fn lower_supports_module(
-    s: &ast::SupportsModule,
-    ctx: &mut LoweringContext,
-) -> ir::SupportsModule {
+fn lower_supports_module(s: &ast::SupportsModule, ctx: &mut LoweringContext) -> ir::SupportsModule {
     let variations = s
         .variations
         .iter()
@@ -1040,10 +1172,7 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext) -> ir::
                 ctx.emit_diagnostic(
                     DiagCode::UnknownRangeValue,
                     ident.span,
-                    format!(
-                        "unknown range identifier {}, defaulting to 0",
-                        ident.name
-                    ),
+                    format!("unknown range identifier {}, defaulting to 0", ident.name),
                 );
                 ir::RangeValue::Unsigned(0)
             }
@@ -1156,40 +1285,44 @@ mod tests {
             },
             Span::ZERO,
         );
-        module.body.push(ast::Definition::ObjectType(ast::ObjectTypeDef {
-            name: ast::Ident {
-                name: "testObject".to_string(),
-                span: Span::ZERO,
-            },
-            span: Span::ZERO,
-            syntax: None,
-            units: None,
-            access: Some(ast::AccessClause {
-                keyword: AccessKeyword::Access,
-                value: Access::ReadOnly,
-                span: Span::ZERO,
-            }),
-            status: None,
-            description: None,
-            reference: None,
-            index: None,
-            augments: None,
-            defval: None,
-            oid: ast::OidAssignment {
-                components: vec![ast::OidComponent::Number {
-                    value: 1,
+        module
+            .body
+            .push(ast::Definition::ObjectType(ast::ObjectTypeDef {
+                name: ast::Ident {
+                    name: "testObject".to_string(),
                     span: Span::ZERO,
-                }],
+                },
                 span: Span::ZERO,
-            },
-        }));
+                syntax: None,
+                units: None,
+                access: Some(ast::AccessClause {
+                    keyword: AccessKeyword::Access,
+                    value: Access::ReadOnly,
+                    span: Span::ZERO,
+                }),
+                status: None,
+                description: None,
+                reference: None,
+                index: None,
+                augments: None,
+                defval: None,
+                oid: ast::OidAssignment {
+                    components: vec![ast::OidComponent::Number {
+                        value: 1,
+                        span: Span::ZERO,
+                    }],
+                    span: Span::ZERO,
+                },
+            }));
 
         let cfg = DiagnosticConfig::verbose();
         let lowered = lower(module, source, &cfg);
 
-        assert!(lowered
-            .diagnostics
-            .iter()
-            .any(|d| d.code == DiagCode::UnknownTypeSyntax));
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::UnknownTypeSyntax)
+        );
     }
 }

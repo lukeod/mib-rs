@@ -5,18 +5,15 @@ use gomib::types::{DiagCode, DiagnosticConfig};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/corpus/primary")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
 }
 
 fn problems_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/corpus/problems")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/problems")
 }
 
 fn _strictness_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/strictness")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/strictness")
 }
 
 fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
@@ -72,11 +69,18 @@ fn primary_corpus_no_parse_errors() {
         let errors = parse_errors(&modules);
         if !errors.is_empty() {
             let rel = path.strip_prefix(&dir).unwrap_or(path);
-            failures.push(format!("{}: {:?}", rel.display(), &errors[..errors.len().min(3)]));
+            failures.push(format!(
+                "{}: {:?}",
+                rel.display(),
+                &errors[..errors.len().min(3)]
+            ));
         }
     }
 
-    assert!(total_defs > 80000, "expected 80k+ definitions, got {total_defs}");
+    assert!(
+        total_defs > 80000,
+        "expected 80k+ definitions, got {total_defs}"
+    );
 
     if !failures.is_empty() {
         panic!(
@@ -106,7 +110,11 @@ fn problems_corpus_no_parse_errors() {
         let errors = parse_errors(&modules);
         if !errors.is_empty() {
             let rel = path.strip_prefix(&dir).unwrap_or(path);
-            failures.push(format!("{}: {:?}", rel.display(), &errors[..errors.len().min(3)]));
+            failures.push(format!(
+                "{}: {:?}",
+                rel.display(),
+                &errors[..errors.len().min(3)]
+            ));
         }
     }
 
@@ -131,7 +139,10 @@ fn parse_snmpv2_smi() {
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].name.name, "SNMPv2-SMI");
-    assert!(parse_errors(&modules).is_empty(), "SNMPv2-SMI had parse errors");
+    assert!(
+        parse_errors(&modules).is_empty(),
+        "SNMPv2-SMI had parse errors"
+    );
 
     // SNMPv2-SMI defines type assignments with type keywords on LHS
     // (IpAddress, Counter32, Gauge32, etc.)
@@ -192,7 +203,10 @@ fn parse_if_mib() {
         .iter()
         .filter(|d| matches!(d, Definition::ObjectType(_)))
         .count();
-    assert!(object_count > 20, "IF-MIB should have 20+ OBJECT-TYPEs, got {object_count}");
+    assert!(
+        object_count > 20,
+        "IF-MIB should have 20+ OBJECT-TYPEs, got {object_count}"
+    );
 }
 
 #[test]
@@ -313,7 +327,10 @@ fn parse_multimodule_file() {
         modules.len()
     );
     for m in &modules {
-        assert_ne!(m.name.name, "UNKNOWN", "all modules should parse successfully");
+        assert_ne!(
+            m.name.name, "UNKNOWN",
+            "all modules should parse successfully"
+        );
     }
 }
 
@@ -414,14 +431,12 @@ END
     assert!(parse_errors(&modules).is_empty());
 
     match &modules[0].body[0] {
-        Definition::TextualConvention(d) => {
-            match &d.syntax.syntax {
-                gomib::ast::TypeSyntax::Bits { named_bits, .. } => {
-                    assert_eq!(named_bits.len(), 3);
-                }
-                other => panic!("expected Bits, got {:?}", other),
+        Definition::TextualConvention(d) => match &d.syntax.syntax {
+            gomib::ast::TypeSyntax::Bits { named_bits, .. } => {
+                assert_eq!(named_bits.len(), 3);
             }
-        }
+            other => panic!("expected Bits, got {:?}", other),
+        },
         other => panic!("expected TextualConvention, got {:?}", other),
     }
 }
@@ -443,7 +458,10 @@ END
             match &d.syntax {
                 gomib::ast::TypeSyntax::Tagged { underlying, .. } => {
                     assert!(
-                        matches!(underlying.as_ref(), gomib::ast::TypeSyntax::Constrained { .. }),
+                        matches!(
+                            underlying.as_ref(),
+                            gomib::ast::TypeSyntax::Constrained { .. }
+                        ),
                         "expected constrained underlying type"
                     );
                 }

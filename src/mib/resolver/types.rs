@@ -266,9 +266,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
         };
 
         // Look up the parent type.
-        if let Some((parent_type_id, _used_import)) =
-            ctx.lookup_type_for_module(*ir_id, ref_name)
-        {
+        if let Some((parent_type_id, _used_import)) = ctx.lookup_type_for_module(*ir_id, ref_name) {
             if let Some(&parent_gn) = type_id_to_graph_node.get(&parent_type_id) {
                 g.add_edge(child_gn, parent_gn);
             }
@@ -280,7 +278,10 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
 
     // Log cycles.
     for cycle in &result.cycles {
-        let names: Vec<String> = cycle.iter().map(|s| format!("{}::{}", s.module, s.name)).collect();
+        let names: Vec<String> = cycle
+            .iter()
+            .map(|s| format!("{}::{}", s.module, s.name))
+            .collect();
         tracing::debug!("type dependency cycle: {}", names.join(" -> "));
     }
 
@@ -438,7 +439,10 @@ fn link_rfc1213_types_to_tcs(ctx: &mut ResolverContext) {
         None => return,
     };
 
-    let links = [("DisplayString", "DisplayString"), ("PhysAddress", "PhysAddress")];
+    let links = [
+        ("DisplayString", "DisplayString"),
+        ("PhysAddress", "PhysAddress"),
+    ];
     for (rfc_name, tc_name) in &links {
         let rfc_type = ctx
             .module_symbol_to_type
@@ -551,10 +555,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
                 diagnostics.push((
                     ir_id,
                     m.span,
-                    format!(
-                        "SMIv2 module references {} without importing it",
-                        ref_name
-                    ),
+                    format!("SMIv2 module references {} without importing it", ref_name),
                 ));
             }
         }

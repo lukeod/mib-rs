@@ -44,7 +44,10 @@ pub struct NamedValue {
 }
 
 /// Finds a named value by label in a slice.
-pub(crate) fn find_named_value<'a>(values: &'a [NamedValue], label: &str) -> Option<&'a NamedValue> {
+pub(crate) fn find_named_value<'a>(
+    values: &'a [NamedValue],
+    label: &str,
+) -> Option<&'a NamedValue> {
     values.iter().find(|nv| nv.label == label)
 }
 
@@ -440,4 +443,3 @@ define_id!(
     /// Index into the Mib's capability arena.
     CapabilityId
 );
-

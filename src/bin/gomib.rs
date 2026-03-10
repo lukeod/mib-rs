@@ -2,7 +2,7 @@ use std::process;
 
 use clap::Parser;
 
-use gomib::load::{load, LoadOptions};
+use gomib::load::{LoadOptions, load};
 use gomib::mib::Mib;
 use gomib::source::dir_source;
 use gomib::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
@@ -280,7 +280,11 @@ fn cmd_get(
     };
 
     if tree {
-        let depth = if max_depth == 0 { usize::MAX } else { max_depth };
+        let depth = if max_depth == 0 {
+            usize::MAX
+        } else {
+            max_depth
+        };
         print_tree(&mib, node_id, 0, depth);
     } else {
         print_node_detail(&mib, node_id, full);
@@ -305,7 +309,11 @@ fn print_node_detail(mib: &Mib, node_id: gomib::mib::NodeId, full: bool) {
         let obj = mib.object(obj_id);
         if let Some(tid) = obj.type_id() {
             let t = mib.type_(tid);
-            println!("Type:    {} ({})", t.name(), t.effective_base(mib.types_slice()));
+            println!(
+                "Type:    {} ({})",
+                t.name(),
+                t.effective_base(mib.types_slice())
+            );
         }
         println!("Access:  {}", obj.access());
         println!("Status:  {}", obj.status());
@@ -321,12 +329,18 @@ fn print_node_detail(mib: &Mib, node_id: gomib::mib::NodeId, full: bool) {
         }
         let enums = obj.effective_enums();
         if !enums.is_empty() {
-            let vals: Vec<String> = enums.iter().map(|e| format!("{}({})", e.label, e.value)).collect();
+            let vals: Vec<String> = enums
+                .iter()
+                .map(|e| format!("{}({})", e.label, e.value))
+                .collect();
             println!("Enums:   {}", vals.join(", "));
         }
         let bits = obj.effective_bits();
         if !bits.is_empty() {
-            let vals: Vec<String> = bits.iter().map(|b| format!("{}({})", b.label, b.value)).collect();
+            let vals: Vec<String> = bits
+                .iter()
+                .map(|b| format!("{}({})", b.label, b.value))
+                .collect();
             println!("Bits:    {}", vals.join(", "));
         }
 
@@ -376,7 +390,11 @@ fn print_tree(mib: &Mib, node_id: gomib::mib::NodeId, depth: usize, max_depth: u
     };
 
     let kind = node.kind();
-    let kind_str = if kind == Kind::Internal { String::new() } else { format!(" ({kind})") };
+    let kind_str = if kind == Kind::Internal {
+        String::new()
+    } else {
+        format!(" ({kind})")
+    };
 
     println!("{indent}{name} {oid}{kind_str}");
 
@@ -447,7 +465,13 @@ fn cmd_paths(paths: &[String]) -> i32 {
 
 fn cmd_lint(paths: &[String], modules: Vec<String>) -> i32 {
     let all = modules.is_empty();
-    let mib = match load_mib(paths, modules, all, ResolverStrictness::Strict, DiagnosticConfig::verbose()) {
+    let mib = match load_mib(
+        paths,
+        modules,
+        all,
+        ResolverStrictness::Strict,
+        DiagnosticConfig::verbose(),
+    ) {
         Ok(m) => m,
         Err(code) => return code,
     };
@@ -509,7 +533,12 @@ fn cmd_find(
                 .module()
                 .map(|mid| mib.module(mid).name())
                 .unwrap_or("?");
-            matches.push((mod_name.to_string(), name.to_string(), oid.to_string(), k.to_string()));
+            matches.push((
+                mod_name.to_string(),
+                name.to_string(),
+                oid.to_string(),
+                k.to_string(),
+            ));
         }
     }
 

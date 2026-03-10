@@ -253,11 +253,7 @@ impl Mib {
     /// Look up a node at an exact numeric OID.
     pub fn node_by_oid(&self, oid: &Oid) -> Option<NodeId> {
         let (id, exact) = self.tree.walk_oid(self.tree.root(), oid);
-        if exact {
-            Some(id)
-        } else {
-            None
-        }
+        if exact { Some(id) } else { None }
     }
 
     /// Find the deepest node matching a prefix of the OID.
@@ -341,9 +337,7 @@ impl Mib {
 
         let q = query.strip_prefix('.').unwrap_or(query);
         if q.starts_with(|c: char| c.is_ascii_digit()) {
-            return q
-                .parse::<Oid>()
-                .map_err(|e| format!("invalid OID: {e}"));
+            return q.parse::<Oid>().map_err(|e| format!("invalid OID: {e}"));
         }
 
         // Qualified name: MODULE::name[.suffix]

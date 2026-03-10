@@ -1,0 +1,59 @@
+-- Metadata propagation checks for symbols resolved through tier-1 imports.
+
+PROBLEM-STRICT-METADATA-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, enterprises
+        FROM SNMPv2-SMI
+    DisplayString, RowStatus, MacAddress
+        FROM SNMPv2-TC
+    BridgeId, Timeout
+        FROM BRIDGE-MIB;
+
+problemStrictMetadataMIB MODULE-IDENTITY
+    LAST-UPDATED "202603090000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Tests strict-mode metadata propagation on imported types"
+    REVISION     "202603090000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 39 }
+
+problemStrictMetadataObjects OBJECT IDENTIFIER ::= { problemStrictMetadataMIB 1 }
+
+problemStrictDisplayString OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Imported DisplayString"
+    ::= { problemStrictMetadataObjects 1 }
+
+problemStrictRowStatus OBJECT-TYPE
+    SYNTAX      RowStatus
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Imported RowStatus"
+    ::= { problemStrictMetadataObjects 2 }
+
+problemStrictMacAddress OBJECT-TYPE
+    SYNTAX      MacAddress
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Imported MacAddress"
+    ::= { problemStrictMetadataObjects 3 }
+
+problemStrictBridgeId OBJECT-TYPE
+    SYNTAX      BridgeId
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Imported BridgeId"
+    ::= { problemStrictMetadataObjects 4 }
+
+problemStrictTimeout OBJECT-TYPE
+    SYNTAX      Timeout (100..1000)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Imported Timeout with local range refinement"
+    ::= { problemStrictMetadataObjects 5 }
+
+END

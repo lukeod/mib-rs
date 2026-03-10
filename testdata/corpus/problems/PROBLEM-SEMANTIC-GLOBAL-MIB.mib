@@ -1,0 +1,59 @@
+PROBLEM-SEMANTIC-GLOBAL-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP, AGENT-CAPABILITIES
+        FROM SNMPv2-CONF
+    problemSemanticGlobalSourceRoot
+        FROM PROBLEM-SEMANTIC-GLOBAL-SOURCE-MIB;
+
+problemSemanticGlobalMIB MODULE-IDENTITY
+    LAST-UPDATED "202603090000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Exercises permissive-only semantic global lookup"
+    REVISION     "202603090000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 41 }
+
+problemSemanticGlobalObjects OBJECT IDENTIFIER ::= { problemSemanticGlobalMIB 1 }
+
+problemGlobalAnchor OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Local object that keeps the module structurally valid"
+    ::= { problemSemanticGlobalObjects 1 }
+
+problemGlobalNotification NOTIFICATION-TYPE
+    OBJECTS     { foreignGroupObject }
+    STATUS      current
+    DESCRIPTION "Notification relying on permissive global lookup"
+    ::= { problemSemanticGlobalObjects 2 }
+
+problemGlobalObjectGroup OBJECT-GROUP
+    OBJECTS      { foreignGroupObject }
+    STATUS       current
+    DESCRIPTION  "Object group relying on permissive global lookup"
+    ::= { problemSemanticGlobalObjects 3 }
+
+problemGlobalCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION "Compliance relying on permissive global lookup"
+    MODULE
+        MANDATORY-GROUPS { foreignCurrentGroup }
+    ::= { problemSemanticGlobalObjects 4 }
+
+problemGlobalCapability AGENT-CAPABILITIES
+    PRODUCT-RELEASE "strictness test"
+    STATUS          current
+    DESCRIPTION     "Capability relying on permissive global variation lookup"
+    SUPPORTS        PROBLEM-SEMANTIC-GLOBAL-MIB
+        INCLUDES    { problemGlobalObjectGroup }
+        VARIATION   foreignGroupObject
+            ACCESS  read-only
+            DESCRIPTION "Broken variation target that only permissive global lookup recovers"
+    ::= { problemSemanticGlobalObjects 5 }
+
+END

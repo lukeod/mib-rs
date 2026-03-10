@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use gomib::load::{load, LoadOptions};
+use gomib::load::{LoadOptions, load};
 use gomib::mib::{Mib, NodeId, Oid};
 use gomib::source::dir_source;
 use gomib::types::{DiagnosticConfig, ResolverStrictness, Severity};
@@ -97,7 +97,12 @@ fn fixturegen_bin() -> &'static PathBuf {
         let bin_path = gomib.join("gomib-fixturegen");
 
         let output = Command::new("go")
-            .args(["build", "-o", bin_path.to_str().unwrap(), "./cmd/gomib-fixturegen/"])
+            .args([
+                "build",
+                "-o",
+                bin_path.to_str().unwrap(),
+                "./cmd/gomib-fixturegen/",
+            ])
             .current_dir(&gomib)
             .output()
             .expect("failed to run go build");
@@ -133,9 +138,7 @@ fn run_fixturegen(strictness: &str) -> HashMap<String, FixtureNode> {
     );
 
     serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
-        panic!(
-            "failed to parse gomib-fixturegen output for strictness {strictness}: {e}"
-        )
+        panic!("failed to parse gomib-fixturegen output for strictness {strictness}: {e}")
     })
 }
 

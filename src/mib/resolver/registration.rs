@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use crate::ir;
-use crate::lower::base_modules;
 use super::super::module::ModuleData;
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext};
+use crate::ir;
+use crate::lower::base_modules;
 
 /// Phase 1: Register all modules (base + user), create resolved modules,
 /// build definition name indexes.

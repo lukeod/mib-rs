@@ -8,7 +8,11 @@ PROBLEM-FORWARDING-RELAY-MIB DEFINITIONS ::= BEGIN
 IMPORTS
     MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
         FROM SNMPv2-SMI
-    ForwardedType, forwardedSourceRoot
+    ForwardedType, forwardedSourceRoot,
+    forwardedBaseEntry, forwardedBaseIndex, forwardedBaseStatus,
+    forwardedSourceObject,
+    forwardedSourceNotification, forwardedSourceObjectGroup,
+    forwardedSourceNotificationGroup
         FROM PROBLEM-FORWARDING-SOURCE-MIB;
 
 problemForwardingRelayMIB MODULE-IDENTITY

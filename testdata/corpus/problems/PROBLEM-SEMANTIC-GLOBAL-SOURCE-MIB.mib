@@ -1,0 +1,39 @@
+PROBLEM-SEMANTIC-GLOBAL-SOURCE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+problemSemanticGlobalSourceMIB MODULE-IDENTITY
+    LAST-UPDATED "202603090000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Foreign semantic definitions for permissive global lookup tests"
+    REVISION     "202603090000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 40 }
+
+problemSemanticGlobalSourceRoot OBJECT IDENTIFIER ::= { problemSemanticGlobalSourceMIB 1 }
+
+foreignGroupObject OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Foreign object not imported by the consumer module"
+    ::= { problemSemanticGlobalSourceRoot 1 }
+
+foreignSourceNotification NOTIFICATION-TYPE
+    OBJECTS     { foreignGroupObject }
+    STATUS      current
+    DESCRIPTION "Foreign notification not imported by the consumer module"
+    ::= { problemSemanticGlobalSourceRoot 2 }
+
+foreignCurrentGroup OBJECT-GROUP
+    OBJECTS      { foreignGroupObject }
+    STATUS       obsolete
+    DESCRIPTION  "Foreign current object group not imported by the consumer module"
+    ::= { problemSemanticGlobalSourceRoot 3 }
+
+END

@@ -281,7 +281,11 @@ fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Mod
 }
 
 /// Run the heuristic/parse/lower pipeline on raw MIB content.
-fn decode_modules(content: &[u8], source_path: &str, diag_config: &DiagnosticConfig) -> Vec<ir::Module> {
+fn decode_modules(
+    content: &[u8],
+    source_path: &str,
+    diag_config: &DiagnosticConfig,
+) -> Vec<ir::Module> {
     if !scan::looks_like_mib_content(content) {
         debug!(path = %source_path, "content rejected by heuristic");
         return Vec::new();
@@ -328,4 +332,3 @@ fn check_load_result(
 
     Ok(warnings)
 }
-

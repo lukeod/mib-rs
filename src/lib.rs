@@ -15,7 +15,7 @@ pub mod types;
 
 // Re-exports for convenience
 pub use error::LoadError;
-pub use load::{load, LoadOptions, LoadResult};
+pub use load::{LoadOptions, LoadResult, load};
 pub use mib::{Oid, ParseOidError};
 pub use source::{FindResult, Source};
 pub use token::{Token, TokenKind};

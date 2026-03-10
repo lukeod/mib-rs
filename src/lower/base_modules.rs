@@ -82,9 +82,7 @@ fn create_snmpv2_smi() -> ir::Module {
     let mut module = ir::Module::new("SNMPv2-SMI".into(), Span::SYNTHETIC);
     module.language = Language::SMIv2;
     module.definitions = create_oid_definitions();
-    module
-        .definitions
-        .extend(create_base_type_definitions());
+    module.definitions.extend(create_base_type_definitions());
     module
 }
 
@@ -110,9 +108,7 @@ fn create_smiv1_base(name: &str) -> ir::Module {
     let mut module = ir::Module::new(name.into(), Span::SYNTHETIC);
     module.language = Language::SMIv1;
     module.definitions = create_smiv1_type_definitions();
-    module
-        .definitions
-        .extend(core_oid_definitions());
+    module.definitions.extend(core_oid_definitions());
     module
 }
 

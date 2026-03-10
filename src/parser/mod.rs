@@ -1,8 +1,7 @@
 use crate::ast::*;
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::types::{
-    Access, AccessKeyword, ByteOffset, DiagCode, DiagnosticConfig, Span, SpanDiagnostic,
-    Status,
+    Access, AccessKeyword, ByteOffset, DiagCode, DiagnosticConfig, Span, SpanDiagnostic, Status,
 };
 use tracing::{debug, trace};
 
@@ -363,8 +362,7 @@ impl<'src> Parser<'src> {
 
             if (current.is_identifier() && next.is_macro_keyword())
                 || (current == TokenKind::UppercaseIdent && next == TokenKind::ColonColonEqual)
-                || (current == TokenKind::UppercaseIdent
-                    && next == TokenKind::KwTextualConvention)
+                || (current == TokenKind::UppercaseIdent && next == TokenKind::KwTextualConvention)
                 || (current == TokenKind::UppercaseIdent && next == TokenKind::KwMacro)
                 || (current.is_identifier()
                     && next == TokenKind::KwObject
@@ -511,10 +509,7 @@ impl<'src> Parser<'src> {
 
         let mut clauses = Vec::new();
 
-        while !self.check(TokenKind::Semicolon)
-            && !self.check(TokenKind::KwEnd)
-            && !self.is_eof()
-        {
+        while !self.check(TokenKind::Semicolon) && !self.check(TokenKind::KwEnd) && !self.is_eof() {
             let start = self.current_span().start;
             let mut symbols = Vec::new();
 
@@ -980,9 +975,7 @@ impl<'src> Parser<'src> {
         }))
     }
 
-    fn parse_textual_convention_body(
-        &mut self,
-    ) -> Result<TcBody, SpanDiagnostic> {
+    fn parse_textual_convention_body(&mut self) -> Result<TcBody, SpanDiagnostic> {
         // DISPLAY-HINT (optional)
         let display_hint = if self.check(TokenKind::KwDisplayHint) {
             self.advance();
@@ -1125,7 +1118,15 @@ impl<'src> Parser<'src> {
         let oid = self.parse_oid_assignment()?;
 
         let span = Span::new(start, oid.span.end);
-        Ok(build(name, members, status, description, reference, oid, span))
+        Ok(build(
+            name,
+            members,
+            status,
+            description,
+            reference,
+            oid,
+            span,
+        ))
     }
 
     fn parse_module_compliance(&mut self) -> Result<Definition, SpanDiagnostic> {
@@ -1555,17 +1556,16 @@ impl<'src> Parser<'src> {
                 let obj_token = self.expect_index_object()?;
 
                 // Special case: merge OCTET STRING into single identifier
-                let object = if obj_token.kind == TokenKind::KwOctet
-                    && self.check(TokenKind::KwString)
-                {
-                    let string_token = self.advance();
-                    Ident {
-                        name: "OCTET STRING".to_string(),
-                        span: Span::new(obj_token.span.start, string_token.span.end),
-                    }
-                } else {
-                    self.make_ident(obj_token)
-                };
+                let object =
+                    if obj_token.kind == TokenKind::KwOctet && self.check(TokenKind::KwString) {
+                        let string_token = self.advance();
+                        Ident {
+                            name: "OCTET STRING".to_string(),
+                            span: Span::new(obj_token.span.start, string_token.span.end),
+                        }
+                    } else {
+                        self.make_ident(obj_token)
+                    };
 
                 let item_span = Span::new(item_start, self.last_end);
                 items.push(IndexItem {
@@ -1623,11 +1623,7 @@ impl<'src> Parser<'src> {
                 } else if let Ok(v) = text.parse::<u64>() {
                     Ok(DefVal::Unsigned(v))
                 } else {
-                    self.emit_diagnostic(
-                        DiagCode::InvalidI64,
-                        token.span,
-                        "invalid DEFVAL number",
-                    );
+                    self.emit_diagnostic(DiagCode::InvalidI64, token.span, "invalid DEFVAL number");
                     Ok(DefVal::Integer(0))
                 }
             }
@@ -1780,10 +1776,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn parse_defval_oid_components(
-        &mut self,
-        start: ByteOffset,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval_oid_components(&mut self, start: ByteOffset) -> Result<DefVal, SpanDiagnostic> {
         let mut components = Vec::new();
         self.collect_defval_oid_components(&mut components)?;
 
@@ -2594,7 +2587,9 @@ END
         let modules = parse_str(input);
         match &modules[0].body[0] {
             Definition::TypeAssignment(d) => {
-                assert!(matches!(&d.syntax, TypeSyntax::SequenceOf { entry_type, .. } if entry_type.name == "TestEntry"));
+                assert!(
+                    matches!(&d.syntax, TypeSyntax::SequenceOf { entry_type, .. } if entry_type.name == "TestEntry")
+                );
             }
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
@@ -2654,22 +2649,20 @@ END
 "#;
         let modules = parse_str(input);
         match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                match &d.syntax {
-                    TypeSyntax::Constrained {
-                        base, constraint, ..
-                    } => {
-                        assert!(matches!(**base, TypeSyntax::OctetString { .. }));
-                        match constraint {
-                            Constraint::Size { ranges, .. } => {
-                                assert_eq!(ranges.len(), 1);
-                            }
-                            other => panic!("expected Size constraint, got {:?}", other),
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::Constrained {
+                    base, constraint, ..
+                } => {
+                    assert!(matches!(**base, TypeSyntax::OctetString { .. }));
+                    match constraint {
+                        Constraint::Size { ranges, .. } => {
+                            assert_eq!(ranges.len(), 1);
                         }
+                        other => panic!("expected Size constraint, got {:?}", other),
                     }
-                    other => panic!("expected Constrained, got {:?}", other),
                 }
-            }
+                other => panic!("expected Constrained, got {:?}", other),
+            },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
     }
@@ -2690,7 +2683,10 @@ END
         match &modules[0].body[0] {
             Definition::ObjectType(d) => {
                 assert!(d.defval.is_some());
-                assert!(matches!(d.defval.as_ref().unwrap().value, DefVal::Integer(42)));
+                assert!(matches!(
+                    d.defval.as_ref().unwrap().value,
+                    DefVal::Integer(42)
+                ));
             }
             other => panic!("expected ObjectType, got {:?}", other),
         }
@@ -2730,10 +2726,12 @@ END
 END
 "#;
         let modules = parse_strict(input);
-        assert!(modules[0]
-            .diagnostics
-            .iter()
-            .any(|d| d.code == DiagCode::IdentifierUnderscore));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::IdentifierUnderscore)
+        );
     }
 
     #[test]
@@ -2748,8 +2746,14 @@ END
         let modules = parse_str(input);
         // Should have two definitions: the macro and the value assignment
         assert_eq!(modules[0].body.len(), 2);
-        assert!(matches!(&modules[0].body[0], Definition::MacroDefinition(_)));
-        assert!(matches!(&modules[0].body[1], Definition::ValueAssignment(_)));
+        assert!(matches!(
+            &modules[0].body[0],
+            Definition::MacroDefinition(_)
+        ));
+        assert!(matches!(
+            &modules[0].body[1],
+            Definition::ValueAssignment(_)
+        ));
     }
 
     #[test]
@@ -2869,14 +2873,12 @@ END
 "#;
         let modules = parse_str(input);
         match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                match &d.syntax {
-                    TypeSyntax::Choice { alternatives, .. } => {
-                        assert_eq!(alternatives.len(), 2);
-                    }
-                    other => panic!("expected Choice, got {:?}", other),
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::Choice { alternatives, .. } => {
+                    assert_eq!(alternatives.len(), 2);
                 }
-            }
+                other => panic!("expected Choice, got {:?}", other),
+            },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
     }
@@ -2891,7 +2893,12 @@ END
 "#;
         let modules = parse_str(input);
         assert_eq!(modules[0].body.len(), 2);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::TypeAssignment(d) => assert_eq!(d.name.name, "IpAddress"),
             other => panic!("expected TypeAssignment, got {:?}", other),
@@ -2905,22 +2912,28 @@ TestStatus ::= INTEGER { up(1) down(2) testing(3) }
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         let missing_comma_count = modules[0]
             .diagnostics
             .iter()
             .filter(|d| d.code == DiagCode::MissingComma)
             .count();
-        assert_eq!(missing_comma_count, 2, "expected 2 missing-comma diagnostics");
+        assert_eq!(
+            missing_comma_count, 2,
+            "expected 2 missing-comma diagnostics"
+        );
         match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                match &d.syntax {
-                    TypeSyntax::IntegerEnum { named_numbers, .. } => {
-                        assert_eq!(named_numbers.len(), 3);
-                    }
-                    other => panic!("expected IntegerEnum, got {:?}", other),
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                    assert_eq!(named_numbers.len(), 3);
                 }
-            }
+                other => panic!("expected IntegerEnum, got {:?}", other),
+            },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
     }
@@ -2932,19 +2945,22 @@ TestType ::= INTEGER { negative(-1), zero(0), positive(1) }
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                match &d.syntax {
-                    TypeSyntax::IntegerEnum { named_numbers, .. } => {
-                        assert_eq!(named_numbers.len(), 3);
-                        assert_eq!(named_numbers[0].value, -1);
-                        assert_eq!(named_numbers[1].value, 0);
-                        assert_eq!(named_numbers[2].value, 1);
-                    }
-                    other => panic!("expected IntegerEnum, got {:?}", other),
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                    assert_eq!(named_numbers.len(), 3);
+                    assert_eq!(named_numbers[0].value, -1);
+                    assert_eq!(named_numbers[1].value, 0);
+                    assert_eq!(named_numbers[2].value, 1);
                 }
-            }
+                other => panic!("expected IntegerEnum, got {:?}", other),
+            },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
     }
@@ -2956,7 +2972,12 @@ testObj OBJECT IDENTIFIER ::= { SNMPv2-SMI.enterprises 1 }
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ValueAssignment(d) => {
                 assert_eq!(d.oid.components.len(), 2);
@@ -2983,13 +3004,22 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => {
                 let syntax = d.syntax.as_ref().unwrap();
                 match &syntax.syntax {
-                    TypeSyntax::Constrained { base, constraint, .. } => {
-                        assert!(matches!(base.as_ref(), TypeSyntax::TypeRef(id) if id.name == "DisplayString"));
+                    TypeSyntax::Constrained {
+                        base, constraint, ..
+                    } => {
+                        assert!(
+                            matches!(base.as_ref(), TypeSyntax::TypeRef(id) if id.name == "DisplayString")
+                        );
                         assert!(matches!(constraint, Constraint::Size { .. }));
                     }
                     other => panic!("expected Constrained, got {:?}", other),
@@ -3012,12 +3042,21 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => {
                 let syntax = d.syntax.as_ref().unwrap();
                 match &syntax.syntax {
-                    TypeSyntax::IntegerEnum { base, named_numbers, .. } => {
+                    TypeSyntax::IntegerEnum {
+                        base,
+                        named_numbers,
+                        ..
+                    } => {
                         assert!(base.is_some());
                         assert_eq!(base.as_ref().unwrap().name, "RowStatus");
                         assert_eq!(named_numbers.len(), 2);
@@ -3042,7 +3081,12 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => {
                 let access = d.access.as_ref().unwrap();
@@ -3067,14 +3111,17 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
-            Definition::ObjectType(d) => {
-                match &d.defval.as_ref().unwrap().value {
-                    DefVal::HexString { content, .. } => assert_eq!(content, "FF00"),
-                    other => panic!("expected HexString DEFVAL, got {:?}", other),
-                }
-            }
+            Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
+                DefVal::HexString { content, .. } => assert_eq!(content, "FF00"),
+                other => panic!("expected HexString DEFVAL, got {:?}", other),
+            },
             other => panic!("expected ObjectType, got {:?}", other),
         }
     }
@@ -3092,16 +3139,19 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
-            Definition::ObjectType(d) => {
-                match &d.defval.as_ref().unwrap().value {
-                    DefVal::ObjectIdentifier { components, .. } => {
-                        assert_eq!(components.len(), 4);
-                    }
-                    other => panic!("expected OID DEFVAL, got {:?}", other),
+            Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
+                DefVal::ObjectIdentifier { components, .. } => {
+                    assert_eq!(components.len(), 4);
                 }
-            }
+                other => panic!("expected OID DEFVAL, got {:?}", other),
+            },
             other => panic!("expected ObjectType, got {:?}", other),
         }
     }
@@ -3116,7 +3166,12 @@ testOID OBJECT-IDENTITY
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ObjectIdentity(d) => {
                 assert_eq!(d.name.name, "testOID");
@@ -3136,7 +3191,12 @@ testNotifGroup NOTIFICATION-GROUP
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::NotificationGroup(d) => {
                 assert_eq!(d.name.name, "testNotifGroup");
@@ -3153,7 +3213,12 @@ TestHex ::= INTEGER ('00'H..'FF'H)
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::TypeAssignment(d) => {
                 assert!(matches!(&d.syntax, TypeSyntax::Constrained { .. }));
@@ -3170,19 +3235,22 @@ TestType ::= INTEGER { current(1), deprecated(2), optional(3) }
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                match &d.syntax {
-                    TypeSyntax::IntegerEnum { named_numbers, .. } => {
-                        assert_eq!(named_numbers.len(), 3);
-                        assert_eq!(named_numbers[0].name.name, "current");
-                        assert_eq!(named_numbers[1].name.name, "deprecated");
-                        assert_eq!(named_numbers[2].name.name, "optional");
-                    }
-                    other => panic!("expected IntegerEnum, got {:?}", other),
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                    assert_eq!(named_numbers.len(), 3);
+                    assert_eq!(named_numbers[0].name.name, "current");
+                    assert_eq!(named_numbers[1].name.name, "deprecated");
+                    assert_eq!(named_numbers[2].name.name, "optional");
                 }
-            }
+                other => panic!("expected IntegerEnum, got {:?}", other),
+            },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
     }
@@ -3199,11 +3267,19 @@ testObj OBJECT-TYPE
 END
 "#;
         let modules = parse_str(input);
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => {
                 let syntax = d.syntax.as_ref().unwrap();
-                assert!(matches!(&syntax.syntax, TypeSyntax::ObjectIdentifier { .. }));
+                assert!(matches!(
+                    &syntax.syntax,
+                    TypeSyntax::ObjectIdentifier { .. }
+                ));
             }
             other => panic!("expected ObjectType, got {:?}", other),
         }
@@ -3217,7 +3293,12 @@ END
 "#;
         let modules = parse_str(input);
         assert_eq!(modules[0].name.name, "TEST-MIB");
-        assert!(modules[0].diagnostics.iter().all(|d| d.code != DiagCode::ParseError));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
     }
 
     #[test]

@@ -67,9 +67,7 @@ const SIG_ASSIGN: &[u8] = b"::=";
 
 /// Find the first occurrence of needle in haystack.
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Check whether the byte at `pos` in `content` is inside an ASN.1 comment.

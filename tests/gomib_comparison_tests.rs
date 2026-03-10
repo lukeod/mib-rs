@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gomib::load::{load, LoadOptions};
+use gomib::load::{LoadOptions, load};
 use gomib::mib::{Mib, NodeId, Oid};
 use gomib::source::dir_source;
 use gomib::types::{DiagnosticConfig, ResolverStrictness};

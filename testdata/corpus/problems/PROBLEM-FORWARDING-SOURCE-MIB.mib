@@ -5,10 +5,12 @@
 PROBLEM-FORWARDING-SOURCE-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
-    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
         FROM SNMPv2-SMI
-    TEXTUAL-CONVENTION, DisplayString
-        FROM SNMPv2-TC;
+    TEXTUAL-CONVENTION, DisplayString, MacAddress, RowStatus
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF;
 
 problemForwardingSourceMIB MODULE-IDENTITY
     LAST-UPDATED "202601300000Z"
@@ -32,5 +34,57 @@ forwardedSourceObject OBJECT-TYPE
     STATUS      current
     DESCRIPTION "Object using ForwardedType in source module"
     ::= { forwardedSourceRoot 1 }
+
+forwardedBaseTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ForwardedBaseEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Base table for forwarding linkage tests"
+    ::= { forwardedSourceRoot 2 }
+
+forwardedBaseEntry OBJECT-TYPE
+    SYNTAX      ForwardedBaseEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Base row exported through the forwarding chain"
+    INDEX       { forwardedBaseIndex }
+    ::= { forwardedBaseTable 1 }
+
+ForwardedBaseEntry ::= SEQUENCE {
+    forwardedBaseIndex   MacAddress,
+    forwardedBaseStatus  RowStatus
+}
+
+forwardedBaseIndex OBJECT-TYPE
+    SYNTAX      MacAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Forwarded index object with TC metadata"
+    ::= { forwardedBaseEntry 1 }
+
+forwardedBaseStatus OBJECT-TYPE
+    SYNTAX      RowStatus
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "Forwarded status column with enum metadata"
+    ::= { forwardedBaseEntry 2 }
+
+forwardedSourceNotification NOTIFICATION-TYPE
+    OBJECTS     { forwardedSourceObject, forwardedBaseStatus }
+    STATUS      current
+    DESCRIPTION "Notification exported through the forwarding chain"
+    ::= { forwardedSourceRoot 3 }
+
+forwardedSourceObjectGroup OBJECT-GROUP
+    OBJECTS      { forwardedSourceObject, forwardedBaseStatus }
+    STATUS       obsolete
+    DESCRIPTION  "Object group exported through the forwarding chain"
+    ::= { forwardedSourceRoot 4 }
+
+forwardedSourceNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { forwardedSourceNotification }
+    STATUS        current
+    DESCRIPTION   "Notification group exported through the forwarding chain"
+    ::= { forwardedSourceRoot 5 }
 
 END

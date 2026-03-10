@@ -6,9 +6,15 @@
 PROBLEM-FORWARDING-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
-    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
         FROM SNMPv2-SMI
-    ForwardedType, forwardedSourceRoot
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    ForwardedType, forwardedSourceRoot,
+    forwardedBaseEntry, forwardedBaseIndex,
+    forwardedBaseStatus, forwardedSourceObject,
+    forwardedSourceNotification, forwardedSourceObjectGroup,
+    forwardedSourceNotificationGroup
         FROM PROBLEM-FORWARDING-RELAY-MIB;
 
 problemForwardingMIB MODULE-IDENTITY
@@ -38,5 +44,82 @@ problemForwardedOidObject OBJECT-TYPE
     STATUS      current
     DESCRIPTION "Object under an OID obtained via import forwarding"
     ::= { forwardedSourceRoot 10 }
+
+problemForwardedAugmentTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemForwardedAugmentEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table that augments a row reached through import forwarding"
+    ::= { problemForwardingObjects 2 }
+
+problemForwardedAugmentEntry OBJECT-TYPE
+    SYNTAX      ProblemForwardedAugmentEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Row that augments a forwarded base row"
+    AUGMENTS    { forwardedBaseEntry }
+    ::= { problemForwardedAugmentTable 1 }
+
+ProblemForwardedAugmentEntry ::= SEQUENCE {
+    problemForwardedAugmentValue  Integer32
+}
+
+problemForwardedAugmentValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Augmented value column"
+    ::= { problemForwardedAugmentEntry 1 }
+
+problemForwardedIndexTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemForwardedIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table that indexes on an object reached through forwarding"
+    ::= { problemForwardingObjects 3 }
+
+problemForwardedIndexEntry OBJECT-TYPE
+    SYNTAX      ProblemForwardedIndexEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Row using a forwarded index object"
+    INDEX       { forwardedBaseIndex }
+    ::= { problemForwardedIndexTable 1 }
+
+ProblemForwardedIndexEntry ::= SEQUENCE {
+    problemForwardedIndexValue  Integer32
+}
+
+problemForwardedIndexValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Indexed value column"
+    ::= { problemForwardedIndexEntry 1 }
+
+problemForwardedNotification NOTIFICATION-TYPE
+    OBJECTS     { forwardedSourceObject, forwardedBaseStatus }
+    STATUS      current
+    DESCRIPTION "Notification using objects reached through import forwarding"
+    ::= { problemForwardingObjects 4 }
+
+problemForwardedObjectGroup OBJECT-GROUP
+    OBJECTS      { forwardedSourceObject, forwardedBaseStatus }
+    STATUS       current
+    DESCRIPTION  "Object group using members reached through import forwarding"
+    ::= { problemForwardingObjects 5 }
+
+problemForwardedNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { forwardedSourceNotification }
+    STATUS        current
+    DESCRIPTION   "Notification group using members reached through import forwarding"
+    ::= { problemForwardingObjects 6 }
+
+problemForwardedCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION "Compliance using a group reached through import forwarding"
+    MODULE
+        MANDATORY-GROUPS { forwardedSourceObjectGroup }
+    ::= { problemForwardingObjects 7 }
 
 END

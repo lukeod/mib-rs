@@ -192,9 +192,7 @@ fn apply_op(op: PathOp, dirs: Vec<String>, mut current: Vec<String>) -> Vec<Stri
             current.extend(dirs);
             current
         }
-        PathOp::Prepend => {
-            dirs.into_iter().chain(current).collect()
-        }
+        PathOp::Prepend => dirs.into_iter().chain(current).collect(),
         PathOp::Replace => dirs,
     }
 }
@@ -251,11 +249,7 @@ fn dedup(items: Vec<String>) -> Vec<String> {
 fn filter_existing_dirs(paths: Vec<String>) -> Vec<String> {
     paths
         .into_iter()
-        .filter(|p| {
-            std::fs::metadata(p)
-                .map(|m| m.is_dir())
-                .unwrap_or(false)
-        })
+        .filter(|p| std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false))
         .collect()
 }
 

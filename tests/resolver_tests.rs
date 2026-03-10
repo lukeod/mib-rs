@@ -1,9 +1,11 @@
 // Integration tests: full pipeline from source files through resolution.
 
-use gomib::load::{load, LoadOptions};
+use gomib::load::{LoadOptions, load};
 use gomib::mib::Oid;
 use gomib::source::dir_source;
-use gomib::types::{Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness};
+use gomib::types::{
+    Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
+};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
@@ -132,7 +134,9 @@ fn resolve_qualified_name() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r.mib;
 
-    let node = mib.resolve("IF-MIB::ifIndex").expect("qualified name not found");
+    let node = mib
+        .resolve("IF-MIB::ifIndex")
+        .expect("qualified name not found");
     let oid = mib.tree().oid_of(node);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1");
 }
@@ -171,7 +175,9 @@ fn resolve_oid_from_name() {
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1");
 
     // With suffix
-    let oid = mib.resolve_oid("ifIndex.5").expect("resolve_oid with suffix failed");
+    let oid = mib
+        .resolve_oid("ifIndex.5")
+        .expect("resolve_oid with suffix failed");
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1.5");
 }
 
@@ -183,7 +189,9 @@ fn object_types_resolved() {
     let mib = &r.mib;
 
     // ifIndex should be a column with InterfaceIndex type
-    let obj_id = mib.object_by_name("ifIndex").expect("ifIndex object not found");
+    let obj_id = mib
+        .object_by_name("ifIndex")
+        .expect("ifIndex object not found");
     let obj = mib.object(obj_id);
     assert_eq!(obj.name(), "ifIndex");
     assert_eq!(obj.kind(mib.tree()), Kind::Column);
@@ -236,7 +244,9 @@ fn type_parent_chain() {
     let mib = &r.mib;
 
     // DisplayString should ultimately be OCTET STRING
-    let ds_id = mib.type_by_name("DisplayString").expect("DisplayString not found");
+    let ds_id = mib
+        .type_by_name("DisplayString")
+        .expect("DisplayString not found");
     let ds = mib.type_(ds_id);
     let effective = ds.effective_base(mib.types_slice());
     assert_eq!(effective, BaseType::OctetString);
@@ -248,7 +258,9 @@ fn textual_convention_display_hint() {
     let mib = &r.mib;
 
     // DisplayString is a TC with display hint "255a"
-    let ds_id = mib.type_by_name("DisplayString").expect("DisplayString not found");
+    let ds_id = mib
+        .type_by_name("DisplayString")
+        .expect("DisplayString not found");
     let ds = mib.type_(ds_id);
     assert!(ds.is_textual_convention());
     assert_eq!(ds.effective_display_hint(mib.types_slice()), "255a");
@@ -260,7 +272,9 @@ fn integer_enum_type() {
     let mib = &r.mib;
 
     // ifAdminStatus should have enum values (up/down/testing)
-    let obj_id = mib.object_by_name("ifAdminStatus").expect("ifAdminStatus not found");
+    let obj_id = mib
+        .object_by_name("ifAdminStatus")
+        .expect("ifAdminStatus not found");
     let obj = mib.object(obj_id);
     let enums = obj.effective_enums();
     assert!(
@@ -325,10 +339,7 @@ fn filter_tables() {
     let mib = &r.mib;
 
     let tables = mib.tables();
-    assert!(
-        !tables.is_empty(),
-        "IF-MIB should have at least one table"
-    );
+    assert!(!tables.is_empty(), "IF-MIB should have at least one table");
     for t in &tables {
         assert_eq!(mib.object(*t).kind(mib.tree()), Kind::Table);
     }
@@ -340,10 +351,7 @@ fn filter_by_base_type() {
     let mib = &r.mib;
 
     let counters = mib.objects_by_base_type(BaseType::Counter32);
-    assert!(
-        !counters.is_empty(),
-        "IF-MIB should have counter objects"
-    );
+    assert!(!counters.is_empty(), "IF-MIB should have counter objects");
 }
 
 // --- Module metadata ---
@@ -356,7 +364,10 @@ fn module_metadata() {
     let mod_id = mib.module_by_name("IF-MIB").unwrap();
     let module = mib.module(mod_id);
     assert!(!module.description().is_empty(), "should have description");
-    assert!(!module.organization().is_empty(), "should have organization");
+    assert!(
+        !module.organization().is_empty(),
+        "should have organization"
+    );
 }
 
 // --- Base modules ---
@@ -400,10 +411,7 @@ fn base_types_available() {
 #[test]
 fn no_fatal_diagnostics() {
     let r = load_corpus(&["IF-MIB"]);
-    assert!(
-        !r.mib.has_errors(),
-        "IF-MIB should load without errors"
-    );
+    assert!(!r.mib.has_errors(), "IF-MIB should load without errors");
 }
 
 // --- Multi-module tests ---
@@ -624,9 +632,7 @@ fn snmp_oid_owned_by_snmpv2_mib() {
     let r = load_corpus(&["SNMPv2-MIB"]);
     let mib = &r.mib;
 
-    let node_id = mib
-        .node_by_name("snmp")
-        .expect("snmp node not found");
+    let node_id = mib.node_by_name("snmp").expect("snmp node not found");
     let mod_id = mib
         .tree()
         .get(node_id)
@@ -694,10 +700,7 @@ fn duplicate_import_first_wins() {
         .iter()
         .find(|imp| imp.symbols.iter().any(|s| s.name == "DisplayString"))
         .expect("DisplayString import not found");
-    assert_eq!(
-        ds_import.module, "RFC1213-MIB",
-        "first import should win"
-    );
+    assert_eq!(ds_import.module, "RFC1213-MIB", "first import should win");
 }
 
 #[test]
