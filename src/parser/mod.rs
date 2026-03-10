@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::ast::*;
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::types::{
@@ -107,9 +109,8 @@ impl<'src> Parser<'src> {
         self.peek().kind == TokenKind::Eof
     }
 
-    fn text(&self, span: Span) -> &str {
-        std::str::from_utf8(&self.source[span.start.0 as usize..span.end.0 as usize])
-            .unwrap_or("<invalid utf8>")
+    fn text(&self, span: Span) -> Cow<'src, str> {
+        String::from_utf8_lossy(&self.source[span.start.0 as usize..span.end.0 as usize])
     }
 
     fn make_error(&self, message: String) -> SpanDiagnostic {
@@ -1639,7 +1640,7 @@ impl<'src> Parser<'src> {
             TokenKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
-                let content = strip_string_literal(full_text);
+                let content = strip_string_literal(&full_text);
                 Ok(DefVal::HexString {
                     content: content.to_string(),
                     span: token.span,
@@ -1648,7 +1649,7 @@ impl<'src> Parser<'src> {
             TokenKind::BinString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
-                let content = strip_string_literal(full_text);
+                let content = strip_string_literal(&full_text);
                 Ok(DefVal::BinaryString {
                     content: content.to_string(),
                     span: token.span,
@@ -2091,7 +2092,7 @@ impl<'src> Parser<'src> {
             TokenKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
-                let hex_part = strip_string_literal(full_text);
+                let hex_part = strip_string_literal(&full_text);
                 match u64::from_str_radix(hex_part, 16) {
                     Ok(v) => Ok(RangeValue::Unsigned(v)),
                     Err(_) => {

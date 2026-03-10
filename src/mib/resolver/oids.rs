@@ -384,7 +384,11 @@ fn resolve_oid_component(
             }
             Some(child)
         }
-        ir::OidComponent::QualifiedName { module, name, span: _ } => {
+        ir::OidComponent::QualifiedName {
+            module,
+            name,
+            span: _,
+        } => {
             if let Some(node) = ctx.lookup_node_in_module(module, name) {
                 Some(node)
             } else {
@@ -509,17 +513,20 @@ fn lookup_smi_global_oid_root(ctx: &ResolverContext, name: &str) -> Option<NodeI
 }
 
 fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {
-    let (def_span, value_assignment_text) = {
+    let (def_span, oid_definition_text) = {
         let m = &ctx.modules[od.ir_mod.0 as usize];
         let def = &m.definitions[od.def_idx];
         let def_span = def.span();
-        let value_assignment_text = match def {
+        let oid_definition_text = match def {
             ir::Definition::ValueAssignment(va) => {
                 Some((va.description.clone(), va.reference.clone()))
             }
+            ir::Definition::ObjectIdentity(oi) => {
+                Some((oi.description.clone(), oi.reference.clone()))
+            }
             _ => None,
         };
-        (def_span, value_assignment_text)
+        (def_span, oid_definition_text)
     };
     let resolved_mod_id = ctx.module_to_resolved[&od.ir_mod];
 
@@ -575,7 +582,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
 
         ctx.mib.tree.set_span(node_id, def_span);
 
-        if let Some((description, reference)) = value_assignment_text {
+        if let Some((description, reference)) = oid_definition_text {
             if !description.is_empty() {
                 ctx.mib.tree.set_description(node_id, description);
             }

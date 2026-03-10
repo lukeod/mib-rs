@@ -24,6 +24,8 @@ struct FixtureNode {
     name: String,
     #[serde(rename = "Module")]
     module: String,
+    #[serde(rename = "Description")]
+    description: String,
     #[serde(rename = "Type")]
     typ: String,
     #[serde(rename = "Access")]
@@ -50,12 +52,50 @@ struct FixtureNode {
     kind: String,
     #[serde(rename = "Varbinds")]
     varbinds: Option<Vec<String>>,
+    #[serde(rename = "GroupMembers")]
+    group_members: Option<Vec<String>>,
     #[serde(rename = "NodeType")]
     node_type: String,
     #[serde(rename = "BitValues")]
     bit_values: HashMap<String, String>,
     #[serde(rename = "Reference")]
     reference: String,
+    #[serde(rename = "ProductRelease")]
+    product_release: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureModule {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "OID")]
+    oid: String,
+    #[serde(rename = "Organization")]
+    organization: String,
+    #[serde(rename = "ContactInfo")]
+    contact_info: String,
+    #[serde(rename = "Description")]
+    description: String,
+    #[serde(rename = "LastUpdated")]
+    last_updated: String,
+    #[serde(rename = "Revisions")]
+    revisions: Option<Vec<FixtureRevision>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureRevision {
+    #[serde(rename = "Date")]
+    date: String,
+    #[serde(rename = "Description")]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixturePayload {
+    #[serde(rename = "Nodes")]
+    nodes: HashMap<String, FixtureNode>,
+    #[serde(rename = "Modules")]
+    modules: HashMap<String, FixtureModule>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,7 +157,7 @@ fn fixturegen_bin() -> &'static PathBuf {
     })
 }
 
-fn run_fixturegen(strictness: &str) -> HashMap<String, FixtureNode> {
+fn run_fixturegen(strictness: &str) -> FixturePayload {
     let bin = fixturegen_bin();
     let corpus = corpus_dir();
 
@@ -127,6 +167,7 @@ fn run_fixturegen(strictness: &str) -> HashMap<String, FixtureNode> {
             corpus.to_str().unwrap(),
             "-strictness",
             strictness,
+            "-include-modules",
         ])
         .output()
         .unwrap_or_else(|e| panic!("failed to run gomib-fixturegen: {e}"));
@@ -165,6 +206,7 @@ struct ExtractedNode {
     oid: String,
     name: String,
     module: String,
+    description: String,
     typ: String,
     access: String,
     status: String,
@@ -178,9 +220,22 @@ struct ExtractedNode {
     default_value: String,
     kind: String,
     varbinds: Vec<String>,
+    group_members: Vec<String>,
     node_type: String,
     bit_values: HashMap<i64, String>,
     reference: String,
+    product_release: String,
+}
+
+#[derive(Debug)]
+struct ExtractedModule {
+    name: String,
+    oid: String,
+    organization: String,
+    contact_info: String,
+    description: String,
+    last_updated: String,
+    revisions: Vec<(String, String)>,
 }
 
 fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
@@ -191,6 +246,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         oid: tree.oid_of(node_id).to_string(),
         name: node.name().to_string(),
         module: String::new(),
+        description: node.description().to_string(),
         typ: String::new(),
         access: String::new(),
         status: String::new(),
@@ -204,13 +260,22 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         default_value: String::new(),
         kind: String::new(),
         varbinds: Vec::new(),
+        group_members: Vec::new(),
         node_type: String::new(),
         bit_values: HashMap::new(),
-        reference: String::new(),
+        reference: node.reference().to_string(),
+        product_release: String::new(),
     };
 
     if let Some(mod_id) = mib.effective_module(node_id) {
-        e.module = mib.module(mod_id).name().to_string();
+        let module = mib.module(mod_id);
+        e.module = module.name().to_string();
+        if module
+            .oid()
+            .is_some_and(|mod_oid| mod_oid == mib.tree().oid_of(node_id))
+        {
+            e.node_type = "MODULE-IDENTITY".to_string();
+        }
     }
 
     if let Some(obj_id) = node.object() {
@@ -226,6 +291,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         e.units = obj.units().to_string();
         e.hint = obj.effective_display_hint().to_string();
         e.node_type = "OBJECT-TYPE".to_string();
+        e.description = obj.description().to_string();
         e.reference = obj.reference().to_string();
 
         let k = obj.kind(mib.tree());
@@ -279,6 +345,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     if let Some(notif_id) = node.notification() {
         let notif = mib.notification(notif_id);
         e.status = notif.status().to_string();
+        e.description = notif.description().to_string();
         e.reference = notif.reference().to_string();
         e.node_type = "NOTIFICATION-TYPE".to_string();
         for &obj_id in notif.objects() {
@@ -286,7 +353,59 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         }
     }
 
+    if let Some(group_id) = node.group() {
+        let group = mib.group(group_id);
+        e.status = group.status().to_string();
+        e.description = group.description().to_string();
+        e.reference = group.reference().to_string();
+        e.node_type = if group.is_notification_group() {
+            "NOTIFICATION-GROUP".to_string()
+        } else {
+            "OBJECT-GROUP".to_string()
+        };
+        for &member_id in group.members() {
+            e.group_members
+                .push(mib.tree().get(member_id).name().to_string());
+        }
+    }
+
+    if let Some(comp_id) = node.compliance() {
+        let compliance = mib.compliance(comp_id);
+        e.status = compliance.status().to_string();
+        e.description = compliance.description().to_string();
+        e.reference = compliance.reference().to_string();
+        e.node_type = "MODULE-COMPLIANCE".to_string();
+    }
+
+    if let Some(cap_id) = node.capability() {
+        let capability = mib.capability(cap_id);
+        e.status = capability.status().to_string();
+        e.description = capability.description().to_string();
+        e.reference = capability.reference().to_string();
+        e.node_type = "AGENT-CAPABILITIES".to_string();
+        e.product_release = capability.product_release().to_string();
+    }
+
     e
+}
+
+fn extract_module(mib: &Mib, mod_id: gomib::mib::ModuleId) -> ExtractedModule {
+    let module = mib.module(mod_id);
+    let revisions = module
+        .revisions()
+        .iter()
+        .map(|r| (r.date.clone(), r.description.clone()))
+        .collect();
+
+    ExtractedModule {
+        name: module.name().to_string(),
+        oid: module.oid().map(|oid| oid.to_string()).unwrap_or_default(),
+        organization: module.organization().to_string(),
+        contact_info: module.contact_info().to_string(),
+        description: module.description().to_string(),
+        last_updated: module.last_updated().to_string(),
+        revisions,
+    }
 }
 
 // -- Comparison --
@@ -315,6 +434,7 @@ fn compare_nodes(got: &ExtractedNode, expected: &FixtureNode) -> Vec<String> {
     check!("Name", got.name, expected.name);
     check!("OID", got.oid, expected.oid);
     check!("Module", got.module, expected.module);
+    check!("Description", got.description, expected.description);
     check!("NodeType", got.node_type, expected.node_type);
     check!("Type", got.typ, expected.typ);
     check!("Access", got.access, expected.access);
@@ -326,6 +446,11 @@ fn compare_nodes(got: &ExtractedNode, expected: &FixtureNode) -> Vec<String> {
     check!("DefaultValue", got.default_value, expected.default_value);
     check!("Augments", got.augments, expected.augments);
     check!("Reference", got.reference, expected.reference);
+    check!(
+        "ProductRelease",
+        got.product_release,
+        expected.product_release
+    );
 
     let expected_enums = fixture_int_map(&expected.enum_values);
     if got.enum_values != expected_enums {
@@ -375,13 +500,65 @@ fn compare_nodes(got: &ExtractedNode, expected: &FixtureNode) -> Vec<String> {
         ));
     }
 
+    let expected_group_members: Vec<String> = expected.group_members.clone().unwrap_or_default();
+    if got.group_members != expected_group_members {
+        failures.push(format!(
+            "{}: GroupMembers: got={:?} expected={:?}",
+            id, got.group_members, expected_group_members
+        ));
+    }
+
+    failures
+}
+
+fn compare_modules(got: &ExtractedModule, expected: &FixtureModule) -> Vec<String> {
+    let mut failures = Vec::new();
+    let id = expected.name.as_str();
+
+    macro_rules! check {
+        ($field:literal, $got:expr, $exp:expr) => {
+            if $got != $exp {
+                failures.push(format!(
+                    "{}: {}: got={:?} expected={:?}",
+                    id, $field, $got, $exp
+                ));
+            }
+        };
+    }
+
+    check!("Name", got.name, expected.name);
+    check!("OID", got.oid, expected.oid);
+    check!("Organization", got.organization, expected.organization);
+    check!("ContactInfo", got.contact_info, expected.contact_info);
+    check!("Description", got.description, expected.description);
+    check!("LastUpdated", got.last_updated, expected.last_updated);
+
+    let expected_revisions: Vec<(String, String)> = expected
+        .revisions
+        .as_ref()
+        .map(|revisions| {
+            revisions
+                .iter()
+                .map(|r| (r.date.clone(), r.description.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if got.revisions != expected_revisions {
+        failures.push(format!(
+            "{}: Revisions: got={:?} expected={:?}",
+            id, got.revisions, expected_revisions
+        ));
+    }
+
     failures
 }
 
 // -- Core comparison logic --
 
 fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) -> Vec<String> {
-    let gomib_nodes = run_fixturegen(strictness_name);
+    let payload = run_fixturegen(strictness_name);
+    let gomib_nodes = payload.nodes;
+    let gomib_modules = payload.modules;
     let mib = load_mibrs(strictness);
 
     let mut failures = Vec::new();
@@ -417,7 +594,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
 
     // Reverse: collect all mib-rs modules present in gomib output,
     // then check every mib-rs node in those modules exists in gomib
-    let gomib_modules: std::collections::HashSet<&str> = gomib_nodes
+    let gomib_node_modules: std::collections::HashSet<&str> = gomib_nodes
         .values()
         .map(|n| n.module.as_str())
         .filter(|m| !m.is_empty())
@@ -428,7 +605,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
     for node_id in mib.tree().all_nodes() {
         if let Some(mod_id) = mib.effective_module(node_id) {
             let mod_name = mib.module(mod_id).name();
-            if gomib_modules.contains(mod_name) {
+            if gomib_node_modules.contains(mod_name) {
                 let oid = mib.tree().oid_of(node_id).to_string();
                 if !gomib_oids.contains(oid.as_str()) {
                     let name = mib.tree().get(node_id).name();
@@ -437,6 +614,28 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
                     ));
                 }
             }
+        }
+    }
+
+    for (module_name, expected) in &gomib_modules {
+        let Some(mod_id) = mib.module_by_name(module_name) else {
+            failures.push(format!(
+                "[{strictness_name}] module {module_name}: present in gomib but not in mib-rs"
+            ));
+            continue;
+        };
+        let got = extract_module(&mib, mod_id);
+        for f in compare_modules(&got, expected) {
+            failures.push(format!("[{strictness_name}] {f}"));
+        }
+    }
+
+    for module in mib.modules_slice() {
+        if !gomib_modules.contains_key(module.name()) {
+            failures.push(format!(
+                "[{strictness_name}] module {}: present in mib-rs but not in gomib",
+                module.name()
+            ));
         }
     }
 
