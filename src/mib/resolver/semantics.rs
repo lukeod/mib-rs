@@ -153,7 +153,7 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         // Convert DEFVAL.
         if let Some(dv) = &defval {
-            obj.def_val = Some(convert_defval(ctx, ir_id, dv, &obj));
+            obj.def_val = Some(convert_defval(ctx, ir_id, dv, obj.typ, obj.def_val_span));
         }
 
         // Compute effective values from type chain.
@@ -286,6 +286,121 @@ fn extract_object_constraint(constraint: &ir::Constraint, obj: &mut ObjectData) 
                 .filter_map(|r| super::types::resolve_range(r))
                 .collect();
         }
+    }
+}
+
+/// Resolve an optional IR TypeSyntax into a SyntaxConstraints.
+///
+/// Used for SYNTAX/WRITE-SYNTAX clauses in MODULE-COMPLIANCE objects and
+/// AGENT-CAPABILITIES variations.
+fn resolve_syntax_constraints(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    syntax: &ir::TypeSyntax,
+    owner_name: &str,
+) -> SyntaxConstraints {
+    let mut sc = SyntaxConstraints {
+        type_id: None,
+        sizes: Vec::new(),
+        ranges: Vec::new(),
+        enums: Vec::new(),
+        bits: Vec::new(),
+    };
+    resolve_syntax_type(ctx, ir_mod, syntax, owner_name, &mut sc);
+    sc
+}
+
+/// Resolve the type reference within a TypeSyntax, populating sc.type_id and
+/// extracting any inline constraints/enums/bits.
+fn resolve_syntax_type(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    syntax: &ir::TypeSyntax,
+    _owner_name: &str,
+    sc: &mut SyntaxConstraints,
+) {
+    match syntax {
+        ir::TypeSyntax::TypeRef { name, span, .. } => {
+            if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, name) {
+                sc.type_id = Some(type_id);
+                if used_import {
+                    ctx.mark_import_used(ir_mod, name);
+                }
+            } else if !is_sequence_type_def(ctx, ir_mod, name) {
+                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                ctx.record_unresolved_type(name, &mod_name, ir_mod, *span);
+            }
+        }
+        ir::TypeSyntax::IntegerEnum {
+            base,
+            named_numbers,
+            ..
+        } => {
+            if !base.is_empty() {
+                if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, base) {
+                    sc.type_id = Some(type_id);
+                    if used_import {
+                        ctx.mark_import_used(ir_mod, base);
+                    }
+                } else {
+                    let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                    ctx.record_unresolved_type(base, &mod_name, ir_mod, Span::SYNTHETIC);
+                }
+            } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
+                sc.type_id = Some(type_id);
+            }
+            sc.enums = named_numbers
+                .iter()
+                .map(|nn| NamedValue {
+                    label: nn.name.clone(),
+                    value: nn.value,
+                    span: nn.span,
+                })
+                .collect();
+        }
+        ir::TypeSyntax::Bits { named_bits, .. } => {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "BITS") {
+                sc.type_id = Some(type_id);
+            }
+            sc.bits = named_bits
+                .iter()
+                .map(|nb| NamedValue {
+                    label: nb.name.clone(),
+                    value: nb.position as i64,
+                    span: nb.span,
+                })
+                .collect();
+        }
+        ir::TypeSyntax::Constrained {
+            base, constraint, ..
+        } => {
+            resolve_syntax_type(ctx, ir_mod, base, _owner_name, sc);
+            match constraint {
+                ir::Constraint::Size { ranges, .. } => {
+                    sc.sizes = ranges
+                        .iter()
+                        .filter_map(super::types::resolve_range)
+                        .collect();
+                }
+                ir::Constraint::Range { ranges, .. } => {
+                    sc.ranges = ranges
+                        .iter()
+                        .filter_map(super::types::resolve_range)
+                        .collect();
+                }
+            }
+        }
+        ir::TypeSyntax::OctetString => {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
+                sc.type_id = Some(type_id);
+            }
+        }
+        ir::TypeSyntax::ObjectIdentifier => {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER") {
+                sc.type_id = Some(type_id);
+            }
+        }
+        ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
     }
 }
 
@@ -727,44 +842,98 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         let reference = mc.reference.clone();
         let oid = mc.oid.clone();
 
-        // Convert compliance modules while we still borrow mc.
+        // Pre-extract compliance module data to release the borrow on
+        // ctx.modules before calling resolve_syntax_constraints.
+        struct CompObjData {
+            object: String,
+            syntax: Option<ir::TypeSyntax>,
+            write_syntax: Option<ir::TypeSyntax>,
+            min_access: Option<Access>,
+            description: String,
+            span: Span,
+        }
+        struct CompModData {
+            module_name: String,
+            mandatory_groups: Vec<String>,
+            groups: Vec<ComplianceGroup>,
+            objects: Vec<CompObjData>,
+            span: Span,
+        }
+
+        let comp_mod_data: Vec<CompModData> = mc
+            .modules
+            .iter()
+            .map(|cm| {
+                let module_name = if cm.module_name.is_empty() {
+                    ir_mod_name.clone()
+                } else {
+                    cm.module_name.clone()
+                };
+                let groups = cm
+                    .groups
+                    .iter()
+                    .map(|g| ComplianceGroup {
+                        group: g.group.clone(),
+                        description: g.description.clone(),
+                        span: g.span,
+                    })
+                    .collect();
+                let objects = cm
+                    .objects
+                    .iter()
+                    .map(|o| CompObjData {
+                        object: o.object.clone(),
+                        syntax: o.syntax.clone(),
+                        write_syntax: o.write_syntax.clone(),
+                        min_access: o.min_access,
+                        description: o.description.clone(),
+                        span: o.span,
+                    })
+                    .collect();
+                CompModData {
+                    module_name,
+                    mandatory_groups: cm.mandatory_groups.clone(),
+                    groups,
+                    objects,
+                    span: cm.span,
+                }
+            })
+            .collect();
+
+        // End borrow on ctx.modules.
+        let _ = mc;
+
         let mut comp_modules = Vec::new();
-        for cm in &mc.modules {
-            let module_name = if cm.module_name.is_empty() {
-                ir_mod_name.clone()
-            } else {
-                cm.module_name.clone()
-            };
-
-            let groups: Vec<ComplianceGroup> = cm
-                .groups
-                .iter()
-                .map(|g| ComplianceGroup {
-                    group: g.group.clone(),
-                    description: g.description.clone(),
-                    span: g.span,
-                })
-                .collect();
-
-            let objects: Vec<ComplianceObject> = cm
+        for cmd in &comp_mod_data {
+            let objects: Vec<ComplianceObject> = cmd
                 .objects
                 .iter()
-                .map(|o| ComplianceObject {
-                    object: o.object.clone(),
-                    syntax: None,
-                    write_syntax: None,
-                    min_access: o.min_access,
-                    description: o.description.clone(),
-                    span: o.span,
+                .map(|o| {
+                    let resolved_syntax = o
+                        .syntax
+                        .as_ref()
+                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &o.object));
+                    let resolved_write_syntax = o
+                        .write_syntax
+                        .as_ref()
+                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &o.object));
+                    ComplianceObject {
+                        object: o.object.clone(),
+                        syntax: resolved_syntax,
+                        write_syntax: resolved_write_syntax,
+                        min_access: o.min_access,
+                        description: o.description.clone(),
+                        span: o.span,
+                    }
                 })
                 .collect();
 
             comp_modules.push(ComplianceModule {
-                module_name,
-                mandatory_groups: cm.mandatory_groups.clone(),
-                groups,
+                module_name: cmd.module_name.clone(),
+                mandatory_groups: cmd.mandatory_groups.clone(),
+                groups: cmd.groups.clone(),
                 objects,
-                span: cm.span,
+                span: cmd.span,
             });
         }
 
@@ -928,13 +1097,27 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         span: var.span,
                     });
                 } else {
+                    let syntax = var
+                        .syntax
+                        .as_ref()
+                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &var.name));
+                    let write_syntax = var
+                        .write_syntax
+                        .as_ref()
+                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &var.name));
+                    // For defval, derive the type from the resolved syntax if
+                    // present, otherwise fall back to None.
+                    let defval_typ = syntax.as_ref().and_then(|sc| sc.type_id);
+                    let def_val = var.defval.as_ref().map(|dv| {
+                        convert_defval(ctx, ir_id, dv, defval_typ, var.span)
+                    });
                     obj_vars.push(ObjectVariation {
                         object: var.name.clone(),
-                        syntax: None,
-                        write_syntax: None,
+                        syntax,
+                        write_syntax,
                         access: var.access,
                         creation_requires: var.creation_requires.clone(),
-                        def_val: None,
+                        def_val,
                         description: var.description.clone(),
                         span: var.span,
                     });
@@ -970,7 +1153,8 @@ fn convert_defval(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     dv: &ir::syntax::DefVal,
-    obj: &ObjectData,
+    typ: Option<TypeId>,
+    defval_span: Span,
 ) -> DefVal {
     match dv {
         ir::syntax::DefVal::Integer(v) => DefVal::int(*v, v.to_string()),
@@ -984,7 +1168,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedHexDefval,
                     Some(ir_mod),
-                    obj.def_val_span,
+                    defval_span,
                     format!("malformed hex DEFVAL {raw:?}"),
                 );
                 return DefVal::unset();
@@ -1000,11 +1184,11 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedBinDefval,
                     Some(ir_mod),
-                    obj.def_val_span,
+                    defval_span,
                     format!("binary DEFVAL contains non-binary digits: {raw:?}"),
                 );
             }
-            let is_bits = obj.typ.is_some_and(|tid| {
+            let is_bits = typ.is_some_and(|tid| {
                 let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
                 base == BaseType::Bits
             });
@@ -1013,7 +1197,7 @@ fn convert_defval(
         }
         ir::syntax::DefVal::Enum(label) => {
             // Check if this is an OID reference by checking the object's base type.
-            let is_oid = obj.typ.is_some_and(|tid| {
+            let is_oid = typ.is_some_and(|tid| {
                 let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
                 base == BaseType::ObjectIdentifier
             });
@@ -1026,7 +1210,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    obj.def_val_span,
+                    defval_span,
                     format!("DEFVAL OID reference {:?} could not be resolved", label),
                 );
             }
@@ -1044,7 +1228,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    obj.def_val_span,
+                    defval_span,
                     format!("DEFVAL OID reference {:?} could not be resolved", name),
                 );
                 return DefVal::unset();
@@ -1053,7 +1237,7 @@ fn convert_defval(
         ir::syntax::DefVal::OidValue { components } => {
             // Try to resolve the OID from components.
             let raw = format_oid_components(components);
-            if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, obj.def_val_span) {
+            if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, defval_span) {
                 DefVal::oid(oid, raw)
             } else {
                 DefVal::unset()

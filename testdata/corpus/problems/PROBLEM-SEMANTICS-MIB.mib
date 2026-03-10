@@ -95,6 +95,88 @@ problemAugExtra OBJECT-TYPE
     DESCRIPTION "Extra column from augments"
     ::= { problemAugEntry 1 }
 
+-- === AUGMENTS cycle (two rows augmenting each other, neither has INDEX) ===
+
+problemCycleTableA OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemCycleEntryA
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Cycle test table A"
+    ::= { problemSemObjects 5 }
+
+problemCycleEntryA OBJECT-TYPE
+    SYNTAX      ProblemCycleEntryA
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Cycle test entry A - augments B"
+    AUGMENTS { problemCycleEntryB }
+    ::= { problemCycleTableA 1 }
+
+ProblemCycleEntryA ::= SEQUENCE {
+    problemCycleColA     Integer32
+}
+
+problemCycleColA OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Column in cycle table A"
+    ::= { problemCycleEntryA 1 }
+
+problemCycleTableB OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemCycleEntryB
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Cycle test table B"
+    ::= { problemSemObjects 6 }
+
+problemCycleEntryB OBJECT-TYPE
+    SYNTAX      ProblemCycleEntryB
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Cycle test entry B - augments A"
+    AUGMENTS { problemCycleEntryA }
+    ::= { problemCycleTableB 1 }
+
+ProblemCycleEntryB ::= SEQUENCE {
+    problemCycleColB     Integer32
+}
+
+problemCycleColB OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Column in cycle table B"
+    ::= { problemCycleEntryB 1 }
+
+-- === Bare type INDEX ===
+
+problemBareTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ProblemBareEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Table with bare type index"
+    ::= { problemSemObjects 7 }
+
+problemBareEntry OBJECT-TYPE
+    SYNTAX      ProblemBareEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Entry with bare type INTEGER index"
+    INDEX { INTEGER }
+    ::= { problemBareTable 1 }
+
+ProblemBareEntry ::= SEQUENCE {
+    problemBareCol     Integer32
+}
+
+problemBareCol OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Column in bare index table"
+    ::= { problemBareEntry 1 }
+
 -- === Scalars ===
 
 problemScalar1 OBJECT-TYPE

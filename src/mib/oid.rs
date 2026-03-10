@@ -21,6 +21,11 @@ impl Oid {
         Some(Oid(SmallVec::from_slice(&self.0[..self.0.len() - 1])))
     }
 
+    /// Reports whether `prefix` is a prefix of this OID.
+    pub fn has_prefix(&self, prefix: &Oid) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
     /// Returns a child OID with the given arc appended.
     pub fn child(&self, arc: u32) -> Oid {
         let mut arcs = self.0.clone();
@@ -204,5 +209,18 @@ mod tests {
     fn single_arc_parent() {
         let oid: Oid = "1".parse().unwrap();
         assert!(oid.parent().is_none());
+    }
+
+    #[test]
+    fn has_prefix() {
+        let oid: Oid = "1.3.6.1.2.1".parse().unwrap();
+        let prefix: Oid = "1.3.6.1".parse().unwrap();
+        let other: Oid = "1.3.5".parse().unwrap();
+
+        assert!(oid.has_prefix(&prefix));
+        assert!(oid.has_prefix(&oid)); // self is a prefix of self
+        assert!(!prefix.has_prefix(&oid)); // shorter is not prefixed by longer
+        assert!(!oid.has_prefix(&other));
+        assert!(oid.has_prefix(&Oid::default())); // empty prefix matches all
     }
 }

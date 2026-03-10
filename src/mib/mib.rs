@@ -363,6 +363,50 @@ impl Mib {
         append_suffix(base, suffix)
     }
 
+    /// Returns all symbols defined across all modules.
+    /// Iterates modules in order, yielding each module's definitions.
+    pub fn all_symbols(&self) -> Vec<Symbol> {
+        let mut result = Vec::new();
+        for module in &self.modules {
+            result.extend(module.definitions());
+        }
+        result
+    }
+
+    /// Returns all symbols available in a module's scope: own definitions
+    /// first, then imported symbols resolved from their source modules.
+    /// Names that are also own definitions are yielded only once.
+    pub fn available_symbols(&self, mod_id: ModuleId) -> Vec<Symbol> {
+        let module = self.module(mod_id);
+        let mut result = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Own definitions first.
+        for sym in module.definitions() {
+            seen.insert(sym.name(self).to_string());
+            result.push(sym);
+        }
+
+        // Imported symbols in IMPORTS declaration order.
+        for imp in &module.imports {
+            for is in &imp.symbols {
+                if seen.contains(&is.name) {
+                    continue;
+                }
+                seen.insert(is.name.clone());
+                let Some(&source_mod_id) = module.resolved_imports.get(&is.name) else {
+                    continue;
+                };
+                let source = self.module(source_mod_id);
+                if let Some(sym) = source.symbol(&is.name) {
+                    result.push(sym);
+                }
+            }
+        }
+
+        result
+    }
+
     // --- Collection accessors ---
 
     pub fn modules_slice(&self) -> &[ModuleData] {
@@ -467,6 +511,159 @@ impl Mib {
             })
             .map(|(i, _)| ObjectId::new(i as u32))
             .collect()
+    }
+
+    // --- Object table navigation ---
+
+    /// Returns the table object containing a row or column, or None.
+    pub fn object_table(&self, id: ObjectId) -> Option<ObjectId> {
+        let node_id = self.object(id).node()?;
+        let node = self.tree.get(node_id);
+        match node.kind {
+            Kind::Row => {
+                let parent = self.tree.get(node.parent?);
+                parent.object
+            }
+            Kind::Column => {
+                let parent = self.tree.get(node.parent?);
+                let grandparent = self.tree.get(parent.parent?);
+                grandparent.object
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the parent row object for a column, or None.
+    pub fn object_row(&self, id: ObjectId) -> Option<ObjectId> {
+        let node_id = self.object(id).node()?;
+        let node = self.tree.get(node_id);
+        if node.kind != Kind::Column {
+            return None;
+        }
+        let parent = self.tree.get(node.parent?);
+        parent.object
+    }
+
+    /// Returns the row entry for a table, or None.
+    pub fn object_entry(&self, id: ObjectId) -> Option<ObjectId> {
+        let node_id = self.object(id).node()?;
+        let node = self.tree.get(node_id);
+        if node.kind != Kind::Table {
+            return None;
+        }
+        for &child_id in node.children.values() {
+            let child = self.tree.get(child_id);
+            if child.kind == Kind::Row {
+                return child.object;
+            }
+        }
+        None
+    }
+
+    /// Returns column objects for a table or row in arc order, or empty.
+    pub fn object_columns(&self, id: ObjectId) -> Vec<ObjectId> {
+        let Some(node_id) = self.object(id).node() else {
+            return Vec::new();
+        };
+        let node = self.tree.get(node_id);
+        let row_node = match node.kind {
+            Kind::Table => {
+                let mut found = None;
+                for &child_id in node.children.values() {
+                    if self.tree.get(child_id).kind == Kind::Row {
+                        found = Some(child_id);
+                        break;
+                    }
+                }
+                match found {
+                    Some(id) => self.tree.get(id),
+                    None => return Vec::new(),
+                }
+            }
+            Kind::Row => node,
+            _ => return Vec::new(),
+        };
+        let mut cols = Vec::new();
+        for &child_id in row_node.children.values() {
+            let child = self.tree.get(child_id);
+            if let Some(obj_id) = child.object.filter(|_| child.kind == Kind::Column) {
+                cols.push(obj_id);
+            }
+        }
+        cols
+    }
+
+    /// Returns INDEX entries for a row, following AUGMENTS if the row has none.
+    pub fn effective_indexes(&self, id: ObjectId) -> Vec<IndexEntry> {
+        let mut visited = Vec::new();
+        self.effective_indexes_inner(id, &mut visited)
+    }
+
+    fn effective_indexes_inner(
+        &self,
+        id: ObjectId,
+        visited: &mut Vec<ObjectId>,
+    ) -> Vec<IndexEntry> {
+        let obj = self.object(id);
+        let Some(node_id) = obj.node() else {
+            return Vec::new();
+        };
+        if self.tree.get(node_id).kind != Kind::Row {
+            return Vec::new();
+        }
+        if !obj.index.is_empty() {
+            return obj.index.clone();
+        }
+        if let Some(aug_id) = obj.augments {
+            if visited.contains(&id) {
+                return Vec::new();
+            }
+            visited.push(id);
+            return self.effective_indexes_inner(aug_id, visited);
+        }
+        Vec::new()
+    }
+
+    // --- Object kind predicates ---
+
+    /// Returns true if the object is a table.
+    pub fn is_table(&self, id: ObjectId) -> bool {
+        self.object_kind(id) == Kind::Table
+    }
+
+    /// Returns true if the object is a table row (entry).
+    pub fn is_row(&self, id: ObjectId) -> bool {
+        self.object_kind(id) == Kind::Row
+    }
+
+    /// Returns true if the object is a table column.
+    pub fn is_column(&self, id: ObjectId) -> bool {
+        self.object_kind(id) == Kind::Column
+    }
+
+    /// Returns true if the object is a scalar.
+    pub fn is_scalar(&self, id: ObjectId) -> bool {
+        self.object_kind(id) == Kind::Scalar
+    }
+
+    /// Returns true if a column appears in its parent row's effective indexes.
+    pub fn is_index(&self, id: ObjectId) -> bool {
+        if self.object_kind(id) != Kind::Column {
+            return false;
+        }
+        let Some(row_id) = self.object_row(id) else {
+            return false;
+        };
+        self.effective_indexes(row_id)
+            .iter()
+            .any(|idx| idx.object == Some(id))
+    }
+
+    fn object_kind(&self, id: ObjectId) -> Kind {
+        match self.object(id).node() {
+            Some(node_id) => self.tree.get(node_id).kind,
+            None => Kind::Unknown,
+        }
     }
 
     // --- Diagnostics ---
@@ -603,5 +800,131 @@ impl Oid {
         arcs.extend_from_slice(self);
         arcs.extend_from_slice(suffix);
         Oid::from(arcs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mib::module::ModuleData;
+    use crate::mib::object::ObjectData;
+    use crate::mib::typedef::TypeData;
+
+    fn make_mib_with_two_modules() -> Mib {
+        let mut mib = Mib::new();
+
+        // Module A with an object and a type.
+        let mut mod_a = ModuleData::new("MOD-A".to_string());
+        let obj_data = ObjectData::new("objA".to_string());
+        let obj_id = mib.add_object(obj_data);
+        mod_a.add_object("objA", obj_id);
+
+        let type_data = TypeData::new("TypeA".to_string());
+        let type_id = mib.add_type(type_data);
+        mod_a.add_type("TypeA", type_id);
+        let _mod_a_id = mib.add_module(mod_a);
+
+        // Module B with an object.
+        let mut mod_b = ModuleData::new("MOD-B".to_string());
+        let obj_data2 = ObjectData::new("objB".to_string());
+        let obj_id2 = mib.add_object(obj_data2);
+        mod_b.add_object("objB", obj_id2);
+        let _mod_b_id = mib.add_module(mod_b);
+
+        mib
+    }
+
+    #[test]
+    fn all_symbols_across_modules() {
+        let mib = make_mib_with_two_modules();
+        let syms = mib.all_symbols();
+        let names: Vec<&str> = syms.iter().map(|s| s.name(&mib)).collect();
+
+        assert!(names.contains(&"objA"));
+        assert!(names.contains(&"TypeA"));
+        assert!(names.contains(&"objB"));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn available_symbols_own_only() {
+        let mib = make_mib_with_two_modules();
+        let mod_a_id = *mib.module_by_name.get("MOD-A").unwrap();
+
+        let syms = mib.available_symbols(mod_a_id);
+        let names: Vec<&str> = syms.iter().map(|s| s.name(&mib)).collect();
+
+        assert!(names.contains(&"objA"));
+        assert!(names.contains(&"TypeA"));
+        assert!(!names.contains(&"objB"));
+    }
+
+    #[test]
+    fn available_symbols_with_imports() {
+        let mut mib = Mib::new();
+
+        // Source module with an object.
+        let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
+        let obj_data = ObjectData::new("srcObj".to_string());
+        let obj_id = mib.add_object(obj_data);
+        source_mod.add_object("srcObj", obj_id);
+        let source_mod_id = mib.add_module(source_mod);
+
+        // Consumer module that imports srcObj.
+        let mut consumer = ModuleData::new("CONSUMER-MIB".to_string());
+        let own_type = TypeData::new("OwnType".to_string());
+        let own_type_id = mib.add_type(own_type);
+        consumer.add_type("OwnType", own_type_id);
+        consumer.imports.push(crate::mib::types::Import {
+            module: "SOURCE-MIB".to_string(),
+            symbols: vec![crate::mib::types::ImportSymbol {
+                name: "srcObj".to_string(),
+                span: crate::types::Span::SYNTHETIC,
+            }],
+        });
+        consumer
+            .resolved_imports
+            .insert("srcObj".to_string(), source_mod_id);
+        let consumer_id = mib.add_module(consumer);
+
+        let syms = mib.available_symbols(consumer_id);
+        let names: Vec<&str> = syms.iter().map(|s| s.name(&mib)).collect();
+
+        assert_eq!(names, vec!["OwnType", "srcObj"]);
+    }
+
+    #[test]
+    fn available_symbols_dedup_own_over_import() {
+        let mut mib = Mib::new();
+
+        // Source module defines "shared".
+        let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
+        let src_type = TypeData::new("shared".to_string());
+        let src_type_id = mib.add_type(src_type);
+        source_mod.add_type("shared", src_type_id);
+        let source_mod_id = mib.add_module(source_mod);
+
+        // Consumer also defines "shared" and imports it.
+        let mut consumer = ModuleData::new("CONSUMER-MIB".to_string());
+        let own_type = TypeData::new("shared".to_string());
+        let own_type_id = mib.add_type(own_type);
+        consumer.add_type("shared", own_type_id);
+        consumer.imports.push(crate::mib::types::Import {
+            module: "SOURCE-MIB".to_string(),
+            symbols: vec![crate::mib::types::ImportSymbol {
+                name: "shared".to_string(),
+                span: crate::types::Span::SYNTHETIC,
+            }],
+        });
+        consumer
+            .resolved_imports
+            .insert("shared".to_string(), source_mod_id);
+        let consumer_id = mib.add_module(consumer);
+
+        let syms = mib.available_symbols(consumer_id);
+        let names: Vec<&str> = syms.iter().map(|s| s.name(&mib)).collect();
+
+        // "shared" appears only once (own definition wins).
+        assert_eq!(names, vec!["shared"]);
     }
 }

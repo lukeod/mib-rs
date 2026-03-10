@@ -109,6 +109,11 @@ impl NodeData {
     pub fn capability(&self) -> Option<CapabilityId> {
         self.capability
     }
+
+    /// Reports whether this is the unnamed root node (no parent).
+    pub fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
 }
 
 /// Arena-allocated OID tree.
@@ -402,5 +407,15 @@ mod tests {
         let tree = OidTree::new();
         let root = tree.root();
         assert!(tree.oid_of(root).is_empty());
+    }
+
+    #[test]
+    fn is_root() {
+        let mut tree = OidTree::new();
+        let root = tree.root();
+        let child = tree.get_or_create_child(root, 1);
+
+        assert!(tree.get(root).is_root());
+        assert!(!tree.get(child).is_root());
     }
 }

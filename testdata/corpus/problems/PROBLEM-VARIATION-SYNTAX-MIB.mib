@@ -1,0 +1,56 @@
+PROBLEM-VARIATION-SYNTAX-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    RowStatus
+        FROM SNMPv2-TC
+    AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+problemVariationSyntaxMIB MODULE-IDENTITY
+    LAST-UPDATED "202603100000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "Exercises AGENT-CAPABILITIES VARIATION with SYNTAX, WRITE-SYNTAX, and DEFVAL"
+    REVISION     "202603100000Z"
+    DESCRIPTION  "Initial version"
+    ::= { enterprises 99998 42 }
+
+problemVariationObjects OBJECT IDENTIFIER ::= { problemVariationSyntaxMIB 1 }
+
+problemVarStatus OBJECT-TYPE
+    SYNTAX      RowStatus
+    MAX-ACCESS  read-create
+    STATUS      current
+    DESCRIPTION "Row status for variation syntax test"
+    ::= { problemVariationObjects 1 }
+
+problemVarValue OBJECT-TYPE
+    SYNTAX      Integer32 (0..100)
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "Integer object for variation syntax test"
+    ::= { problemVariationObjects 2 }
+
+problemVarCapability AGENT-CAPABILITIES
+    PRODUCT-RELEASE "variation syntax test 1.0"
+    STATUS          current
+    DESCRIPTION     "Capability with VARIATION SYNTAX, WRITE-SYNTAX, and DEFVAL"
+    SUPPORTS        PROBLEM-VARIATION-SYNTAX-MIB
+        INCLUDES    { }
+
+        VARIATION   problemVarStatus
+            SYNTAX      INTEGER { active(1), notInService(2) }
+            WRITE-SYNTAX INTEGER { createAndGo(4), destroy(6) }
+            DESCRIPTION "Restricted row status"
+
+        VARIATION   problemVarValue
+            SYNTAX      Integer32 (0..50)
+            WRITE-SYNTAX Integer32 (1..25)
+            DEFVAL      { 10 }
+            DESCRIPTION "Restricted range with default"
+
+    ::= { problemVariationObjects 3 }
+
+END

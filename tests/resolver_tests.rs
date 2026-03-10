@@ -511,6 +511,259 @@ fn problems_corpus_no_panics() {
     );
 }
 
+// --- ComplianceObject syntax/write_syntax tests ---
+
+#[test]
+fn compliance_object_syntax_and_write_syntax() {
+    // DIFFSERV-MIB diffServMIBFullCompliance has OBJECT clauses with both
+    // SYNTAX and WRITE-SYNTAX refinements (e.g. diffServDataPathStatus).
+    let r = load_corpus(&["DIFFSERV-MIB"]);
+    let mib = &r.mib;
+
+    let comp_id = mib
+        .compliance_by_name("diffServMIBFullCompliance")
+        .expect("compliance not found");
+    let comp = mib.compliance(comp_id);
+
+    // Find the self-module (DIFFSERV-MIB) compliance module.
+    let self_mod = comp
+        .modules()
+        .iter()
+        .find(|m| m.module_name.is_empty() || m.module_name == "DIFFSERV-MIB")
+        .expect("self module not found in compliance");
+
+    // diffServDataPathStatus: SYNTAX INTEGER { active(1) },
+    //                         WRITE-SYNTAX INTEGER { createAndGo(4), destroy(6) }
+    let obj = self_mod
+        .objects
+        .iter()
+        .find(|o| o.object == "diffServDataPathStatus")
+        .expect("diffServDataPathStatus not found in compliance objects");
+
+    let syntax = obj.syntax.as_ref().expect("syntax should be resolved");
+    assert!(
+        !syntax.enums.is_empty(),
+        "syntax should have enum values"
+    );
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "active" && e.value == 1),
+        "syntax should contain active(1), got: {:?}",
+        syntax.enums
+    );
+
+    let ws = obj
+        .write_syntax
+        .as_ref()
+        .expect("write_syntax should be resolved");
+    assert!(
+        ws.enums.len() >= 2,
+        "write_syntax should have 2+ enum values, got {}",
+        ws.enums.len()
+    );
+    assert!(
+        ws.enums.iter().any(|e| e.label == "createAndGo" && e.value == 4),
+        "write_syntax should contain createAndGo(4), got: {:?}",
+        ws.enums
+    );
+    assert!(
+        ws.enums.iter().any(|e| e.label == "destroy" && e.value == 6),
+        "write_syntax should contain destroy(6), got: {:?}",
+        ws.enums
+    );
+}
+
+#[test]
+fn compliance_object_syntax_with_size_constraint() {
+    // DIFFSERV-MIB diffServMIBFullCompliance has:
+    //   OBJECT diffServMultiFieldClfrDstAddr
+    //   SYNTAX InetAddress (SIZE(0|4|16))
+    let r = load_corpus(&["DIFFSERV-MIB"]);
+    let mib = &r.mib;
+
+    let comp_id = mib
+        .compliance_by_name("diffServMIBFullCompliance")
+        .expect("compliance not found");
+    let comp = mib.compliance(comp_id);
+
+    let self_mod = comp
+        .modules()
+        .iter()
+        .find(|m| m.module_name.is_empty() || m.module_name == "DIFFSERV-MIB")
+        .expect("self module not found");
+
+    let obj = self_mod
+        .objects
+        .iter()
+        .find(|o| o.object == "diffServMultiFieldClfrDstAddr")
+        .expect("diffServMultiFieldClfrDstAddr not found");
+
+    let syntax = obj.syntax.as_ref().expect("syntax should be resolved");
+    assert!(
+        syntax.type_id.is_some(),
+        "syntax should have a resolved type"
+    );
+    assert!(
+        !syntax.sizes.is_empty(),
+        "syntax should have size constraints"
+    );
+    // SIZE(0|4|16) produces three single-value ranges
+    assert!(
+        syntax.sizes.iter().any(|r| r.min == 0 && r.max == 0),
+        "should have size 0"
+    );
+    assert!(
+        syntax.sizes.iter().any(|r| r.min == 4 && r.max == 4),
+        "should have size 4"
+    );
+    assert!(
+        syntax.sizes.iter().any(|r| r.min == 16 && r.max == 16),
+        "should have size 16"
+    );
+
+    // This object has SYNTAX only, no WRITE-SYNTAX
+    assert!(
+        obj.write_syntax.is_none(),
+        "write_syntax should be None for this object"
+    );
+}
+
+#[test]
+fn compliance_object_syntax_only_enum() {
+    // DIFFSERV-MIB diffServMIBFullCompliance has:
+    //   OBJECT diffServMultiFieldClfrAddrType
+    //   SYNTAX INTEGER { unknown(0), ipv4(1), ipv6(2) }
+    // (no WRITE-SYNTAX)
+    let r = load_corpus(&["DIFFSERV-MIB"]);
+    let mib = &r.mib;
+
+    let comp_id = mib
+        .compliance_by_name("diffServMIBFullCompliance")
+        .expect("compliance not found");
+    let comp = mib.compliance(comp_id);
+
+    let self_mod = comp
+        .modules()
+        .iter()
+        .find(|m| m.module_name.is_empty() || m.module_name == "DIFFSERV-MIB")
+        .expect("self module not found");
+
+    let obj = self_mod
+        .objects
+        .iter()
+        .find(|o| o.object == "diffServMultiFieldClfrAddrType")
+        .expect("diffServMultiFieldClfrAddrType not found");
+
+    let syntax = obj.syntax.as_ref().expect("syntax should be resolved");
+    assert_eq!(syntax.enums.len(), 3, "should have 3 enum values");
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "unknown" && e.value == 0),
+        "should have unknown(0)"
+    );
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "ipv4" && e.value == 1),
+        "should have ipv4(1)"
+    );
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "ipv6" && e.value == 2),
+        "should have ipv6(2)"
+    );
+
+    assert!(obj.write_syntax.is_none(), "write_syntax should be None");
+}
+
+// --- ObjectVariation syntax/write_syntax/defval tests ---
+
+#[test]
+fn variation_syntax_and_write_syntax() {
+    // PROBLEM-VARIATION-SYNTAX-MIB has VARIATION problemVarStatus with:
+    //   SYNTAX INTEGER { active(1), notInService(2) }
+    //   WRITE-SYNTAX INTEGER { createAndGo(4), destroy(6) }
+    let r = load_problems(&["PROBLEM-VARIATION-SYNTAX-MIB"]);
+    let mib = &r.mib;
+
+    let cap_id = mib
+        .capability_by_name("problemVarCapability")
+        .expect("capability not found");
+    let cap = mib.capability(cap_id);
+    assert_eq!(cap.supports().len(), 1);
+
+    let support = &cap.supports()[0];
+    let var = support
+        .object_variations
+        .iter()
+        .find(|v| v.object == "problemVarStatus")
+        .expect("problemVarStatus variation not found");
+
+    let syntax = var.syntax.as_ref().expect("syntax should be resolved");
+    assert_eq!(syntax.enums.len(), 2, "syntax should have 2 enum values");
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "active" && e.value == 1),
+        "should have active(1)"
+    );
+    assert!(
+        syntax.enums.iter().any(|e| e.label == "notInService" && e.value == 2),
+        "should have notInService(2)"
+    );
+
+    let ws = var
+        .write_syntax
+        .as_ref()
+        .expect("write_syntax should be resolved");
+    assert_eq!(ws.enums.len(), 2, "write_syntax should have 2 enum values");
+    assert!(
+        ws.enums.iter().any(|e| e.label == "createAndGo" && e.value == 4),
+        "should have createAndGo(4)"
+    );
+    assert!(
+        ws.enums.iter().any(|e| e.label == "destroy" && e.value == 6),
+        "should have destroy(6)"
+    );
+}
+
+#[test]
+fn variation_syntax_with_range_and_defval() {
+    // PROBLEM-VARIATION-SYNTAX-MIB has VARIATION problemVarValue with:
+    //   SYNTAX Integer32 (0..50)
+    //   WRITE-SYNTAX Integer32 (1..25)
+    //   DEFVAL { 10 }
+    let r = load_problems(&["PROBLEM-VARIATION-SYNTAX-MIB"]);
+    let mib = &r.mib;
+
+    let cap_id = mib
+        .capability_by_name("problemVarCapability")
+        .expect("capability not found");
+    let cap = mib.capability(cap_id);
+    let support = &cap.supports()[0];
+
+    let var = support
+        .object_variations
+        .iter()
+        .find(|v| v.object == "problemVarValue")
+        .expect("problemVarValue variation not found");
+
+    // SYNTAX Integer32 (0..50)
+    let syntax = var.syntax.as_ref().expect("syntax should be resolved");
+    assert!(syntax.type_id.is_some(), "syntax should have resolved type");
+    assert_eq!(syntax.ranges.len(), 1, "syntax should have 1 range");
+    assert_eq!(syntax.ranges[0].min, 0);
+    assert_eq!(syntax.ranges[0].max, 50);
+
+    // WRITE-SYNTAX Integer32 (1..25)
+    let ws = var
+        .write_syntax
+        .as_ref()
+        .expect("write_syntax should be resolved");
+    assert!(ws.type_id.is_some(), "write_syntax should have resolved type");
+    assert_eq!(ws.ranges.len(), 1, "write_syntax should have 1 range");
+    assert_eq!(ws.ranges[0].min, 1);
+    assert_eq!(ws.ranges[0].max, 25);
+
+    // DEFVAL { 10 }
+    let dv = var.def_val.as_ref().expect("def_val should be resolved");
+    assert!(!dv.is_unset(), "def_val should not be unset");
+    assert_eq!(dv.to_string(), "10");
+}
+
 // --- SMIv1 tests ---
 
 #[test]
@@ -730,4 +983,174 @@ fn timestamp_normalization_in_module_preference() {
             module.name()
         );
     }
+}
+
+// --- Object table navigation tests ---
+
+#[test]
+fn table_navigation_ifTable() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    // ifTable is a table
+    let table_id = mib.object_by_name("ifTable").expect("ifTable not found");
+    assert!(mib.is_table(table_id));
+    assert!(!mib.is_row(table_id));
+    assert!(!mib.is_column(table_id));
+    assert!(!mib.is_scalar(table_id));
+
+    // Entry returns the row
+    let entry_id = mib.object_entry(table_id).expect("ifEntry not found");
+    assert_eq!(mib.object(entry_id).name(), "ifEntry");
+    assert!(mib.is_row(entry_id));
+
+    // Row's table() returns the table
+    let back_to_table = mib.object_table(entry_id).expect("table from row");
+    assert_eq!(back_to_table, table_id);
+
+    // Columns of the table
+    let cols = mib.object_columns(table_id);
+    assert!(!cols.is_empty(), "ifTable should have columns");
+
+    // Columns of the row should be the same
+    let cols_from_row = mib.object_columns(entry_id);
+    assert_eq!(cols, cols_from_row);
+
+    // First column should be ifIndex
+    let first_col = mib.object(cols[0]);
+    assert_eq!(first_col.name(), "ifIndex");
+    assert!(mib.is_column(cols[0]));
+
+    // Column's row() returns the row
+    let col_row = mib.object_row(cols[0]).expect("row from column");
+    assert_eq!(col_row, entry_id);
+
+    // Column's table() returns the table
+    let col_table = mib.object_table(cols[0]).expect("table from column");
+    assert_eq!(col_table, table_id);
+
+    // ifIndex is an index column
+    assert!(mib.is_index(cols[0]), "ifIndex should be an index");
+
+    // Sequence type name on the table (stored on table in mib-rs)
+    assert_eq!(mib.object(table_id).sequence_type_name(), "IfEntry");
+}
+
+#[test]
+fn table_navigation_scalars() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    // ifNumber is a scalar
+    let scalar_id = mib.object_by_name("ifNumber").expect("ifNumber not found");
+    assert!(mib.is_scalar(scalar_id));
+    assert!(!mib.is_table(scalar_id));
+
+    // Scalars have no table/row/entry/columns
+    assert!(mib.object_table(scalar_id).is_none());
+    assert!(mib.object_row(scalar_id).is_none());
+    assert!(mib.object_entry(scalar_id).is_none());
+    assert!(mib.object_columns(scalar_id).is_empty());
+    assert!(!mib.is_index(scalar_id));
+}
+
+#[test]
+fn effective_indexes_basic() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    let entry_id = mib.object_by_name("ifEntry").expect("ifEntry not found");
+    let indexes = mib.effective_indexes(entry_id);
+    assert_eq!(indexes.len(), 1, "ifEntry should have 1 index");
+    let idx_obj = indexes[0]
+        .object
+        .expect("index should reference an object");
+    assert_eq!(mib.object(idx_obj).name(), "ifIndex");
+}
+
+#[test]
+fn effective_indexes_augments() {
+    // ifXEntry AUGMENTS ifEntry, so effective indexes should come from ifEntry
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    let ifx_entry = mib.object_by_name("ifXEntry").expect("ifXEntry not found");
+    assert!(mib.is_row(ifx_entry));
+
+    // ifXEntry has no INDEX of its own
+    assert!(
+        mib.object(ifx_entry).index().is_empty(),
+        "ifXEntry should have no direct INDEX"
+    );
+
+    // But effective indexes follow the AUGMENTS chain
+    let indexes = mib.effective_indexes(ifx_entry);
+    assert_eq!(indexes.len(), 1, "ifXEntry effective indexes should have 1 entry");
+    let idx_obj = indexes[0]
+        .object
+        .expect("index should reference an object");
+    assert_eq!(mib.object(idx_obj).name(), "ifIndex");
+}
+
+#[test]
+fn non_index_column() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    // ifDescr is a column but not an index
+    let descr_id = mib.object_by_name("ifDescr").expect("ifDescr not found");
+    assert!(mib.is_column(descr_id));
+    assert!(!mib.is_index(descr_id), "ifDescr should not be an index");
+}
+
+#[test]
+fn effective_indexes_augments_cycle() {
+    let r = load_problems(&["PROBLEM-SEMANTICS-MIB"]);
+    let mib = &r.mib;
+
+    // Two rows that AUGMENT each other, neither has INDEX.
+    let entry_a = mib
+        .object_by_name("problemCycleEntryA")
+        .expect("problemCycleEntryA not found");
+    let entry_b = mib
+        .object_by_name("problemCycleEntryB")
+        .expect("problemCycleEntryB not found");
+    assert!(mib.is_row(entry_a));
+    assert!(mib.is_row(entry_b));
+
+    // effective_indexes should return empty, not loop forever.
+    let indexes_a = mib.effective_indexes(entry_a);
+    assert!(
+        indexes_a.is_empty(),
+        "AUGMENTS cycle should yield empty indexes, got {}",
+        indexes_a.len()
+    );
+    let indexes_b = mib.effective_indexes(entry_b);
+    assert!(
+        indexes_b.is_empty(),
+        "AUGMENTS cycle should yield empty indexes, got {}",
+        indexes_b.len()
+    );
+}
+
+#[test]
+fn effective_indexes_bare_type() {
+    let r = load_problems(&["PROBLEM-SEMANTICS-MIB"]);
+    let mib = &r.mib;
+
+    let entry = mib
+        .object_by_name("problemBareEntry")
+        .expect("problemBareEntry not found");
+    assert!(mib.is_row(entry));
+
+    let indexes = mib.effective_indexes(entry);
+    assert_eq!(indexes.len(), 1, "bare type table should have 1 index entry");
+    assert!(
+        indexes[0].object.is_none(),
+        "bare type index should have no object reference"
+    );
+    assert_eq!(
+        indexes[0].type_name, "INTEGER",
+        "bare type index should preserve type name"
+    );
 }
