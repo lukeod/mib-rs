@@ -1,7 +1,7 @@
 // Integration tests: parse the shared MIB corpus and verify no parse errors.
 
-use gomib::ast::Definition;
-use gomib::types::{DiagCode, DiagnosticConfig};
+use mib_rs::ast::Definition;
+use mib_rs::types::{DiagCode, DiagnosticConfig};
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
@@ -33,12 +33,12 @@ fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn parse_file(path: &Path) -> Vec<gomib::ast::Module> {
+fn parse_file(path: &Path) -> Vec<mib_rs::ast::Module> {
     let content = std::fs::read(path).unwrap();
-    gomib::parser::parse(&content, DiagnosticConfig::default())
+    mib_rs::parser::parse(&content, DiagnosticConfig::default())
 }
 
-fn parse_errors(modules: &[gomib::ast::Module]) -> Vec<String> {
+fn parse_errors(modules: &[mib_rs::ast::Module]) -> Vec<String> {
     modules
         .iter()
         .flat_map(|m| m.diagnostics.iter())
@@ -370,7 +370,7 @@ Counter64 ::= [APPLICATION 6] IMPLICIT INTEGER (0..18446744073709551615)
 Unsigned32 ::= [APPLICATION 2] IMPLICIT INTEGER (0..4294967295)
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
     assert_eq!(modules[0].body.len(), 7);
@@ -396,7 +396,7 @@ testObj OBJECT-TYPE
     ::= { test 1 }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -404,7 +404,7 @@ END
         Definition::ObjectType(d) => {
             let syntax = d.syntax.as_ref().unwrap();
             match &syntax.syntax {
-                gomib::ast::TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                mib_rs::ast::TypeSyntax::IntegerEnum { named_numbers, .. } => {
                     assert_eq!(named_numbers.len(), 3, "should parse all 3 named numbers");
                     assert_eq!(named_numbers[0].name.name, "alpha");
                     assert_eq!(named_numbers[1].name.name, "beta");
@@ -426,13 +426,13 @@ TestBits ::= TEXTUAL-CONVENTION
     SYNTAX BITS { alpha(0) beta(1) gamma(2) }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
     match &modules[0].body[0] {
         Definition::TextualConvention(d) => match &d.syntax.syntax {
-            gomib::ast::TypeSyntax::Bits { named_bits, .. } => {
+            mib_rs::ast::TypeSyntax::Bits { named_bits, .. } => {
                 assert_eq!(named_bits.len(), 3);
             }
             other => panic!("expected Bits, got {:?}", other),
@@ -447,7 +447,7 @@ fn tagged_type_with_constraint() {
 TestTagged ::= [APPLICATION 0] IMPLICIT OCTET STRING (SIZE (4))
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -456,11 +456,11 @@ END
             assert_eq!(d.name.name, "TestTagged");
             // Should be Tagged -> Constrained -> OctetString
             match &d.syntax {
-                gomib::ast::TypeSyntax::Tagged { underlying, .. } => {
+                mib_rs::ast::TypeSyntax::Tagged { underlying, .. } => {
                     assert!(
                         matches!(
                             underlying.as_ref(),
-                            gomib::ast::TypeSyntax::Constrained { .. }
+                            mib_rs::ast::TypeSyntax::Constrained { .. }
                         ),
                         "expected constrained underlying type"
                     );
@@ -489,7 +489,7 @@ testCompliance MODULE-COMPLIANCE
     ::= { test 1 }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -519,7 +519,7 @@ testAgent AGENT-CAPABILITIES
     ::= { test 1 }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -547,7 +547,7 @@ anotherGood OBJECT-TYPE
     ::= { test 2 }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
 
     // Should have recovered and parsed subsequent definitions
@@ -596,7 +596,7 @@ oidDef OBJECT-TYPE
     ::= { test 4 }
 END
 "#;
-    let modules = gomib::parser::parse(input, DiagnosticConfig::default());
+    let modules = mib_rs::parser::parse(input, DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
     assert_eq!(modules[0].body.len(), 4);

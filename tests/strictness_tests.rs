@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::object::ObjectData;
-use gomib::mib::{Mib, NodeId, UnresolvedKind};
-use gomib::source::{dir_source, multi_source};
-use gomib::types::{BaseType, DiagCode, DiagnosticConfig, ResolverStrictness, Severity};
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::object::ObjectData;
+use mib_rs::mib::{Mib, NodeId, UnresolvedKind};
+use mib_rs::source::{dir_source, multi_source};
+use mib_rs::types::{BaseType, DiagCode, DiagnosticConfig, ResolverStrictness, Severity};
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")

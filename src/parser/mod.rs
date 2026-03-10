@@ -5,7 +5,7 @@ use crate::lexer::{Lexer, Token, TokenKind};
 use crate::types::{
     Access, AccessKeyword, ByteOffset, DiagCode, DiagnosticConfig, Span, SpanDiagnostic, Status,
 };
-use tracing::{debug, trace};
+use tracing::{debug, debug_span, info_span, trace};
 
 type TcBody = (
     Option<QuotedString>,
@@ -53,7 +53,11 @@ impl<'src> Parser<'src> {
             next_non_comment(&mut lexer),
         ];
 
-        debug!("parser initialized");
+        debug!(
+            target: "mib_rs::parser",
+            component = "parser",
+            "parser initialized",
+        );
 
         Parser {
             source,
@@ -409,7 +413,12 @@ impl<'src> Parser<'src> {
             Ok(name) => name,
             Err(diag) => {
                 self.record_parse_error(diag);
-                debug!("failed to parse module header");
+                debug!(
+                    target: "mib_rs::parser",
+                    component = "parser",
+                    reason = "module_header_parse_failed",
+                    "failed to parse module header",
+                );
                 let span = Span::new(start, self.current_span().end);
                 return Module {
                     name: Ident {
@@ -424,17 +433,43 @@ impl<'src> Parser<'src> {
             }
         };
 
-        debug!(module = %name.name, "parsing module");
+        let module_name = name.name.clone();
+        let module_span = debug_span!(
+            target: "mib_rs::parser",
+            "parse_module",
+            component = "parser",
+            module = %module_name,
+        );
+        let _module_guard = module_span.enter();
+
+        debug!(
+            target: "mib_rs::parser",
+            component = "parser",
+            module = %module_name,
+            "parsing module",
+        );
 
         let mut imports = Vec::new();
         if self.check(TokenKind::KwImports) {
             match self.parse_imports() {
                 Ok(imp) => {
-                    debug!(module = %name.name, count = imp.len(), "parsed imports");
+                    debug!(
+                        target: "mib_rs::parser",
+                        component = "parser",
+                        module = %module_name,
+                        import_count = imp.len(),
+                        "parsed imports",
+                    );
                     imports = imp;
                 }
                 Err(diag) => {
-                    debug!(module = %name.name, "failed to parse imports");
+                    debug!(
+                        target: "mib_rs::parser",
+                        component = "parser",
+                        module = %module_name,
+                        reason = "imports_parse_failed",
+                        "failed to parse imports",
+                    );
                     self.record_parse_error(diag);
                 }
             }
@@ -444,6 +479,9 @@ impl<'src> Parser<'src> {
         while !self.check(TokenKind::KwEnd) && !self.is_eof() {
             let pos_before = self.current_span().start;
             trace!(
+                target: "mib_rs::parser",
+                component = "parser",
+                phase = "definitions",
                 offset = pos_before.0,
                 first = %self.peek().kind.display_name(),
                 second = %self.peek_nth(1).kind.display_name(),
@@ -471,9 +509,11 @@ impl<'src> Parser<'src> {
         let diagnostics = self.collect_module_diagnostics(lex_diags_before);
 
         debug!(
+            target: "mib_rs::parser",
             module = %name.name,
-            definitions = body.len(),
-            diagnostics = diagnostics.len(),
+            component = "parser",
+            definition_count = body.len(),
+            diagnostic_count = diagnostics.len(),
             "parsing complete",
         );
 
@@ -2292,8 +2332,24 @@ fn strip_string_literal(s: &str) -> &str {
 
 /// Parse source bytes into AST modules.
 pub fn parse(source: &[u8], diag_config: DiagnosticConfig) -> Vec<Module> {
+    let span = info_span!(
+        target: "mib_rs::parser",
+        "parse",
+        component = "parser",
+        byte_count = source.len(),
+        reporting = ?diag_config.reporting,
+    );
+    let _guard = span.enter();
+
     let mut parser = Parser::new(source, diag_config);
-    parser.parse_modules()
+    let modules = parser.parse_modules();
+    debug!(
+        target: "mib_rs::parser",
+        component = "parser",
+        module_count = modules.len(),
+        "parse complete",
+    );
+    modules
 }
 
 #[cfg(test)]

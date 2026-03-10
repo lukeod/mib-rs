@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use tracing::trace;
+
 use crate::types::{DiagCode, Language, Span};
 
 use super::context::{
@@ -109,6 +111,16 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             .unwrap_or_default();
 
         if let Some(source_id) = find_candidate_with_all_symbols(ctx, &candidates, &non_macro) {
+            trace!(
+                target: "mib_rs::resolver",
+                component = "resolver",
+                phase = "imports",
+                module = %importing_module,
+                source_module = %from_module,
+                symbol_count = non_macro.len(),
+                resolution = "direct",
+                "resolved import group",
+            );
             // All symbols found in this candidate.
             for (name, _) in &non_macro {
                 ctx.module_imports
@@ -121,30 +133,62 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
 
         // Fallback chain (constrained, Normal+).
         if ctx.strictness.allow_constrained_fallbacks()
-            && let Some(alias) = base_module_import_alias(from_module) {
-                let alias_candidates = ctx.module_index.get(alias).cloned().unwrap_or_default();
-                if let Some(source_id) =
-                    find_candidate_with_all_symbols(ctx, &alias_candidates, &non_macro)
-                {
-                    for (name, _) in &non_macro {
-                        ctx.module_imports
-                            .entry(ir_mod)
-                            .or_default()
-                            .insert(name.to_string(), source_id);
-                    }
-                    continue;
+            && let Some(alias) = base_module_import_alias(from_module)
+        {
+            let alias_candidates = ctx.module_index.get(alias).cloned().unwrap_or_default();
+            if let Some(source_id) =
+                find_candidate_with_all_symbols(ctx, &alias_candidates, &non_macro)
+            {
+                trace!(
+                    target: "mib_rs::resolver",
+                    component = "resolver",
+                    phase = "imports",
+                    module = %importing_module,
+                    source_module = %from_module,
+                    alias_module = %alias,
+                    symbol_count = non_macro.len(),
+                    resolution = "alias",
+                    "resolved import group via alias",
+                );
+                for (name, _) in &non_macro {
+                    ctx.module_imports
+                        .entry(ir_mod)
+                        .or_default()
+                        .insert(name.to_string(), source_id);
                 }
+                continue;
             }
+        }
 
         // Deterministic: explicit import forwarding remains enabled at every
         // strictness level.
         if try_import_forwarding(ctx, ir_mod, &candidates, &non_macro) {
+            trace!(
+                target: "mib_rs::resolver",
+                component = "resolver",
+                phase = "imports",
+                module = %importing_module,
+                source_module = %from_module,
+                symbol_count = non_macro.len(),
+                resolution = "forwarded",
+                "resolved import group via forwarding",
+            );
             continue;
         }
 
         // Deterministic per symbol: keep valid symbols from a mixed import
         // group even when some peers are missing.
         if !candidates.is_empty() {
+            trace!(
+                target: "mib_rs::resolver",
+                component = "resolver",
+                phase = "imports",
+                module = %importing_module,
+                source_module = %from_module,
+                symbol_count = non_macro.len(),
+                resolution = "partial",
+                "partially resolved import group",
+            );
             try_partial_resolution(
                 ctx,
                 ir_mod,
@@ -360,9 +404,10 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
 
             let definer = resolve_ultimate_definer(ctx, start, &symbol);
             if definer != start
-                && let Some(imports) = ctx.module_imports.get_mut(&mod_id) {
-                    imports.insert(symbol, definer);
-                }
+                && let Some(imports) = ctx.module_imports.get_mut(&mod_id)
+            {
+                imports.insert(symbol, definer);
+            }
         }
     }
 }
@@ -375,9 +420,10 @@ fn resolve_ultimate_definer(ctx: &ResolverContext, start: IrModuleId, symbol: &s
             return current; // cycle
         }
         if let Some(defs) = ctx.module_def_names.get(&current)
-            && defs.contains(symbol) {
-                return current;
-            }
+            && defs.contains(symbol)
+        {
+            return current;
+        }
         if let Some(next) = ctx
             .module_imports
             .get(&current)

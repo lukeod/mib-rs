@@ -212,25 +212,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gomib"
-version = "0.1.0"
-dependencies = [
- "clap",
- "dashmap",
- "dirs",
- "petgraph",
- "pretty_assertions",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "thiserror",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +301,25 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "mib-rs"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dashmap",
+ "dirs",
+ "petgraph",
+ "pretty_assertions",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
 
 [[package]]
 name = "nu-ansi-term"

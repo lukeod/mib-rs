@@ -2,13 +2,13 @@ use std::process;
 
 use clap::Parser;
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::Mib;
-use gomib::source::dir_source;
-use gomib::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::Mib;
+use mib_rs::source::dir_source;
+use mib_rs::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
 
 #[derive(Parser)]
-#[command(name = "gomib", about = "SNMP MIB parser and resolver")]
+#[command(name = "mib-rs", about = "SNMP MIB parser and resolver")]
 struct Cli {
     /// MIB search paths (repeatable). If none given, uses system paths.
     #[arg(short = 'p', long = "path", global = true)]
@@ -139,7 +139,7 @@ fn main() {
     process::exit(exit_code);
 }
 
-fn build_sources(paths: &[String]) -> Vec<Box<dyn gomib::source::Source>> {
+fn build_sources(paths: &[String]) -> Vec<Box<dyn mib_rs::source::Source>> {
     let mut sources = Vec::new();
     for p in paths {
         match dir_source(p) {
@@ -293,7 +293,7 @@ fn cmd_get(
     0
 }
 
-fn print_node_detail(mib: &Mib, node_id: gomib::mib::NodeId, full: bool) {
+fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
     let node = mib.tree().get(node_id);
     let oid = mib.tree().oid_of(node_id);
 
@@ -376,7 +376,7 @@ fn print_node_detail(mib: &Mib, node_id: gomib::mib::NodeId, full: bool) {
     }
 }
 
-fn print_tree(mib: &Mib, node_id: gomib::mib::NodeId, depth: usize, max_depth: usize) {
+fn print_tree(mib: &Mib, node_id: mib_rs::mib::NodeId, depth: usize, max_depth: usize) {
     if depth > max_depth {
         return;
     }
@@ -409,7 +409,7 @@ fn cmd_list(paths: &[String], count: bool) -> i32 {
 
     let all_sources = if use_system {
         let mut s = sources;
-        s.extend(gomib::searchpath::discover_system_sources());
+        s.extend(mib_rs::searchpath::discover_system_sources());
         s
     } else {
         sources
@@ -451,7 +451,7 @@ fn cmd_paths(paths: &[String]) -> i32 {
             println!("{p}");
         }
     } else {
-        let system = gomib::searchpath::discover_system_paths();
+        let system = mib_rs::searchpath::discover_system_paths();
         if system.is_empty() {
             eprintln!("no system MIB paths found");
         } else {
@@ -524,9 +524,10 @@ fn cmd_find(
             let node = mib.tree().get(node_id);
             let k = node.kind();
             if let Some(want) = kind_match
-                && k != want {
-                    continue;
-                }
+                && k != want
+            {
+                continue;
+            }
             let oid = mib.tree().oid_of(node_id);
             let mod_name = obj
                 .module()

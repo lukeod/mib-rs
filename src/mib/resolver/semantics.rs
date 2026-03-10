@@ -1,6 +1,7 @@
 use crate::ir;
 use crate::mib::Oid;
 use crate::types::{Access, BaseType, Kind, Span};
+use tracing::trace;
 
 use super::super::capability::CapabilityData;
 use super::super::compliance::ComplianceData;
@@ -589,9 +590,19 @@ fn lookup_object_by_name(
         return Some(obj_id);
     }
     if ctx.strictness.allow_global_fallbacks()
-        && let Some(node_id) = ctx.lookup_node_global(name) {
-            return ctx.mib.tree().get(node_id).object;
-        }
+        && let Some(node_id) = ctx.lookup_node_global(name)
+    {
+        trace!(
+            target: "mib_rs::resolver",
+            component = "resolver",
+            phase = "semantics",
+            module = %ctx.modules[ir_mod.0 as usize].name,
+            name = %name,
+            fallback = "global_object_lookup",
+            "resolved object via global fallback",
+        );
+        return ctx.mib.tree().get(node_id).object;
+    }
     None
 }
 
@@ -1107,9 +1118,10 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                     // For defval, derive the type from the resolved syntax if
                     // present, otherwise fall back to None.
                     let defval_typ = syntax.as_ref().and_then(|sc| sc.type_id);
-                    let def_val = var.defval.as_ref().map(|dv| {
-                        convert_defval(ctx, ir_id, dv, defval_typ, var.span)
-                    });
+                    let def_val = var
+                        .defval
+                        .as_ref()
+                        .map(|dv| convert_defval(ctx, ir_id, dv, defval_typ, var.span));
                     obj_vars.push(ObjectVariation {
                         object: var.name.clone(),
                         syntax,

@@ -1,6 +1,6 @@
 // Integration tests: lower the shared MIB corpus and verify basic properties.
 
-use gomib::types::DiagnosticConfig;
+use mib_rs::types::DiagnosticConfig;
 use std::path::{Path, PathBuf};
 
 fn corpus_dir() -> PathBuf {
@@ -24,13 +24,13 @@ fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn parse_and_lower(path: &Path) -> Vec<gomib::ir::Module> {
+fn parse_and_lower(path: &Path) -> Vec<mib_rs::ir::Module> {
     let content = std::fs::read(path).unwrap();
     let config = DiagnosticConfig::default();
-    let ast_modules = gomib::parser::parse(&content, config.clone());
+    let ast_modules = mib_rs::parser::parse(&content, config.clone());
     ast_modules
         .into_iter()
-        .map(|m| gomib::lower::lower(m, &content, &config))
+        .map(|m| mib_rs::lower::lower(m, &content, &config))
         .collect()
 }
 
@@ -62,7 +62,7 @@ fn primary_corpus_lowering_no_panics() {
             // Language should be detected
             assert_ne!(
                 module.language,
-                gomib::types::Language::Unknown,
+                mib_rs::types::Language::Unknown,
                 "module {} has unknown language in {:?}",
                 module.name,
                 file
@@ -80,13 +80,13 @@ fn primary_corpus_lowering_no_panics() {
 
 #[test]
 fn base_modules_have_definitions() {
-    let base_modules = gomib::lower::base_modules::create_base_modules();
+    let base_modules = mib_rs::lower::base_modules::create_base_modules();
     assert_eq!(base_modules.len(), 7);
 
     // SNMPv2-SMI should have OIDs and type definitions
     let smi = &base_modules[0];
     assert_eq!(smi.name, "SNMPv2-SMI");
-    assert_eq!(smi.language, gomib::types::Language::SMIv2);
+    assert_eq!(smi.language, mib_rs::types::Language::SMIv2);
     assert!(!smi.definitions.is_empty());
     // Should have iso, internet, enterprises, etc. and Integer32, Counter32, etc.
     let names: Vec<&str> = smi.definitions.iter().map(|d| d.name()).collect();
@@ -115,7 +115,7 @@ fn base_modules_have_definitions() {
     // RFC1155-SMI should have SMIv1 types
     let rfc1155 = &base_modules[3];
     assert_eq!(rfc1155.name, "RFC1155-SMI");
-    assert_eq!(rfc1155.language, gomib::types::Language::SMIv1);
+    assert_eq!(rfc1155.language, mib_rs::types::Language::SMIv1);
     let rfc1155_names: Vec<&str> = rfc1155.definitions.iter().map(|d| d.name()).collect();
     assert!(rfc1155_names.contains(&"Counter"), "missing Counter type");
     assert!(rfc1155_names.contains(&"Gauge"), "missing Gauge type");
@@ -128,11 +128,11 @@ fn base_modules_have_definitions() {
 
 #[test]
 fn base_module_lookup() {
-    assert!(gomib::lower::base_modules::is_base_module("SNMPv2-SMI"));
-    assert!(gomib::lower::base_modules::is_base_module("RFC1155-SMI"));
-    assert!(gomib::lower::base_modules::is_base_module("RFC-1215"));
-    assert!(!gomib::lower::base_modules::is_base_module("IF-MIB"));
-    assert!(!gomib::lower::base_modules::is_base_module(""));
+    assert!(mib_rs::lower::base_modules::is_base_module("SNMPv2-SMI"));
+    assert!(mib_rs::lower::base_modules::is_base_module("RFC1155-SMI"));
+    assert!(mib_rs::lower::base_modules::is_base_module("RFC-1215"));
+    assert!(!mib_rs::lower::base_modules::is_base_module("IF-MIB"));
+    assert!(!mib_rs::lower::base_modules::is_base_module(""));
 }
 
 #[test]
@@ -156,10 +156,10 @@ testMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = gomib::parser::parse(source, config.clone());
+    let ast_modules = mib_rs::parser::parse(source, config.clone());
     assert_eq!(ast_modules.len(), 1);
-    let module = gomib::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
-    assert_eq!(module.language, gomib::types::Language::SMIv2);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    assert_eq!(module.language, mib_rs::types::Language::SMIv2);
     assert_eq!(module.name, "TEST-MIB");
     // Should have flattened imports
     assert_eq!(module.imports.len(), 3);
@@ -184,10 +184,10 @@ testObject OBJECT-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = gomib::parser::parse(source, config.clone());
+    let ast_modules = mib_rs::parser::parse(source, config.clone());
     assert_eq!(ast_modules.len(), 1);
-    let module = gomib::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
-    assert_eq!(module.language, gomib::types::Language::SMIv1);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    assert_eq!(module.language, mib_rs::types::Language::SMIv1);
 }
 
 #[test]
@@ -207,12 +207,12 @@ testTrap TRAP-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = gomib::parser::parse(source, config.clone());
-    let module = gomib::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let ast_modules = mib_rs::parser::parse(source, config.clone());
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
 
     assert_eq!(module.definitions.len(), 1);
     match &module.definitions[0] {
-        gomib::ir::Definition::Notification(n) => {
+        mib_rs::ir::Definition::Notification(n) => {
             assert_eq!(n.name, "testTrap");
             assert!(n.trap_info.is_some());
             let info = n.trap_info.as_ref().unwrap();

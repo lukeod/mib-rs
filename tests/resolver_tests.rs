@@ -1,9 +1,9 @@
 // Integration tests: full pipeline from source files through resolution.
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::Oid;
-use gomib::source::dir_source;
-use gomib::types::{
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::Oid;
+use mib_rs::source::dir_source;
+use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
 };
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ fn problems_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/problems")
 }
 
-fn load_corpus(modules: &[&str]) -> gomib::load::LoadResult {
+fn load_corpus(modules: &[&str]) -> mib_rs::load::LoadResult {
     let dir = corpus_dir();
     if !dir.exists() {
         panic!("corpus dir not found: {}", dir.display());
@@ -30,7 +30,7 @@ fn load_corpus(modules: &[&str]) -> gomib::load::LoadResult {
     load(opts).expect("load failed")
 }
 
-fn load_all_corpus() -> gomib::load::LoadResult {
+fn load_all_corpus() -> mib_rs::load::LoadResult {
     let dir = corpus_dir();
     if !dir.exists() {
         panic!("corpus dir not found: {}", dir.display());
@@ -574,12 +574,12 @@ fn compliance_object_syntax_and_write_syntax() {
         .expect("diffServDataPathStatus not found in compliance objects");
 
     let syntax = obj.syntax.as_ref().expect("syntax should be resolved");
+    assert!(!syntax.enums.is_empty(), "syntax should have enum values");
     assert!(
-        !syntax.enums.is_empty(),
-        "syntax should have enum values"
-    );
-    assert!(
-        syntax.enums.iter().any(|e| e.label == "active" && e.value == 1),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "active" && e.value == 1),
         "syntax should contain active(1), got: {:?}",
         syntax.enums
     );
@@ -594,12 +594,16 @@ fn compliance_object_syntax_and_write_syntax() {
         ws.enums.len()
     );
     assert!(
-        ws.enums.iter().any(|e| e.label == "createAndGo" && e.value == 4),
+        ws.enums
+            .iter()
+            .any(|e| e.label == "createAndGo" && e.value == 4),
         "write_syntax should contain createAndGo(4), got: {:?}",
         ws.enums
     );
     assert!(
-        ws.enums.iter().any(|e| e.label == "destroy" && e.value == 6),
+        ws.enums
+            .iter()
+            .any(|e| e.label == "destroy" && e.value == 6),
         "write_syntax should contain destroy(6), got: {:?}",
         ws.enums
     );
@@ -689,15 +693,24 @@ fn compliance_object_syntax_only_enum() {
     let syntax = obj.syntax.as_ref().expect("syntax should be resolved");
     assert_eq!(syntax.enums.len(), 3, "should have 3 enum values");
     assert!(
-        syntax.enums.iter().any(|e| e.label == "unknown" && e.value == 0),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "unknown" && e.value == 0),
         "should have unknown(0)"
     );
     assert!(
-        syntax.enums.iter().any(|e| e.label == "ipv4" && e.value == 1),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "ipv4" && e.value == 1),
         "should have ipv4(1)"
     );
     assert!(
-        syntax.enums.iter().any(|e| e.label == "ipv6" && e.value == 2),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "ipv6" && e.value == 2),
         "should have ipv6(2)"
     );
 
@@ -730,11 +743,17 @@ fn variation_syntax_and_write_syntax() {
     let syntax = var.syntax.as_ref().expect("syntax should be resolved");
     assert_eq!(syntax.enums.len(), 2, "syntax should have 2 enum values");
     assert!(
-        syntax.enums.iter().any(|e| e.label == "active" && e.value == 1),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "active" && e.value == 1),
         "should have active(1)"
     );
     assert!(
-        syntax.enums.iter().any(|e| e.label == "notInService" && e.value == 2),
+        syntax
+            .enums
+            .iter()
+            .any(|e| e.label == "notInService" && e.value == 2),
         "should have notInService(2)"
     );
 
@@ -744,11 +763,15 @@ fn variation_syntax_and_write_syntax() {
         .expect("write_syntax should be resolved");
     assert_eq!(ws.enums.len(), 2, "write_syntax should have 2 enum values");
     assert!(
-        ws.enums.iter().any(|e| e.label == "createAndGo" && e.value == 4),
+        ws.enums
+            .iter()
+            .any(|e| e.label == "createAndGo" && e.value == 4),
         "should have createAndGo(4)"
     );
     assert!(
-        ws.enums.iter().any(|e| e.label == "destroy" && e.value == 6),
+        ws.enums
+            .iter()
+            .any(|e| e.label == "destroy" && e.value == 6),
         "should have destroy(6)"
     );
 }
@@ -786,7 +809,10 @@ fn variation_syntax_with_range_and_defval() {
         .write_syntax
         .as_ref()
         .expect("write_syntax should be resolved");
-    assert!(ws.type_id.is_some(), "write_syntax should have resolved type");
+    assert!(
+        ws.type_id.is_some(),
+        "write_syntax should have resolved type"
+    );
     assert_eq!(ws.ranges.len(), 1, "write_syntax should have 1 range");
     assert_eq!(ws.ranges[0].min, 1);
     assert_eq!(ws.ranges[0].max, 25);
@@ -934,10 +960,10 @@ fn snmp_oid_owned_by_snmpv2_mib() {
 
 // --- Duplicate import diagnostic tests ---
 
-fn load_problems(modules: &[&str]) -> gomib::load::LoadResult {
+fn load_problems(modules: &[&str]) -> mib_rs::load::LoadResult {
     let dir = problems_dir();
     let corpus = corpus_dir();
-    let src = gomib::source::multi_source(vec![
+    let src = mib_rs::source::multi_source(vec![
         dir_source(&dir).expect("failed to create problems source"),
         dir_source(&corpus).expect("failed to create corpus source"),
     ]);
@@ -1095,9 +1121,7 @@ fn effective_indexes_basic() {
     let entry_id = mib.object_by_name("ifEntry").expect("ifEntry not found");
     let indexes = mib.effective_indexes(entry_id);
     assert_eq!(indexes.len(), 1, "ifEntry should have 1 index");
-    let idx_obj = indexes[0]
-        .object
-        .expect("index should reference an object");
+    let idx_obj = indexes[0].object.expect("index should reference an object");
     assert_eq!(mib.object(idx_obj).name(), "ifIndex");
 }
 
@@ -1118,10 +1142,12 @@ fn effective_indexes_augments() {
 
     // But effective indexes follow the AUGMENTS chain
     let indexes = mib.effective_indexes(ifx_entry);
-    assert_eq!(indexes.len(), 1, "ifXEntry effective indexes should have 1 entry");
-    let idx_obj = indexes[0]
-        .object
-        .expect("index should reference an object");
+    assert_eq!(
+        indexes.len(),
+        1,
+        "ifXEntry effective indexes should have 1 entry"
+    );
+    let idx_obj = indexes[0].object.expect("index should reference an object");
     assert_eq!(mib.object(idx_obj).name(), "ifIndex");
 }
 
@@ -1177,7 +1203,11 @@ fn effective_indexes_bare_type() {
     assert!(mib.is_row(entry));
 
     let indexes = mib.effective_indexes(entry);
-    assert_eq!(indexes.len(), 1, "bare type table should have 1 index entry");
+    assert_eq!(
+        indexes.len(),
+        1,
+        "bare type table should have 1 index entry"
+    );
     assert!(
         indexes[0].object.is_none(),
         "bare type index should have no object reference"

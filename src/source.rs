@@ -162,7 +162,13 @@ fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<St
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                debug!(error = %e, "skipping directory entry");
+                debug!(
+                    target: "mib_rs::source",
+                    component = "source",
+                    reason = "walkdir_error",
+                    error = %e,
+                    "skipping directory entry",
+                );
                 continue;
             }
         };
@@ -179,7 +185,14 @@ fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<St
         let content = match std::fs::read(path) {
             Ok(c) => c,
             Err(e) => {
-                debug!(path = %path.display(), error = %e, "cannot read file");
+                debug!(
+                    target: "mib_rs::source",
+                    component = "source",
+                    path = %path.display(),
+                    reason = "read_error",
+                    error = %e,
+                    "cannot read file",
+                );
                 continue;
             }
         };

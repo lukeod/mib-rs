@@ -21,7 +21,14 @@ pub fn discover_system_sources() -> Vec<Box<dyn Source>> {
     for d in dirs {
         match source::dir_source(&d) {
             Ok(src) => sources.push(src),
-            Err(e) => debug!(path = %d, error = %e, "skipping system path"),
+            Err(e) => debug!(
+                target: "mib_rs::searchpath",
+                component = "searchpath",
+                path = %d,
+                reason = "open_source_failed",
+                error = %e,
+                "skipping system path",
+            ),
         }
     }
     sources
@@ -42,9 +49,10 @@ fn discover_netsnmp_paths() -> Vec<String> {
         paths = apply_config_file(&cf, paths, parse_netsnmp_line);
     }
     if let Ok(v) = std::env::var("MIBDIRS")
-        && !v.is_empty() {
-            paths = apply_netsnmp_env(&v, paths);
-        }
+        && !v.is_empty()
+    {
+        paths = apply_netsnmp_env(&v, paths);
+    }
     paths
 }
 
@@ -54,9 +62,10 @@ fn discover_libsmi_paths() -> Vec<String> {
         paths = apply_config_file(&cf, paths, parse_libsmi_line);
     }
     if let Ok(v) = std::env::var("SMIPATH")
-        && !v.is_empty() {
-            paths = apply_libsmi_env(&v, paths);
-        }
+        && !v.is_empty()
+    {
+        paths = apply_libsmi_env(&v, paths);
+    }
     paths
 }
 
@@ -212,7 +221,14 @@ fn apply_config_file(
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                debug!(path = %path.display(), error = %e, "error reading config file");
+                debug!(
+                    target: "mib_rs::searchpath",
+                    component = "searchpath",
+                    path = %path.display(),
+                    reason = "config_read_error",
+                    error = %e,
+                    "error reading config file",
+                );
                 break;
             }
         };

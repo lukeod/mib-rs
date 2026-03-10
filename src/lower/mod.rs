@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use crate::ast;
 use crate::ir;
 use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Span, Status};
+use tracing::{debug, debug_span, info_span};
 
 /// LoweringContext tracks state accumulated during the lowering pass.
 pub(crate) struct LoweringContext {
@@ -49,46 +50,188 @@ impl LoweringContext {
 /// needed after lowering. Source is the original source text used to compute
 /// diagnostic line/column from byte offset spans.
 pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticConfig) -> ir::Module {
+    let module_name = ast_module.name.name.clone();
+    let span = info_span!(
+        target: "mib_rs::lower",
+        "lower",
+        component = "lower",
+        module = %module_name,
+        import_clause_count = ast_module.imports.len(),
+        definition_count = ast_module.body.len(),
+        byte_count = source.len(),
+        reporting = ?diag_config.reporting,
+    );
+    let _guard = span.enter();
+
     let mut ctx = LoweringContext::new(source, diag_config.clone());
 
-    let mut module = ir::Module::new(ast_module.name.name.clone(), ast_module.span);
+    let mut module = ir::Module::new(module_name, ast_module.span);
     module.line_table = ctx.line_table.clone();
     ctx.module_name = module.name.clone();
 
-    module.imports = lower_imports(&ast_module.imports, &mut ctx);
-    module.language = ctx.language;
+    run_phase("imports", || {
+        module.imports = lower_imports(&ast_module.imports, &mut ctx);
+        module.language = ctx.language;
+        debug!(
+            target: "mib_rs::lower",
+            component = "lower",
+            phase = "imports",
+            module = %module.name,
+            import_count = module.imports.len(),
+            language = ?module.language,
+            "phase complete",
+        );
+    });
 
-    for def in &ast_module.body {
-        if let Some(lowered) = lower_definition(def, &mut ctx) {
-            module.definitions.push(lowered);
+    run_phase("definitions", || {
+        for def in &ast_module.body {
+            if let Some(lowered) = lower_definition(def, &mut ctx) {
+                module.definitions.push(lowered);
+            }
         }
-    }
+        let counts = DefinitionCounts::from_definitions(&module.definitions);
+        debug!(
+            target: "mib_rs::lower",
+            component = "lower",
+            phase = "definitions",
+            module = %module.name,
+            definition_count = module.definitions.len(),
+            object_type_count = counts.object_types,
+            module_identity_count = counts.module_identities,
+            object_identity_count = counts.object_identities,
+            notification_count = counts.notifications,
+            type_def_count = counts.type_defs,
+            value_assignment_count = counts.value_assignments,
+            object_group_count = counts.object_groups,
+            notification_group_count = counts.notification_groups,
+            compliance_count = counts.compliances,
+            capability_count = counts.capabilities,
+            "phase complete",
+        );
+    });
 
-    check_module_name_suffix(&mut ctx, &module);
+    run_phase("checks", || {
+        check_module_name_suffix(&mut ctx, &module);
 
-    if module.language == Language::SMIv2 && !base_modules::is_base_module(&module.name) {
-        check_module_identity(&mut ctx, &ast_module, &module);
-        check_macro_imports(&mut ctx, &ast_module, &module);
-    }
-
-    // Convert AST span-based diagnostics to line/col diagnostics.
-    for d in &ast_module.diagnostics {
-        if !ctx.diag_config.should_report(d.code) {
-            continue;
+        if module.language == Language::SMIv2 && !base_modules::is_base_module(&module.name) {
+            check_module_identity(&mut ctx, &ast_module, &module);
+            check_macro_imports(&mut ctx, &ast_module, &module);
         }
-        let (line, col) = crate::types::line_col_from_table(&ctx.line_table, d.span.start);
-        module.diagnostics.push(Diagnostic {
-            severity: d.severity,
-            code: d.code,
-            message: d.message.clone(),
-            module: Some(module.name.clone()),
-            line: Some(line),
-            column: Some(col),
-        });
-    }
+        debug!(
+            target: "mib_rs::lower",
+            component = "lower",
+            phase = "checks",
+            module = %module.name,
+            diagnostic_count = ctx.diagnostics.len(),
+            "phase complete",
+        );
+    });
 
-    module.diagnostics.extend(ctx.diagnostics);
+    run_phase("diagnostics", || {
+        // Convert AST span-based diagnostics to line/col diagnostics.
+        for d in &ast_module.diagnostics {
+            if !ctx.diag_config.should_report(d.code) {
+                continue;
+            }
+            let (line, col) = crate::types::line_col_from_table(&ctx.line_table, d.span.start);
+            module.diagnostics.push(Diagnostic {
+                severity: d.severity,
+                code: d.code,
+                message: d.message.clone(),
+                module: Some(module.name.clone()),
+                line: Some(line),
+                column: Some(col),
+            });
+        }
+
+        module.diagnostics.extend(ctx.diagnostics);
+        debug!(
+            target: "mib_rs::lower",
+            component = "lower",
+            phase = "diagnostics",
+            module = %module.name,
+            diagnostic_count = module.diagnostics.len(),
+            "phase complete",
+        );
+    });
+
+    let counts = DefinitionCounts::from_definitions(&module.definitions);
+    debug!(
+        target: "mib_rs::lower",
+        component = "lower",
+        module = %module.name,
+        language = ?module.language,
+        import_count = module.imports.len(),
+        definition_count = module.definitions.len(),
+        diagnostic_count = module.diagnostics.len(),
+        object_type_count = counts.object_types,
+        module_identity_count = counts.module_identities,
+        object_identity_count = counts.object_identities,
+        notification_count = counts.notifications,
+        type_def_count = counts.type_defs,
+        value_assignment_count = counts.value_assignments,
+        object_group_count = counts.object_groups,
+        notification_group_count = counts.notification_groups,
+        compliance_count = counts.compliances,
+        capability_count = counts.capabilities,
+        "lower complete",
+    );
     module
+}
+
+#[derive(Default)]
+struct DefinitionCounts {
+    object_types: usize,
+    module_identities: usize,
+    object_identities: usize,
+    notifications: usize,
+    type_defs: usize,
+    value_assignments: usize,
+    object_groups: usize,
+    notification_groups: usize,
+    compliances: usize,
+    capabilities: usize,
+}
+
+impl DefinitionCounts {
+    fn from_definitions(definitions: &[ir::Definition]) -> Self {
+        let mut counts = Self::default();
+        for definition in definitions {
+            match definition {
+                ir::Definition::ObjectType(_) => counts.object_types += 1,
+                ir::Definition::ModuleIdentity(_) => counts.module_identities += 1,
+                ir::Definition::ObjectIdentity(_) => counts.object_identities += 1,
+                ir::Definition::Notification(_) => counts.notifications += 1,
+                ir::Definition::TypeDef(_) => counts.type_defs += 1,
+                ir::Definition::ValueAssignment(_) => counts.value_assignments += 1,
+                ir::Definition::ObjectGroup(_) => counts.object_groups += 1,
+                ir::Definition::NotificationGroup(_) => counts.notification_groups += 1,
+                ir::Definition::ModuleCompliance(_) => counts.compliances += 1,
+                ir::Definition::AgentCapabilities(_) => counts.capabilities += 1,
+            }
+        }
+        counts
+    }
+}
+
+fn run_phase<F>(phase: &'static str, f: F)
+where
+    F: FnOnce(),
+{
+    let span = debug_span!(
+        target: "mib_rs::lower",
+        "phase",
+        component = "lower",
+        phase = phase,
+    );
+    let _guard = span.enter();
+    debug!(
+        target: "mib_rs::lower",
+        component = "lower",
+        phase = phase,
+        "starting phase",
+    );
+    f();
 }
 
 fn is_smiv2_import(name: &str) -> bool {

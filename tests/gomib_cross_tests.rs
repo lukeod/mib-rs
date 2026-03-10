@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::{Mib, NodeId, Oid};
-use gomib::source::dir_source;
-use gomib::types::{DiagnosticConfig, ResolverStrictness, Severity};
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::{Mib, NodeId, Oid};
+use mib_rs::source::dir_source;
+use mib_rs::types::{DiagnosticConfig, ResolverStrictness, Severity};
 use serde::Deserialize;
 
 // -- Fixture schema (matches gomib-fixturegen JSON output) --
@@ -389,7 +389,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     e
 }
 
-fn extract_module(mib: &Mib, mod_id: gomib::mib::ModuleId) -> ExtractedModule {
+fn extract_module(mib: &Mib, mod_id: mib_rs::mib::ModuleId) -> ExtractedModule {
     let module = mib.module(mod_id);
     let revisions = module
         .revisions()

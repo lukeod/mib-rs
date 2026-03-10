@@ -1,5 +1,5 @@
 [package]
-name = "gomib"
+name = "mib-rs"
 version = "0.1.0"
 edition = "2024"
 description = "SNMP MIB parser and resolver"
@@ -7,8 +7,8 @@ license = "MIT"
 rust-version = "1.88"
 
 [[bin]]
-name = "gomib"
-path = "src/bin/gomib.rs"
+name = "mib-rs"
+path = "src/bin/mib-rs.rs"
 
 [dependencies]
 thiserror = "2"

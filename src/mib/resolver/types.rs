@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use tracing::trace;
+
 use crate::graph;
 use crate::ir;
 use crate::types::{BaseType, DiagCode, Language, Span};
@@ -222,14 +224,14 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                     .module_symbol_to_type
                     .get(&ir_id)
                     .and_then(|m| m.get(&typedef.name))
-                {
-                    type_to_parent_ref.push((
-                        type_id,
-                        ir_id,
-                        ref_name.to_string(),
-                        typedef.syntax.span(),
-                    ));
-                }
+            {
+                type_to_parent_ref.push((
+                    type_id,
+                    ir_id,
+                    ref_name.to_string(),
+                    typedef.syntax.span(),
+                ));
+            }
         }
     }
 
@@ -266,9 +268,10 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
 
         // Look up the parent type.
         if let Some((parent_type_id, _used_import)) = ctx.lookup_type_for_module(*ir_id, ref_name)
-            && let Some(&parent_gn) = type_id_to_graph_node.get(&parent_type_id) {
-                g.add_edge(child_gn, parent_gn);
-            }
+            && let Some(&parent_gn) = type_id_to_graph_node.get(&parent_type_id)
+        {
+            g.add_edge(child_gn, parent_gn);
+        }
     }
 
     // Topological sort.
@@ -280,7 +283,13 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             .iter()
             .map(|s| format!("{}::{}", s.module, s.name))
             .collect();
-        tracing::debug!("type dependency cycle: {}", names.join(" -> "));
+        trace!(
+            target: "mib_rs::resolver",
+            component = "resolver",
+            phase = "types",
+            cycle_path = %names.join(" -> "),
+            "type dependency cycle",
+        );
     }
 
     // Record unresolved diagnostics for cycle members (gomib parity).
@@ -417,9 +426,10 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
             continue;
         }
         if let Some(&prim_id) = prim_types.get(&base)
-            && prim_id != tid {
-                ctx.mib.type_mut(tid).parent = Some(prim_id);
-            }
+            && prim_id != tid
+        {
+            ctx.mib.type_mut(tid).parent = Some(prim_id);
+        }
     }
 }
 

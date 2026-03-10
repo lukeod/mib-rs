@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use rayon::prelude::*;
-use tracing::{debug, info};
+use tracing::{debug, debug_span, info, info_span, warn};
 
 use crate::error::LoadError;
 use crate::ir;
@@ -91,9 +91,34 @@ pub struct LoadResult {
 
 /// Load MIB modules from configured sources and resolve them.
 pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
+    let requested_module_count = options.modules.as_ref().map_or(0, Vec::len);
+    let load_mode = if options.modules.is_some() {
+        "modules"
+    } else {
+        "all"
+    };
+    let span = info_span!(
+        target: "mib_rs::load",
+        "load",
+        component = "load",
+        mode = load_mode,
+        explicit_source_count = options.sources.len(),
+        requested_module_count = requested_module_count,
+        system_paths = options.system_paths,
+        strictness = ?options.resolver_strictness,
+        reporting = ?options.diag_config.reporting,
+    );
+    let _guard = span.enter();
+
     let mut sources = options.sources;
 
     if options.system_paths {
+        debug!(
+            target: "mib_rs::load",
+            component = "load",
+            phase = "source_discovery",
+            "discovering system sources",
+        );
         sources.extend(searchpath::discover_system_sources());
     }
     if sources.is_empty() {
@@ -111,10 +136,27 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
         (mods, None)
     };
 
+    debug!(
+        target: "mib_rs::load",
+        component = "load",
+        module_count = ir_modules.len(),
+        phase = "resolve",
+        "load pipeline complete, starting resolver",
+    );
     let mib = crate::mib::resolver::resolve(ir_modules, strictness, &diag_config);
 
     let warnings = check_load_result(&mib, &diag_config, requested_names.as_deref())?;
 
+    info!(
+        target: "mib_rs::load",
+        component = "load",
+        module_count = mib.modules_slice().len(),
+        type_count = mib.types_slice().len(),
+        node_count = mib.tree().len(),
+        diagnostic_count = mib.diagnostics().len(),
+        warning_count = warnings.len(),
+        "load complete",
+    );
     Ok(LoadResult { mib, warnings })
 }
 
@@ -140,7 +182,13 @@ fn load_all_modules(
         return Ok(base);
     }
 
-    info!(count = all_modules.len(), "parallel loading");
+    info!(
+        target: "mib_rs::load",
+        component = "load",
+        phase = "parallel_decode",
+        module_count = all_modules.len(),
+        "parallel loading",
+    );
 
     // Cache decoded files by path to avoid re-parsing multi-module files.
     let path_cache: DashMap<String, Arc<Vec<ir::Module>>> = DashMap::new();
@@ -149,11 +197,25 @@ fn load_all_modules(
     let results: Result<Vec<Option<ir::Module>>, LoadError> = all_modules
         .par_iter()
         .map(|(src_idx, name)| {
+            let span = debug_span!(
+                target: "mib_rs::load",
+                "load_module",
+                component = "load",
+                module = %name,
+                source_index = *src_idx,
+            );
+            let _guard = span.enter();
             let src = &sources[*src_idx];
             let result = match src.find(name).map_err(LoadError::Io)? {
                 Some(r) => r,
                 None => {
-                    debug!(module = %name, "module not found");
+                    debug!(
+                        target: "mib_rs::load",
+                        component = "load",
+                        module = %name,
+                        reason = "not_found",
+                        "module not found",
+                    );
                     return Ok(None);
                 }
             };
@@ -177,7 +239,13 @@ fn load_all_modules(
         modules.entry(module.name.clone()).or_insert(module);
     }
 
-    info!(count = modules.len(), "parallel loading complete");
+    info!(
+        target: "mib_rs::load",
+        component = "load",
+        phase = "parallel_decode",
+        module_count = modules.len(),
+        "parallel loading complete",
+    );
 
     Ok(collect_base_modules(modules))
 }
@@ -224,7 +292,13 @@ fn load_modules_by_name(
         let result = match find_in_sources(sources, name)? {
             Some(r) => r,
             None => {
-                debug!(module = %name, "module not found");
+                debug!(
+                    target: "mib_rs::load",
+                    component = "load",
+                    module = %name,
+                    reason = "not_found",
+                    "module not found",
+                );
                 return Ok(());
             }
         };
@@ -270,9 +344,10 @@ fn load_modules_by_name(
 fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
     for name in lower::base_modules::base_module_names() {
         if !modules.contains_key(name)
-            && let Some(base) = lower::base_modules::get_base_module(name) {
-                modules.insert(name.to_string(), base.clone());
-            }
+            && let Some(base) = lower::base_modules::get_base_module(name)
+        {
+            modules.insert(name.to_string(), base.clone());
+        }
     }
     let mut mods: Vec<ir::Module> = modules.into_values().collect();
     mods.sort_by(|a, b| a.name.cmp(&b.name));
@@ -285,12 +360,34 @@ fn decode_modules(
     source_path: &str,
     diag_config: &DiagnosticConfig,
 ) -> Vec<ir::Module> {
+    let span = debug_span!(
+        target: "mib_rs::load",
+        "decode_modules",
+        component = "load",
+        path = %source_path,
+        byte_count = content.len(),
+    );
+    let _guard = span.enter();
+
     if !scan::looks_like_mib_content(content) {
-        debug!(path = %source_path, "content rejected by heuristic");
+        debug!(
+            target: "mib_rs::load",
+            component = "load",
+            path = %source_path,
+            reason = "heuristic_rejected",
+            "content rejected by heuristic",
+        );
         return Vec::new();
     }
 
     let ast_modules = parser::parse(content, diag_config.clone());
+    debug!(
+        target: "mib_rs::load",
+        component = "load",
+        path = %source_path,
+        ast_module_count = ast_modules.len(),
+        "parsed source into AST modules",
+    );
 
     let mut modules = Vec::new();
     for am in ast_modules {
@@ -298,6 +395,13 @@ fn decode_modules(
         module.source_path = source_path.to_string();
         modules.push(module);
     }
+    debug!(
+        target: "mib_rs::load",
+        component = "load",
+        path = %source_path,
+        ir_module_count = modules.len(),
+        "lowered source into IR modules",
+    );
     modules
 }
 
@@ -318,6 +422,13 @@ fn check_load_result(
             }
         }
         if !missing.is_empty() {
+            warn!(
+                target: "mib_rs::load",
+                component = "load",
+                reason = "missing_requested_modules",
+                missing_module_count = missing.len(),
+                "requested modules not found",
+            );
             return Err(LoadError::MissingModules(missing));
         }
     }
@@ -325,6 +436,14 @@ fn check_load_result(
     // Check FailAt threshold.
     for d in mib.diagnostics() {
         if diag_config.should_fail(d.severity) {
+            warn!(
+                target: "mib_rs::load",
+                component = "load",
+                reason = "diagnostic_threshold",
+                severity = ?d.severity,
+                code = %d.code,
+                "diagnostic threshold exceeded",
+            );
             return Err(LoadError::DiagnosticThreshold);
         }
     }

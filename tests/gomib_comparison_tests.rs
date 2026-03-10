@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::{Mib, NodeId, Oid};
-use gomib::source::dir_source;
-use gomib::types::{DiagnosticConfig, ResolverStrictness};
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::{Mib, NodeId, Oid};
+use mib_rs::source::dir_source;
+use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
 use serde::Deserialize;
 
 // -- Fixture schema (matches gomib-fixturegen output exactly) --

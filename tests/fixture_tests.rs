@@ -4,10 +4,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gomib::load::{LoadOptions, load};
-use gomib::mib::Mib;
-use gomib::source::dir_source;
-use gomib::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
+use mib_rs::load::{LoadOptions, load};
+use mib_rs::mib::Mib;
+use mib_rs::source::dir_source;
+use mib_rs::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
 use serde::Deserialize;
 
 // -- Fixture schema --
@@ -156,7 +156,7 @@ fn normalize_kind(kind: Kind) -> &'static str {
     }
 }
 
-fn normalize_enums(nvs: &[gomib::mib::NamedValue]) -> HashMap<i64, String> {
+fn normalize_enums(nvs: &[mib_rs::mib::NamedValue]) -> HashMap<i64, String> {
     nvs.iter().map(|nv| (nv.value, nv.label.clone())).collect()
 }
 
