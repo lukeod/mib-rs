@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::types::{DiagCode, Language, Span};
 
-use super::context::{IrModuleId, ResolverContext, REASON_MODULE_NOT_FOUND, REASON_SYMBOL_NOT_EXPORTED};
+use super::context::{
+    IrModuleId, REASON_MODULE_NOT_FOUND, REASON_SYMBOL_NOT_EXPORTED, ResolverContext,
+};
 use super::registration::group_imports;
 
 /// Well-known macro names that are syntactic constructs, not resolvable symbols.
@@ -34,6 +36,7 @@ pub(super) fn resolve_imports(ctx: &mut ResolverContext) {
 
 fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
     let m = &ctx.modules[ir_mod.0 as usize];
+    let importing_module = m.name.clone();
     if m.imports.is_empty() {
         return;
     }
@@ -99,11 +102,13 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         }
 
         // Try direct resolution.
-        let candidates = ctx.module_index.get(from_module).cloned().unwrap_or_default();
+        let candidates = ctx
+            .module_index
+            .get(from_module)
+            .cloned()
+            .unwrap_or_default();
 
-        if let Some(source_id) =
-            find_candidate_with_all_symbols(ctx, &candidates, &non_macro)
-        {
+        if let Some(source_id) = find_candidate_with_all_symbols(ctx, &candidates, &non_macro) {
             // All symbols found in this candidate.
             for (name, _) in &non_macro {
                 ctx.module_imports
@@ -116,7 +121,6 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
 
         // Fallback chain (constrained, Normal+).
         if ctx.strictness.allow_constrained_fallbacks() {
-            // Fallback 1: Module aliases.
             if let Some(alias) = base_module_import_alias(from_module) {
                 let alias_candidates = ctx.module_index.get(alias).cloned().unwrap_or_default();
                 if let Some(source_id) =
@@ -131,22 +135,38 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
                     continue;
                 }
             }
+        }
 
-            // Fallback 2: Import forwarding.
-            if try_import_forwarding(ctx, ir_mod, &candidates, &non_macro) {
-                continue;
-            }
+        // Deterministic: explicit import forwarding remains enabled at every
+        // strictness level.
+        if try_import_forwarding(ctx, ir_mod, &candidates, &non_macro) {
+            continue;
+        }
 
-            // Fallback 3: Partial resolution.
-            if !candidates.is_empty() {
-                try_partial_resolution(ctx, ir_mod, from_module, &candidates, &non_macro);
-                continue;
-            }
+        // Deterministic per symbol: keep valid symbols from a mixed import
+        // group even when some peers are missing.
+        if !candidates.is_empty() {
+            try_partial_resolution(
+                ctx,
+                ir_mod,
+                &importing_module,
+                from_module,
+                &candidates,
+                &non_macro,
+            );
+            continue;
         }
 
         // All fallbacks exhausted - report all symbols as unresolved.
         for (name, span) in &non_macro {
-            ctx.record_unresolved_import(name, from_module, REASON_MODULE_NOT_FOUND, ir_mod, *span);
+            ctx.record_unresolved_import(
+                name,
+                &importing_module,
+                from_module,
+                REASON_MODULE_NOT_FOUND,
+                ir_mod,
+                *span,
+            );
         }
     }
 }
@@ -231,7 +251,11 @@ fn try_import_forwarding(
             // Check if the candidate re-exports it via its own IMPORTS declarations.
             let source_mod = candidate_import_source_module(ctx, cand, name);
             if let Some(source_name) = source_mod {
-                let source_candidates = ctx.module_index.get(source_name).cloned().unwrap_or_default();
+                let source_candidates = ctx
+                    .module_index
+                    .get(source_name)
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(fwd) = best_candidate(ctx, &source_candidates) {
                     forwarded.push((name.to_string(), fwd));
                 } else {
@@ -285,6 +309,7 @@ fn best_candidate(ctx: &ResolverContext, candidates: &[IrModuleId]) -> Option<Ir
 fn try_partial_resolution(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
+    importing_module: &str,
     from_module: &str,
     candidates: &[IrModuleId],
     symbols: &[&(String, Span)],
@@ -308,6 +333,7 @@ fn try_partial_resolution(
         if !found {
             ctx.record_unresolved_import(
                 name,
+                importing_module,
                 from_module,
                 REASON_SYMBOL_NOT_EXPORTED,
                 ir_mod,
@@ -328,11 +354,7 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
             .unwrap_or_default();
 
         for symbol in symbols {
-            let start = match ctx
-                .module_imports
-                .get(&mod_id)
-                .and_then(|m| m.get(&symbol))
-            {
+            let start = match ctx.module_imports.get(&mod_id).and_then(|m| m.get(&symbol)) {
                 Some(&s) => s,
                 None => continue,
             };
@@ -347,11 +369,7 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
     }
 }
 
-fn resolve_ultimate_definer(
-    ctx: &ResolverContext,
-    start: IrModuleId,
-    symbol: &str,
-) -> IrModuleId {
+fn resolve_ultimate_definer(ctx: &ResolverContext, start: IrModuleId, symbol: &str) -> IrModuleId {
     let mut visited = HashSet::new();
     let mut current = start;
     loop {
@@ -395,8 +413,7 @@ pub(super) fn check_unused_imports(ctx: &mut ResolverContext) {
                 continue;
             }
             // Skip imports that failed to resolve (already reported).
-            let did_resolve = resolved_imports
-                .is_some_and(|imps| imps.contains_key(&imp.symbol));
+            let did_resolve = resolved_imports.is_some_and(|imps| imps.contains_key(&imp.symbol));
             if !did_resolve {
                 continue;
             }

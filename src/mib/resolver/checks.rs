@@ -155,16 +155,16 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                 let t = ctx.mib.type_(type_id);
                 let base = t.effective_base(ctx.mib.types_slice());
                 if (base == BaseType::Counter32 || base == BaseType::Counter64)
-                    && !matches!(
-                        ot.access,
-                        Access::ReadOnly | Access::AccessibleForNotify
-                    )
+                    && !matches!(ot.access, Access::ReadOnly | Access::AccessibleForNotify)
                 {
                     diags.push((
                         DiagCode::AccessCounterIllegal,
                         Some(ir_id),
                         ot.access_span,
-                        format!("{}: counter must be read-only or accessible-for-notify", ot.name),
+                        format!(
+                            "{}: counter must be read-only or accessible-for-notify",
+                            ot.name
+                        ),
                     ));
                 }
             }
@@ -334,7 +334,8 @@ fn check_table_row_naming(ctx: &mut ResolverContext) {
                 if let Some(parent_id) = node.parent {
                     let parent = ctx.mib.tree().get(parent_id);
                     if parent.kind == Kind::Table {
-                        let table_prefix = parent.name.strip_suffix("Table").unwrap_or(&parent.name);
+                        let table_prefix =
+                            parent.name.strip_suffix("Table").unwrap_or(&parent.name);
                         let row_prefix = ot.name.strip_suffix("Entry").unwrap_or(&ot.name);
                         if !table_prefix.is_empty()
                             && !row_prefix.is_empty()
@@ -1027,9 +1028,9 @@ fn check_node_implicit(ctx: &mut ResolverContext) {
             .values()
             .filter_map(|&child| {
                 let child_node = ctx.mib.tree().get(child);
-                child_node.module.and_then(|mod_id| {
-                    ctx.resolved_to_module.get(&mod_id).copied()
-                })
+                child_node
+                    .module
+                    .and_then(|mod_id| ctx.resolved_to_module.get(&mod_id).copied())
             })
             .next();
 
@@ -1156,19 +1157,13 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
             // SMIv1 access per version (accessible-for-notify/read-create invalid).
             if let ir::Definition::ObjectType(ot) = def {
                 if m.language == Language::SMIv1
-                    && matches!(
-                        ot.access,
-                        Access::AccessibleForNotify | Access::ReadCreate
-                    )
+                    && matches!(ot.access, Access::AccessibleForNotify | Access::ReadCreate)
                 {
                     diags.push((
                         DiagCode::AccessInvalidSMIv1,
                         Some(ir_id),
                         ot.access_span,
-                        format!(
-                            "{}: invalid access {} in SMIv1",
-                            ot.name, ot.access
-                        ),
+                        format!("{}: invalid access {} in SMIv1", ot.name, ot.access),
                     ));
                 }
                 // Scalar must not be read-create.
@@ -1273,8 +1268,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
             }
 
             // Check each column has a matching SEQUENCE field.
-            let field_names: HashSet<&str> =
-                fields.iter().map(|f| f.name.as_str()).collect();
+            let field_names: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
             for &child_id in node.children().values() {
                 let child = ctx.mib.tree().get(child_id);
                 if !child.name.is_empty() && !field_names.contains(child.name.as_str()) {
@@ -1473,7 +1467,10 @@ fn check_group_member_locality(ctx: &mut ResolverContext) {
                         DiagCode::ComplianceMemberNotLocal,
                         Some(ir_id),
                         span,
-                        format!("group member {:?} is not defined in module {:?}", member, m.name),
+                        format!(
+                            "group member {:?} is not defined in module {:?}",
+                            member, m.name
+                        ),
                     ));
                 }
             }
@@ -1573,7 +1570,8 @@ fn collect_compliance_group_member_names(
     out: &mut HashSet<String>,
 ) {
     let node = if cm.module_name.is_empty() {
-        ctx.lookup_node_for_module(from_ir, group_name).map(|(n, _)| n)
+        ctx.lookup_node_for_module(from_ir, group_name)
+            .map(|(n, _)| n)
     } else {
         ctx.lookup_node_in_module(&cm.module_name, group_name)
     };
@@ -1618,14 +1616,19 @@ fn check_module_identity_registration(ctx: &mut ResolverContext) {
                     DiagCode::ModuleIdentityReg,
                     Some(ir_id),
                     mi.span,
-                    format!("{:?}: MODULE-IDENTITY OID too short for valid registration", mi.name),
+                    format!(
+                        "{:?}: MODULE-IDENTITY OID too short for valid registration",
+                        mi.name
+                    ),
                 ));
                 continue;
             }
             if !oid.starts_with(MGMT) {
                 continue;
             }
-            if oid.starts_with(MIB2) || oid.starts_with(TRANSMISSION) || oid.starts_with(SNMP_MODULES)
+            if oid.starts_with(MIB2)
+                || oid.starts_with(TRANSMISSION)
+                || oid.starts_with(SNMP_MODULES)
             {
                 continue;
             }
@@ -1820,7 +1823,9 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
         });
         if !has_sibling {
             checks.push(Check {
-                ir_mod: obj.module().and_then(|m| ctx.resolved_to_module.get(&m).copied()),
+                ir_mod: obj
+                    .module()
+                    .and_then(|m| ctx.resolved_to_module.get(&m).copied()),
                 span: obj.span(),
                 name: obj.name().to_string(),
             });
@@ -1832,46 +1837,55 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
             DiagCode::TAddressTDomain,
             check.ir_mod,
             check.span,
-            format!("{:?}: TAddress column has no sibling with TDomain type", check.name),
+            format!(
+                "{:?}: TAddress column has no sibling with TDomain type",
+                check.name
+            ),
         );
     }
 }
 
 fn check_inet_address_pairing(ctx: &mut ResolverContext) {
-    check_address_type_pairing(ctx, &AddressPairingConfig {
-        module_name: "INET-ADDRESS-MIB",
-        address_type: "InetAddress",
-        address_type_type: "InetAddressType",
-        specific_types: &[
-            "InetAddressIPv4",
-            "InetAddressIPv6",
-            "InetAddressIPv4z",
-            "InetAddressIPv6z",
-            "InetAddressDNS",
-        ],
-        diag_pairing: DiagCode::InetAddressPairing,
-        diag_subtyped: DiagCode::InetAddressTypeSubtyped,
-        diag_specific: DiagCode::InetAddressSpecific,
-    });
+    check_address_type_pairing(
+        ctx,
+        &AddressPairingConfig {
+            module_name: "INET-ADDRESS-MIB",
+            address_type: "InetAddress",
+            address_type_type: "InetAddressType",
+            specific_types: &[
+                "InetAddressIPv4",
+                "InetAddressIPv6",
+                "InetAddressIPv4z",
+                "InetAddressIPv6z",
+                "InetAddressDNS",
+            ],
+            diag_pairing: DiagCode::InetAddressPairing,
+            diag_subtyped: DiagCode::InetAddressTypeSubtyped,
+            diag_specific: DiagCode::InetAddressSpecific,
+        },
+    );
 }
 
 fn check_transport_address_pairing(ctx: &mut ResolverContext) {
-    check_address_type_pairing(ctx, &AddressPairingConfig {
-        module_name: "TRANSPORT-ADDRESS-MIB",
-        address_type: "TransportAddress",
-        address_type_type: "TransportAddressType",
-        specific_types: &[
-            "TransportAddressIPv4",
-            "TransportAddressIPv6",
-            "TransportAddressIPv4z",
-            "TransportAddressIPv6z",
-            "TransportAddressLocal",
-            "TransportAddressDns",
-        ],
-        diag_pairing: DiagCode::TransportAddressPairing,
-        diag_subtyped: DiagCode::TransportAddressTypeSubtyped,
-        diag_specific: DiagCode::TransportAddressSpecific,
-    });
+    check_address_type_pairing(
+        ctx,
+        &AddressPairingConfig {
+            module_name: "TRANSPORT-ADDRESS-MIB",
+            address_type: "TransportAddress",
+            address_type_type: "TransportAddressType",
+            specific_types: &[
+                "TransportAddressIPv4",
+                "TransportAddressIPv6",
+                "TransportAddressIPv4z",
+                "TransportAddressIPv6z",
+                "TransportAddressLocal",
+                "TransportAddressDns",
+            ],
+            diag_pairing: DiagCode::TransportAddressPairing,
+            diag_subtyped: DiagCode::TransportAddressTypeSubtyped,
+            diag_specific: DiagCode::TransportAddressSpecific,
+        },
+    );
 }
 
 struct AddressPairingConfig<'a> {
@@ -1983,9 +1997,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
                     .get(&(ir_id, obj_name.clone()))
                     .is_some_and(|s| matches!(s, ir::TypeSyntax::IntegerEnum { .. }))
             });
-            if has_enum_syntax
-                && let Some(row_id) = row_object_for_column(ctx, node_id)
-            {
+            if has_enum_syntax && let Some(row_id) = row_object_for_column(ctx, node_id) {
                 for col in row_column_objects(ctx, row_id) {
                     let col_obj = ctx.mib.object(col);
                     let Some(col_type) = col_obj.type_id() else {
@@ -2243,18 +2255,30 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
         match &check.dv_value {
             DefValValue::Int(v) => {
                 check_defval_numeric(
-                    ctx, check.ir_mod, check.span, &check.name, *v, check.base, &check.ranges, &check.enums,
+                    ctx,
+                    check.ir_mod,
+                    check.span,
+                    &check.name,
+                    *v,
+                    check.base,
+                    &check.ranges,
+                    &check.enums,
                 );
             }
             DefValValue::Uint(uv) => {
                 check_defval_unsigned(
-                    ctx, check.ir_mod, check.span, &check.name, *uv, check.base, &check.ranges, &check.enums,
+                    ctx,
+                    check.ir_mod,
+                    check.span,
+                    &check.name,
+                    *uv,
+                    check.base,
+                    &check.ranges,
+                    &check.enums,
                 );
             }
             DefValValue::Enum(label) => {
-                if !check.enums.is_empty()
-                    && !check.enums.iter().any(|e| e.label == *label)
-                {
+                if !check.enums.is_empty() && !check.enums.iter().any(|e| e.label == *label) {
                     ctx.emit_diagnostic(
                         DiagCode::DefvalEnum,
                         check.ir_mod,
@@ -2426,7 +2450,9 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
 
         let module_id = obj.module();
         let ir_mod = module_id.and_then(|m| ctx.resolved_to_module.get(&m).copied());
-        let lang = module_id.map(|m| ctx.mib.module(m).language()).unwrap_or(Language::Unknown);
+        let lang = module_id
+            .map(|m| ctx.mib.module(m).language())
+            .unwrap_or(Language::Unknown);
         let span = obj.span();
         let obj_name = obj.name().to_string();
 
@@ -2492,7 +2518,10 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                     DiagCode::IndexCounterIllegal,
                     ir_mod,
                     span,
-                    format!("INDEX {:?} of {:?} has counter base type", idx_name, obj_name),
+                    format!(
+                        "INDEX {:?} of {:?} has counter base type",
+                        idx_name, obj_name
+                    ),
                 ));
             } else if !is_legal_index_basetype(base) {
                 diags.push((
@@ -2514,7 +2543,10 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                         DiagCode::IndexElementNoSize,
                         ir_mod,
                         span,
-                        format!("INDEX {:?} of {:?} has no SIZE restriction", idx_name, obj_name),
+                        format!(
+                            "INDEX {:?} of {:?} has no SIZE restriction",
+                            idx_name, obj_name
+                        ),
                     ));
                 }
                 continue;
@@ -2552,7 +2584,10 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                     DiagCode::IndexIntegerNoRange,
                     ir_mod,
                     span,
-                    format!("INDEX {:?} of {:?} has no range restriction", idx_name, obj_name),
+                    format!(
+                        "INDEX {:?} of {:?} has no range restriction",
+                        idx_name, obj_name
+                    ),
                 ));
                 continue;
             }
@@ -2853,7 +2888,10 @@ fn check_basetype_imports(ctx: &mut ResolverContext) {
                 DiagCode::BasetypeNotImported,
                 Some(ir_id),
                 m.span,
-                format!("{} used but not imported from {} in {}", type_name, expected_mod, m.name),
+                format!(
+                    "{} used but not imported from {} in {}",
+                    type_name, expected_mod, m.name
+                ),
             ));
         }
     }
@@ -2917,9 +2955,10 @@ fn check_format_hints(ctx: &mut ResolverContext) {
 
             if !td.display_hint.is_empty() {
                 let valid = match base {
-                    BaseType::Integer32 | BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
-                        validate_display_hint_integer(&td.display_hint)
-                    }
+                    BaseType::Integer32
+                    | BaseType::Unsigned32
+                    | BaseType::Gauge32
+                    | BaseType::TimeTicks => validate_display_hint_integer(&td.display_hint),
                     BaseType::OctetString | BaseType::Opaque => {
                         validate_display_hint_octet_string(&td.display_hint)
                     }
@@ -2939,7 +2978,10 @@ fn check_format_hints(ctx: &mut ResolverContext) {
             } else if t.effective_display_hint(ctx.mib.types_slice()).is_empty()
                 && matches!(
                     base,
-                    BaseType::OctetString | BaseType::Integer32 | BaseType::Unsigned32 | BaseType::Gauge32
+                    BaseType::OctetString
+                        | BaseType::Integer32
+                        | BaseType::Unsigned32
+                        | BaseType::Gauge32
                 )
             {
                 diags.push((
@@ -3090,11 +3132,7 @@ fn check_type_status_usage(ctx: &mut ResolverContext) {
                     DiagCode::TypeStatusDeprecated,
                     ir_mod,
                     obj.span(),
-                    format!(
-                        "type {:?} used by {:?} is deprecated",
-                        t.name(),
-                        obj.name()
-                    ),
+                    format!("type {:?} used by {:?} is deprecated", t.name(), obj.name()),
                 ));
             }
             Status::Obsolete => {
@@ -3256,7 +3294,13 @@ fn lookup_compliance_member(
     {
         return Some(n);
     }
-    ctx.lookup_node_for_module(comp_ir, name).map(|(n, _)| n)
+    if let Some((n, _)) = ctx.lookup_node_for_module(comp_ir, name) {
+        return Some(n);
+    }
+    if ctx.strictness.allow_global_fallbacks() {
+        return ctx.lookup_node_global(name);
+    }
+    None
 }
 
 /// Map status to an ordinal for comparison.
@@ -3394,10 +3438,18 @@ fn range_value_gt(a: &ir::RangeValue, b: &ir::RangeValue) -> bool {
         (ir::RangeValue::Signed(x), ir::RangeValue::Signed(y)) => x > y,
         (ir::RangeValue::Unsigned(x), ir::RangeValue::Unsigned(y)) => x > y,
         (ir::RangeValue::Signed(x), ir::RangeValue::Unsigned(y)) => {
-            if *x < 0 { false } else { (*x as u64) > *y }
+            if *x < 0 {
+                false
+            } else {
+                (*x as u64) > *y
+            }
         }
         (ir::RangeValue::Unsigned(x), ir::RangeValue::Signed(y)) => {
-            if *y < 0 { true } else { *x > (*y as u64) }
+            if *y < 0 {
+                true
+            } else {
+                *x > (*y as u64)
+            }
         }
     }
 }

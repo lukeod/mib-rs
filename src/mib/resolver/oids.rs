@@ -85,12 +85,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
     let result = g.resolution_order();
 
     // Record cycle members as unresolved.
-    let cycle_symbols: HashSet<graph::Symbol> = result
-        .cycles
-        .iter()
-        .flatten()
-        .cloned()
-        .collect();
+    let cycle_symbols: HashSet<graph::Symbol> = result.cycles.iter().flatten().cloned().collect();
 
     let cycle_unresolved: Vec<_> = oid_defs
         .iter()
@@ -340,8 +335,6 @@ fn try_resolve_oid_definition(ctx: &mut ResolverContext, od: &OidDef) {
         Some(oa) => oa.clone(),
         None => return,
     };
-    let mod_name = m.name.clone();
-
     let mut current: Option<NodeId> = None;
     let component_count = oid_assign.components.len();
 
@@ -350,17 +343,7 @@ fn try_resolve_oid_definition(ctx: &mut ResolverContext, od: &OidDef) {
         let resolved = resolve_oid_component(ctx, od, current, comp, is_last);
         match resolved {
             Some(node_id) => current = Some(node_id),
-            None => {
-                let span = comp.span();
-                ctx.record_unresolved_oid(
-                    &od.name,
-                    &mod_name,
-                    "component_not_found",
-                    od.ir_mod,
-                    span,
-                );
-                return;
-            }
+            None => return,
         }
     }
 
@@ -381,12 +364,10 @@ fn resolve_oid_component(
             let parent = current.unwrap_or_else(|| ctx.mib.tree().root());
             Some(ctx.mib.tree.get_or_create_child(parent, *value))
         }
-        ir::OidComponent::Name { name, .. } => resolve_name_component(ctx, od, name),
-        ir::OidComponent::NamedNumber {
-            name, number, ..
-        } => {
+        ir::OidComponent::Name { name, span } => resolve_name_component(ctx, od, name, *span),
+        ir::OidComponent::NamedNumber { name, number, .. } => {
             // Try name lookup first.
-            if let Some(node) = resolve_name_component(ctx, od, name) {
+            if let Some(node) = resolve_name_component(ctx, od, name, comp.span()) {
                 return Some(node);
             }
             // Fall back to creating a named child.
@@ -403,8 +384,20 @@ fn resolve_oid_component(
             }
             Some(child)
         }
-        ir::OidComponent::QualifiedName { module, name, .. } => {
-            ctx.lookup_node_in_module(module, name)
+        ir::OidComponent::QualifiedName { module, name, span: _ } => {
+            if let Some(node) = ctx.lookup_node_in_module(module, name) {
+                Some(node)
+            } else {
+                let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
+                ctx.record_unresolved_oid(
+                    &format!("{module}.{name}"),
+                    &mod_name,
+                    "component_not_found",
+                    od.ir_mod,
+                    comp.span(),
+                );
+                None
+            }
         }
         ir::OidComponent::QualifiedNamedNumber {
             module,
@@ -438,12 +431,7 @@ fn resolve_oid_component(
 /// Set name and module for an intermediate (non-leaf) OID path component,
 /// gated behind should_prefer_module so that path-declaring vendor modules
 /// don't overwrite ownership of well-known OIDs.
-fn set_intermediate_node(
-    ctx: &mut ResolverContext,
-    od: &OidDef,
-    child: NodeId,
-    name: &str,
-) {
+fn set_intermediate_node(ctx: &mut ResolverContext, od: &OidDef, child: NodeId, name: &str) {
     let existing_mod = ctx.mib.tree().get(child).module;
     let existing_name = ctx.mib.tree().get(child).name.clone();
 
@@ -466,6 +454,7 @@ fn resolve_name_component(
     ctx: &mut ResolverContext,
     od: &OidDef,
     name: &str,
+    span: Span,
 ) -> Option<NodeId> {
     // Well-known roots.
     if let Some(arc) = well_known_root_arc(name) {
@@ -492,6 +481,8 @@ fn resolve_name_component(
         }
     }
 
+    let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
+    ctx.record_unresolved_oid(name, &mod_name, "component_not_found", od.ir_mod, span);
     None
 }
 
@@ -541,7 +532,10 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
             crate::types::DiagCode::OidReuse
         };
         let msg = if code == crate::types::DiagCode::OidRegistered {
-            format!("{:?}: registers OID already registered by {:?}", od.name, existing_name)
+            format!(
+                "{:?}: registers OID already registered by {:?}",
+                od.name, existing_name
+            )
         } else {
             format!("{:?}: reuses OID assigned to {:?}", od.name, existing_name)
         };
@@ -613,9 +607,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     // Non-semantic definitions get added to module's node list now.
     // Semantic definitions (ObjectType, Notification, etc.) are deferred to semantics phase.
     match od.kind {
-        OidDefKind::ValueAssignment
-        | OidDefKind::ObjectIdentity
-        | OidDefKind::ModuleIdentity => {
+        OidDefKind::ValueAssignment | OidDefKind::ObjectIdentity | OidDefKind::ModuleIdentity => {
             ctx.mib
                 .module_mut(resolved_mod_id)
                 .add_node(&od.name, node_id);
@@ -664,17 +656,18 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
         };
 
         // Look up the enterprise node.
-        let enterprise_node =
-            if let Some((node, used_import)) = ctx.lookup_node_for_module(od.ir_mod, &enterprise_name) {
-                if used_import {
-                    ctx.mark_import_used(od.ir_mod, &enterprise_name);
-                }
-                Some(node)
-            } else if ctx.strictness.allow_constrained_fallbacks() {
-                ctx.lookup_node_global(&enterprise_name)
-            } else {
-                None
-            };
+        let enterprise_node = if let Some((node, used_import)) =
+            ctx.lookup_node_for_module(od.ir_mod, &enterprise_name)
+        {
+            if used_import {
+                ctx.mark_import_used(od.ir_mod, &enterprise_name);
+            }
+            Some(node)
+        } else if ctx.strictness.allow_constrained_fallbacks() {
+            ctx.lookup_node_global(&enterprise_name)
+        } else {
+            None
+        };
 
         let enterprise_node = match enterprise_node {
             Some(n) => n,
@@ -694,7 +687,10 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
         // Determine OID based on RFC 3584 rules.
         let enterprise_oid = ctx.mib.tree().oid_of(enterprise_node).clone();
         let trap_node = if enterprise_oid.len() == snmp_traps_oid.len()
-            && enterprise_oid.iter().zip(snmp_traps_oid.iter()).all(|(a, b)| a == b)
+            && enterprise_oid
+                .iter()
+                .zip(snmp_traps_oid.iter())
+                .all(|(a, b)| a == b)
         {
             // Generic trap: snmpTraps.(trapNumber+1)
             let arc = trap_number + 1;
@@ -702,9 +698,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
         } else {
             // Enterprise-specific: enterprise.0.trapNumber
             let zero = ctx.mib.tree.get_or_create_child(enterprise_node, 0);
-            ctx.mib
-                .tree
-                .get_or_create_child(zero, trap_number)
+            ctx.mib.tree.get_or_create_child(zero, trap_number)
         };
 
         finalize_oid_definition(ctx, od, trap_node);
@@ -728,8 +722,7 @@ pub(super) fn should_prefer_module(
     // Base modules always win. They are the authoritative source for
     // well-known OIDs (iso, org, dod, internet, etc.).
     let new_is_base = base_modules::is_base_module(&ctx.modules[new_ir.0 as usize].name);
-    let current_is_base =
-        base_modules::is_base_module(&ctx.modules[current_ir.0 as usize].name);
+    let current_is_base = base_modules::is_base_module(&ctx.modules[current_ir.0 as usize].name);
     if new_is_base != current_is_base {
         return new_is_base;
     }

@@ -148,11 +148,7 @@ impl ResolverContext {
     }
 
     /// Look up a node by name within a module's scope (local defs, then imports).
-    pub fn lookup_node_for_module(
-        &self,
-        mod_id: IrModuleId,
-        name: &str,
-    ) -> Option<(NodeId, bool)> {
+    pub fn lookup_node_for_module(&self, mod_id: IrModuleId, name: &str) -> Option<(NodeId, bool)> {
         // Check module's own symbols
         if let Some(node) = self
             .module_symbol_to_node
@@ -178,12 +174,33 @@ impl ResolverContext {
         None
     }
 
-    /// Look up a type by name within a module's scope, with well-known fallbacks.
-    pub fn lookup_type_for_module(
+    /// Look up an object by name within a module's scope (local defs, then imports).
+    pub fn lookup_object_for_module(
         &self,
         mod_id: IrModuleId,
         name: &str,
-    ) -> Option<(TypeId, bool)> {
+    ) -> Option<(ObjectId, bool)> {
+        if let Some(&resolved_mod) = self.module_to_resolved.get(&mod_id)
+            && let Some(obj_id) = self.mib.module(resolved_mod).object_by_name(name)
+        {
+            return Some((obj_id, false));
+        }
+
+        if let Some(&source_ir) = self
+            .module_imports
+            .get(&mod_id)
+            .and_then(|imps| imps.get(name))
+            && let Some(&source_resolved) = self.module_to_resolved.get(&source_ir)
+            && let Some(obj_id) = self.mib.module(source_resolved).object_by_name(name)
+        {
+            return Some((obj_id, true));
+        }
+
+        None
+    }
+
+    /// Look up a type by name within a module's scope, with well-known fallbacks.
+    pub fn lookup_type_for_module(&self, mod_id: IrModuleId, name: &str) -> Option<(TypeId, bool)> {
         if let Some(result) = self.lookup_type_in_module_scope(mod_id, name) {
             return Some(result);
         }
@@ -227,7 +244,10 @@ impl ResolverContext {
     /// Tier 3 (global, Permissive only): not handled here (see global lookup).
     fn try_well_known_type_fallbacks(&self, name: &str) -> Option<TypeId> {
         // Tier 1: ASN.1 primitives always resolve from SNMPv2-SMI
-        if matches!(name, "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS") {
+        if matches!(
+            name,
+            "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS"
+        ) {
             if let Some(smi) = self.snmpv2_smi {
                 return self
                     .module_symbol_to_type
@@ -323,7 +343,8 @@ impl ResolverContext {
     pub fn record_unresolved_import(
         &mut self,
         symbol: &str,
-        module: &str,
+        importing_module: &str,
+        from_module: &str,
         reason: &str,
         ir_mod: IrModuleId,
         span: Span,
@@ -336,14 +357,14 @@ impl ResolverContext {
         self.unresolved_imports.push(UnresolvedTracking {
             kind: UnresolvedKind::Import,
             symbol: symbol.to_string(),
-            module: module.to_string(),
+            module: importing_module.to_string(),
             reason: reason.to_string(),
         });
         self.emit_diagnostic(
             code,
             Some(ir_mod),
             span,
-            format!("unresolved import: {symbol} from {module}"),
+            format!("unresolved import: {symbol} from {from_module}"),
         );
     }
 

@@ -174,10 +174,8 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         // tcpConnTable). Compare the existing object's source module, not
         // the node's module from OID phase.
         let existing_obj = ctx.mib.tree().get(node_id).object;
-        let existing_obj_mod = existing_obj
-            .and_then(|oid| ctx.mib.object(oid).module());
-        if existing_obj.is_none()
-            || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
+        let existing_obj_mod = existing_obj.and_then(|oid| ctx.mib.object(oid).module());
+        if existing_obj.is_none() || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
         {
             ctx.mib.tree.attach_object(node_id, obj_id);
         }
@@ -267,8 +265,7 @@ fn resolve_object_type(
             }
         }
         ir::TypeSyntax::ObjectIdentifier => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER")
-            {
+            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER") {
                 obj.typ = Some(type_id);
             }
         }
@@ -349,17 +346,13 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
             (ot.name.clone(), ot.index.clone(), ot.augments.clone())
         };
 
-        let node_id = match ctx
-            .module_symbol_to_node
-            .get(&ir_id)
-            .and_then(|syms| syms.get(&name))
-        {
-            Some(&id) => id,
-            None => continue,
-        };
-
-        let obj_id = match ctx.mib.tree().get(node_id).object {
-            Some(id) => id,
+        let obj_id = match ctx.lookup_object_for_module(ir_id, &name) {
+            Some((id, used_import)) => {
+                if used_import {
+                    ctx.mark_import_used(ir_id, &name);
+                }
+                id
+            }
             None => continue,
         };
 
@@ -367,22 +360,21 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
         if !index_items.is_empty() {
             let mut entries = Vec::new();
             for item in &index_items {
-                let entry = resolve_index_entry(ctx, ir_id, &name, item);
-                entries.push(entry);
+                if let Some(entry) = resolve_index_entry(ctx, ir_id, &name, item) {
+                    entries.push(entry);
+                }
             }
             ctx.mib.object_mut(obj_id).index = entries;
         }
 
         // Resolve AUGMENTS.
         if !augments.is_empty() {
-            let target = lookup_object_by_name(ctx, ir_id, &augments);
+            let target_node = ctx.lookup_node_for_module(ir_id, &augments);
+            let target = lookup_object_in_module_scope(ctx, ir_id, &augments);
             if let Some(target_obj_id) = target {
                 ctx.mib.object_mut(obj_id).augments = Some(target_obj_id);
-                ctx.mib
-                    .object_mut(target_obj_id)
-                    .augmented_by
-                    .push(obj_id);
-            } else {
+                ctx.mib.object_mut(target_obj_id).augmented_by.push(obj_id);
+            } else if target_node.is_none() {
                 let mod_name = ctx.modules[mod_idx].name.clone();
                 ctx.record_unresolved_oid(
                     &name,
@@ -401,19 +393,20 @@ fn resolve_index_entry(
     ir_mod: IrModuleId,
     row_name: &str,
     item: &ir::definition::IndexItem,
-) -> IndexEntry {
+) -> Option<IndexEntry> {
     if is_bare_type_index(&item.object) {
-        return IndexEntry {
+        return Some(IndexEntry {
             object: None,
             type_name: item.object.clone(),
             implied: item.implied,
             encoding: crate::types::IndexEncoding::Unknown,
             span: item.span,
-        };
+        });
     }
 
-    let obj = lookup_object_by_name(ctx, ir_mod, &item.object);
-    if obj.is_none() {
+    let node = ctx.lookup_node_for_module(ir_mod, &item.object);
+    let obj = lookup_object_in_module_scope(ctx, ir_mod, &item.object);
+    if obj.is_none() && node.is_none() {
         let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
         ctx.record_unresolved_index(
             row_name,
@@ -439,16 +432,16 @@ fn resolve_index_entry(
         };
         classify_index_encoding(base, item.implied, sizes)
     } else {
-        crate::types::IndexEncoding::Unknown
+        return None;
     };
 
-    IndexEntry {
+    Some(IndexEntry {
         object: obj,
         type_name: item.object.clone(),
         implied: item.implied,
         encoding,
         span: item.span,
-    }
+    })
 }
 
 // Primitive/global type names that can appear directly in INDEX clauses.
@@ -477,30 +470,27 @@ fn lookup_object_by_name(
     ir_mod: IrModuleId,
     name: &str,
 ) -> Option<ObjectId> {
-    // Check current module's resolved objects.
-    if let Some(&resolved_mod) = ctx.module_to_resolved.get(&ir_mod) {
-        if let Some(obj_id) = ctx.mib.module(resolved_mod).object_by_name(name) {
-            return Some(obj_id);
-        }
+    if let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_mod, name) {
+        return Some(obj_id);
     }
-    // Check imported modules.
-    if let Some(&source_ir) = ctx
-        .module_imports
-        .get(&ir_mod)
-        .and_then(|imps| imps.get(name))
-    {
-        if let Some(&source_resolved) = ctx.module_to_resolved.get(&source_ir) {
-            if let Some(obj_id) = ctx.mib.module(source_resolved).object_by_name(name) {
-                ctx.mark_import_used(ir_mod, name);
-                return Some(obj_id);
-            }
-        }
-    }
-    // Global fallback via node lookup (Permissive only).
     if ctx.strictness.allow_global_fallbacks() {
         if let Some(node_id) = ctx.lookup_node_global(name) {
             return ctx.mib.tree().get(node_id).object;
         }
+    }
+    None
+}
+
+fn lookup_object_in_module_scope(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    name: &str,
+) -> Option<ObjectId> {
+    if let Some((obj_id, used_import)) = ctx.lookup_object_for_module(ir_mod, name) {
+        if used_import {
+            ctx.mark_import_used(ir_mod, name);
+        }
+        return Some(obj_id);
     }
     None
 }
@@ -593,11 +583,8 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         let notif_id = ctx.mib.add_notification(nd);
 
         let existing = ctx.mib.tree().get(node_id).notification;
-        let existing_mod = existing
-            .and_then(|id| ctx.mib.notification(id).module());
-        if existing.is_none()
-            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
-        {
+        let existing_mod = existing.and_then(|id| ctx.mib.notification(id).module());
+        if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_notification(node_id, notif_id);
         }
 
@@ -677,24 +664,27 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
 
         // Resolve members.
         for member_name in &members {
-            if let Some((member_node, used_import)) =
-                ctx.lookup_node_for_module(ir_id, member_name)
+            if let Some((member_node, used_import)) = lookup_member_node(ctx, ir_id, member_name)
             {
                 if used_import {
                     ctx.mark_import_used(ir_id, member_name);
                 }
                 gd.members.push(member_node);
+            } else {
+                ctx.emit_diagnostic(
+                    crate::types::DiagCode::GroupMemberUnresolved,
+                    Some(ir_id),
+                    span,
+                    format!("group {:?} references unresolved member {:?}", name, member_name),
+                );
             }
         }
 
         let group_id = ctx.mib.add_group(gd);
 
         let existing = ctx.mib.tree().get(node_id).group;
-        let existing_mod = existing
-            .and_then(|id| ctx.mib.group(id).module());
-        if existing.is_none()
-            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
-        {
+        let existing_mod = existing.and_then(|id| ctx.mib.group(id).module());
+        if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_group(node_id, group_id);
         }
 
@@ -798,11 +788,8 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         let comp_id = ctx.mib.add_compliance(cd);
 
         let existing = ctx.mib.tree().get(node_id).compliance;
-        let existing_mod = existing
-            .and_then(|id| ctx.mib.compliance(id).module());
-        if existing.is_none()
-            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
-        {
+        let existing_mod = existing.and_then(|id| ctx.mib.compliance(id).module());
+        if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_compliance(node_id, comp_id);
         }
 
@@ -811,6 +798,17 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
             .add_compliance(&name, comp_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
     }
+}
+
+struct VariationData {
+    name: String,
+    syntax: Option<ir::TypeSyntax>,
+    write_syntax: Option<ir::TypeSyntax>,
+    access: Option<Access>,
+    description: String,
+    span: Span,
+    creation_requires: Vec<String>,
+    defval: Option<ir::syntax::DefVal>,
 }
 
 /// Create resolved Capability instances.
@@ -847,13 +845,6 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         let oid = ac.oid.clone();
 
         // Pre-extract supports data.
-        struct VariationData {
-            name: String,
-            access: Option<Access>,
-            description: String,
-            span: Span,
-            creation_requires: Vec<String>,
-        }
         struct SupportsData {
             module_name: String,
             includes: Vec<String>,
@@ -872,10 +863,13 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                     .iter()
                     .map(|v| VariationData {
                         name: v.name.clone(),
+                        syntax: v.syntax.clone(),
+                        write_syntax: v.write_syntax.clone(),
                         access: v.access,
                         description: v.description.clone(),
                         span: v.span,
                         creation_requires: v.creation_requires.clone(),
+                        defval: v.defval.clone(),
                     })
                     .collect(),
                 span: sm.span,
@@ -909,12 +903,22 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
             let mut notif_vars = Vec::new();
 
             for var in &sd.variations {
-                let is_notif = ctx
-                    .lookup_node_for_module(ir_id, &var.name)
-                    .map(|(nid, _)| ctx.mib.tree().get(nid).kind == Kind::Notification)
-                    .unwrap_or(false);
+                let is_notif = is_notification_variation(ctx, ir_id, &sd.module_name, var);
 
                 if is_notif {
+                    if let Some(access) = var.access
+                        && access != Access::NotImplemented
+                    {
+                        ctx.emit_diagnostic(
+                            crate::types::DiagCode::VariationAccessNotifOnly,
+                            Some(ir_id),
+                            var.span,
+                            format!(
+                                "notification variation {:?} ACCESS should be not-implemented per RFC 2580",
+                                var.name
+                            ),
+                        );
+                    }
                     notif_vars.push(NotificationVariation {
                         notification: var.name.clone(),
                         access: var.access,
@@ -947,11 +951,8 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         let cap_id = ctx.mib.add_capability(cap);
 
         let existing = ctx.mib.tree().get(node_id).capability;
-        let existing_mod = existing
-            .and_then(|id| ctx.mib.capability(id).module());
-        if existing.is_none()
-            || super::oids::should_prefer_module(ctx, existing_mod, ir_id)
-        {
+        let existing_mod = existing.and_then(|id| ctx.mib.capability(id).module());
+        if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_capability(node_id, cap_id);
         }
 
@@ -975,7 +976,9 @@ fn convert_defval(
         ir::syntax::DefVal::String(s) => DefVal::string(s.clone(), format!("\"{s}\"")),
         ir::syntax::DefVal::HexString(s) => {
             let raw = format!("'{s}'H");
-            if s.chars().any(|c| !c.is_ascii_hexdigit() && !c.is_ascii_whitespace()) {
+            if s.chars()
+                .any(|c| !c.is_ascii_hexdigit() && !c.is_ascii_whitespace())
+            {
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedHexDefval,
                     Some(ir_mod),
@@ -989,7 +992,9 @@ fn convert_defval(
         }
         ir::syntax::DefVal::BinaryString(s) => {
             let raw = format!("'{s}'B");
-            if s.chars().any(|c| c != '0' && c != '1' && !c.is_ascii_whitespace()) {
+            if s.chars()
+                .any(|c| c != '0' && c != '1' && !c.is_ascii_whitespace())
+            {
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedBinDefval,
                     Some(ir_mod),
@@ -1178,6 +1183,46 @@ fn hex_decode(s: &str) -> Vec<u8> {
         bytes.push(byte);
     }
     bytes
+}
+
+fn lookup_member_node(
+    ctx: &ResolverContext,
+    ir_mod: IrModuleId,
+    name: &str,
+) -> Option<(NodeId, bool)> {
+    if let Some(result) = ctx.lookup_node_for_module(ir_mod, name) {
+        return Some(result);
+    }
+    if ctx.strictness.allow_global_fallbacks()
+        && let Some(node_id) = ctx.lookup_node_global(name)
+    {
+        return Some((node_id, false));
+    }
+    None
+}
+
+fn is_notification_variation(
+    ctx: &ResolverContext,
+    ir_mod: IrModuleId,
+    supports_module: &str,
+    var: &VariationData,
+) -> bool {
+    if let Some(node_id) = ctx.lookup_node_in_module(supports_module, &var.name) {
+        return ctx.mib.tree().get(node_id).kind == Kind::Notification;
+    }
+    if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, &var.name) {
+        return ctx.mib.tree().get(node_id).kind == Kind::Notification;
+    }
+    if ctx.strictness.allow_global_fallbacks()
+        && let Some(node_id) = ctx.lookup_node_global(&var.name)
+    {
+        return ctx.mib.tree().get(node_id).kind == Kind::Notification;
+    }
+
+    var.syntax.is_none()
+        && var.write_syntax.is_none()
+        && var.creation_requires.is_empty()
+        && var.defval.is_none()
 }
 
 fn binary_decode(s: &str, right_pad: bool) -> Vec<u8> {
