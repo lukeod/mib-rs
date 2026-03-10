@@ -111,22 +111,6 @@ impl Mib {
         &mut self.types[id.0 as usize]
     }
 
-    pub(crate) fn notification_mut(&mut self, id: NotificationId) -> &mut NotificationData {
-        &mut self.notifications[id.0 as usize]
-    }
-
-    pub(crate) fn group_mut(&mut self, id: GroupId) -> &mut GroupData {
-        &mut self.groups[id.0 as usize]
-    }
-
-    pub(crate) fn compliance_mut(&mut self, id: ComplianceId) -> &mut ComplianceData {
-        &mut self.compliances[id.0 as usize]
-    }
-
-    pub(crate) fn capability_mut(&mut self, id: CapabilityId) -> &mut CapabilityData {
-        &mut self.capabilities[id.0 as usize]
-    }
-
     pub(crate) fn module_mut(&mut self, id: ModuleId) -> &mut ModuleData {
         &mut self.modules[id.0 as usize]
     }
@@ -256,9 +240,19 @@ impl Mib {
         if exact { Some(id) } else { None }
     }
 
-    /// Find the deepest node matching a prefix of the OID.
+    /// Find the deepest node matching a prefix of the OID, starting from root.
     pub fn longest_prefix_by_oid(&self, oid: &Oid) -> NodeId {
         self.tree.longest_prefix(oid)
+    }
+
+    /// Depth-first iterator over a subtree rooted at `id`.
+    pub fn subtree(&self, id: NodeId) -> super::node::SubtreeIter<'_> {
+        self.tree.subtree(id)
+    }
+
+    /// Find the deepest descendant of `start` matching a prefix of `oid`.
+    pub fn longest_prefix_from(&self, start: NodeId, oid: &Oid) -> NodeId {
+        self.tree.longest_prefix_from(start, oid)
     }
 
     /// Returns the effective module for a node, using entity priority:

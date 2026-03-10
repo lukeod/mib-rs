@@ -162,15 +162,13 @@ impl ResolverContext {
             .module_imports
             .get(&mod_id)
             .and_then(|imps| imps.get(name))
-        {
-            if let Some(node) = self
+            && let Some(node) = self
                 .module_symbol_to_node
                 .get(source)
                 .and_then(|syms| syms.get(name))
             {
                 return Some((*node, true));
             }
-        }
         None
     }
 
@@ -226,15 +224,13 @@ impl ResolverContext {
             .module_imports
             .get(&mod_id)
             .and_then(|imps| imps.get(name))
-        {
-            if let Some(t) = self
+            && let Some(t) = self
                 .module_symbol_to_type
                 .get(source)
                 .and_then(|syms| syms.get(name))
             {
                 return Some((*t, true));
             }
-        }
         None
     }
 
@@ -247,49 +243,45 @@ impl ResolverContext {
         if matches!(
             name,
             "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS"
-        ) {
-            if let Some(smi) = self.snmpv2_smi {
+        )
+            && let Some(smi) = self.snmpv2_smi {
                 return self
                     .module_symbol_to_type
                     .get(&smi)
                     .and_then(|syms| syms.get(name))
                     .copied();
             }
-        }
         // Tier 2: constrained fallbacks (Normal+)
         if !self.strictness.allow_constrained_fallbacks() {
             return None;
         }
         // SMI global types from SNMPv2-SMI
-        if let Some(smi) = self.snmpv2_smi {
-            if let Some(t) = self
+        if let Some(smi) = self.snmpv2_smi
+            && let Some(t) = self
                 .module_symbol_to_type
                 .get(&smi)
                 .and_then(|syms| syms.get(name))
             {
                 return Some(*t);
             }
-        }
         // SMIv1 types from RFC1155-SMI
-        if let Some(rfc) = self.rfc1155_smi {
-            if let Some(t) = self
+        if let Some(rfc) = self.rfc1155_smi
+            && let Some(t) = self
                 .module_symbol_to_type
                 .get(&rfc)
                 .and_then(|syms| syms.get(name))
             {
                 return Some(*t);
             }
-        }
         // TC types from SNMPv2-TC
-        if let Some(tc) = self.snmpv2_tc {
-            if let Some(t) = self
+        if let Some(tc) = self.snmpv2_tc
+            && let Some(t) = self
                 .module_symbol_to_type
                 .get(&tc)
                 .and_then(|syms| syms.get(name))
             {
                 return Some(*t);
             }
-        }
         None
     }
 

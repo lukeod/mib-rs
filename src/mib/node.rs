@@ -150,10 +150,6 @@ impl OidTree {
         &self.nodes[id.0 as usize]
     }
 
-    pub(crate) fn get_mut(&mut self, id: NodeId) -> &mut NodeData {
-        &mut self.nodes[id.0 as usize]
-    }
-
     fn alloc(&mut self, data: NodeData) -> NodeId {
         let id = NodeId::new(self.nodes.len() as u32);
         self.nodes.push(data);
@@ -270,9 +266,15 @@ impl OidTree {
         SubtreeIter { tree: self, stack }
     }
 
-    /// Find the deepest node matching a prefix of `oid`.
+    /// Find the deepest node matching a prefix of `oid`, starting from root.
     pub fn longest_prefix(&self, oid: &Oid) -> NodeId {
         let (matched, _) = self.walk_oid(self.root, oid);
+        matched
+    }
+
+    /// Find the deepest node matching a prefix of `oid`, starting from `start`.
+    pub fn longest_prefix_from(&self, start: NodeId, oid: &Oid) -> NodeId {
+        let (matched, _) = self.walk_oid(start, oid);
         matched
     }
 }
@@ -407,6 +409,27 @@ mod tests {
         let tree = OidTree::new();
         let root = tree.root();
         assert!(tree.oid_of(root).is_empty());
+    }
+
+    #[test]
+    fn longest_prefix_from_node() {
+        let mut tree = OidTree::new();
+        let root = tree.root();
+        let a = tree.get_or_create_child(root, 1);
+        let b = tree.get_or_create_child(a, 3);
+        let c = tree.get_or_create_child(b, 6);
+
+        // From node a, OID "3.6" should match c exactly.
+        let matched = tree.longest_prefix_from(a, &"3.6".parse().unwrap());
+        assert_eq!(matched, c);
+
+        // From node a, OID "3.6.99" should match c (partial).
+        let matched = tree.longest_prefix_from(a, &"3.6.99".parse().unwrap());
+        assert_eq!(matched, c);
+
+        // From node b, OID "99" should stay at b (no child 99).
+        let matched = tree.longest_prefix_from(b, &"99".parse().unwrap());
+        assert_eq!(matched, b);
     }
 
     #[test]

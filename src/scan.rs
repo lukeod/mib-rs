@@ -49,11 +49,10 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
         if start < end {
             let name = &before[start..end];
             // Module names must start with an uppercase letter.
-            if !name.is_empty() && name[0].is_ascii_uppercase() {
-                if let Ok(s) = std::str::from_utf8(name) {
+            if !name.is_empty() && name[0].is_ascii_uppercase()
+                && let Ok(s) = std::str::from_utf8(name) {
                     names.push(s.to_string());
                 }
-            }
         }
 
         offset = after_start;

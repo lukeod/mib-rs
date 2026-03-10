@@ -523,11 +523,10 @@ fn cmd_find(
         if let Some(node_id) = obj.node() {
             let node = mib.tree().get(node_id);
             let k = node.kind();
-            if let Some(want) = kind_match {
-                if k != want {
+            if let Some(want) = kind_match
+                && k != want {
                     continue;
                 }
-            }
             let oid = mib.tree().oid_of(node_id);
             let mod_name = obj
                 .module()

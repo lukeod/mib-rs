@@ -70,15 +70,12 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
     for (i, od) in oid_defs.iter().enumerate() {
         let m = &ctx.modules[od.ir_mod.0 as usize];
         let oid = get_oid_assignment(m, od.def_idx);
-        if let Some(oid_assign) = oid {
-            if let Some(first) = oid_assign.components.first() {
-                if let Some(dep_sym) = first_component_dep_symbol(ctx, od.ir_mod, first) {
-                    if let Some(target_idx) = sym_to_gn_idx.get(&dep_sym) {
+        if let Some(oid_assign) = oid
+            && let Some(first) = oid_assign.components.first()
+                && let Some(dep_sym) = first_component_dep_symbol(ctx, od.ir_mod, first)
+                    && let Some(target_idx) = sym_to_gn_idx.get(&dep_sym) {
                         g.add_edge(def_to_gn[i], def_to_gn[*target_idx]);
                     }
-                }
-            }
-        }
     }
 
     // Topological sort.
@@ -443,11 +440,10 @@ fn set_intermediate_node(ctx: &mut ResolverContext, od: &OidDef, child: NodeId, 
     if prefer || existing_name.is_empty() {
         ctx.mib.tree.set_name(child, name.to_string());
     }
-    if prefer {
-        if let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
+    if prefer
+        && let Some(&resolved_mod) = ctx.module_to_resolved.get(&od.ir_mod) {
             ctx.mib.tree.set_module(child, resolved_mod);
         }
-    }
     ctx.mib.register_node(name, child);
     if ctx.mib.tree().get(child).kind == Kind::Internal {
         ctx.mib.tree.set_kind(child, Kind::Node);
@@ -479,11 +475,10 @@ fn resolve_name_component(
     }
 
     // Constrained (Normal+): SMI global OID roots.
-    if ctx.strictness.allow_constrained_fallbacks() {
-        if let Some(node) = lookup_smi_global_oid_root(ctx, name) {
+    if ctx.strictness.allow_constrained_fallbacks()
+        && let Some(node) = lookup_smi_global_oid_root(ctx, name) {
             return Some(node);
         }
-    }
 
     let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
     ctx.record_unresolved_oid(name, &mod_name, "component_not_found", od.ir_mod, span);
@@ -491,24 +486,22 @@ fn resolve_name_component(
 }
 
 fn lookup_smi_global_oid_root(ctx: &ResolverContext, name: &str) -> Option<NodeId> {
-    if let Some(smi) = ctx.snmpv2_smi {
-        if let Some(node) = ctx
+    if let Some(smi) = ctx.snmpv2_smi
+        && let Some(node) = ctx
             .module_symbol_to_node
             .get(&smi)
             .and_then(|syms| syms.get(name))
         {
             return Some(*node);
         }
-    }
-    if let Some(rfc) = ctx.rfc1155_smi {
-        if let Some(node) = ctx
+    if let Some(rfc) = ctx.rfc1155_smi
+        && let Some(node) = ctx
             .module_symbol_to_node
             .get(&rfc)
             .and_then(|syms| syms.get(name))
         {
             return Some(*node);
         }
-    }
     None
 }
 
@@ -556,8 +549,8 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         OidDefKind::ModuleIdentity | OidDefKind::ObjectIdentity | OidDefKind::ValueAssignment
     ) {
         let oid = ctx.mib.tree().oid_of(node_id);
-        if !oid.is_empty() && oid[oid.len() - 1] == 0 {
-            if oid.len() != 2 || oid[0] != 0 {
+        if !oid.is_empty() && oid[oid.len() - 1] == 0
+            && (oid.len() != 2 || oid[0] != 0) {
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::LastSubidZero,
                     Some(od.ir_mod),
@@ -565,7 +558,6 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
                     format!("{:?}: last sub-identifier must not be zero", od.name),
                 );
             }
-        }
     }
 
     // The node's kind, name, span, description, and module all reflect the

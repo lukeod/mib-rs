@@ -155,10 +155,10 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
 fn extract_constraint(constraint: &ir::Constraint, td: &mut TypeData) {
     match constraint {
         ir::Constraint::Size { ranges, .. } => {
-            td.sizes = ranges.iter().filter_map(|r| resolve_range(r)).collect();
+            td.sizes = ranges.iter().filter_map(resolve_range).collect();
         }
         ir::Constraint::Range { ranges, .. } => {
-            td.ranges = ranges.iter().filter_map(|r| resolve_range(r)).collect();
+            td.ranges = ranges.iter().filter_map(resolve_range).collect();
         }
     }
 }
@@ -217,8 +217,8 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             }
 
             let type_ref_name = extract_type_ref_name(&typedef.syntax);
-            if let Some(ref_name) = type_ref_name {
-                if let Some(&type_id) = ctx
+            if let Some(ref_name) = type_ref_name
+                && let Some(&type_id) = ctx
                     .module_symbol_to_type
                     .get(&ir_id)
                     .and_then(|m| m.get(&typedef.name))
@@ -230,7 +230,6 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                         typedef.syntax.span(),
                     ));
                 }
-            }
         }
     }
 
@@ -266,11 +265,10 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
         };
 
         // Look up the parent type.
-        if let Some((parent_type_id, _used_import)) = ctx.lookup_type_for_module(*ir_id, ref_name) {
-            if let Some(&parent_gn) = type_id_to_graph_node.get(&parent_type_id) {
+        if let Some((parent_type_id, _used_import)) = ctx.lookup_type_for_module(*ir_id, ref_name)
+            && let Some(&parent_gn) = type_id_to_graph_node.get(&parent_type_id) {
                 g.add_edge(child_gn, parent_gn);
             }
-        }
     }
 
     // Topological sort.
@@ -418,11 +416,10 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
         if base == BaseType::Unknown {
             continue;
         }
-        if let Some(&prim_id) = prim_types.get(&base) {
-            if prim_id != tid {
+        if let Some(&prim_id) = prim_types.get(&base)
+            && prim_id != tid {
                 ctx.mib.type_mut(tid).parent = Some(prim_id);
             }
-        }
     }
 }
 

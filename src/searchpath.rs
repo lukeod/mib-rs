@@ -34,16 +34,17 @@ enum PathOp {
     Prepend,
 }
 
+type ConfigLineParser = fn(&str) -> Option<(PathOp, Vec<String>)>;
+
 fn discover_netsnmp_paths() -> Vec<String> {
     let mut paths = netsnmp_defaults();
     for cf in netsnmp_config_files() {
         paths = apply_config_file(&cf, paths, parse_netsnmp_line);
     }
-    if let Ok(v) = std::env::var("MIBDIRS") {
-        if !v.is_empty() {
+    if let Ok(v) = std::env::var("MIBDIRS")
+        && !v.is_empty() {
             paths = apply_netsnmp_env(&v, paths);
         }
-    }
     paths
 }
 
@@ -52,11 +53,10 @@ fn discover_libsmi_paths() -> Vec<String> {
     for cf in libsmi_config_files() {
         paths = apply_config_file(&cf, paths, parse_libsmi_line);
     }
-    if let Ok(v) = std::env::var("SMIPATH") {
-        if !v.is_empty() {
+    if let Ok(v) = std::env::var("SMIPATH")
+        && !v.is_empty() {
             paths = apply_libsmi_env(&v, paths);
         }
-    }
     paths
 }
 
@@ -200,7 +200,7 @@ fn apply_op(op: PathOp, dirs: Vec<String>, mut current: Vec<String>) -> Vec<Stri
 fn apply_config_file(
     path: &Path,
     mut current: Vec<String>,
-    parse_line: fn(&str) -> Option<(PathOp, Vec<String>)>,
+    parse_line: ConfigLineParser,
 ) -> Vec<String> {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,

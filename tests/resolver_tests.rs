@@ -167,6 +167,39 @@ fn longest_prefix_lookup() {
 }
 
 #[test]
+fn node_subtree() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    // ifEntry subtree should include ifEntry itself plus all its columns.
+    let entry_id = mib.node_by_name("ifEntry").expect("ifEntry not found");
+    let subtree_names: Vec<&str> = mib
+        .subtree(entry_id)
+        .map(|id| mib.tree().get(id).name())
+        .filter(|n| !n.is_empty())
+        .collect();
+    assert!(subtree_names[0] == "ifEntry");
+    assert!(subtree_names.contains(&"ifIndex"));
+    assert!(subtree_names.contains(&"ifDescr"));
+    assert!(subtree_names.contains(&"ifType"));
+    assert!(subtree_names.len() > 5); // ifEntry has many columns
+}
+
+#[test]
+fn node_longest_prefix() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r.mib;
+
+    // Start from ifTable (1.3.6.1.2.1.2.2) and look up relative OID 1.1.5
+    // which should match ifIndex (ifEntry.1 = arc 1 under ifTable child 1).
+    let table_id = mib.node_by_name("ifTable").expect("ifTable not found");
+    let suffix: Oid = "1.1.5".parse().unwrap();
+    let matched = mib.longest_prefix_from(table_id, &suffix);
+    let name = mib.tree().get(matched).name();
+    assert_eq!(name, "ifIndex");
+}
+
+#[test]
 fn resolve_oid_from_name() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r.mib;

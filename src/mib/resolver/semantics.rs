@@ -277,13 +277,13 @@ fn extract_object_constraint(constraint: &ir::Constraint, obj: &mut ObjectData) 
         ir::Constraint::Size { ranges, .. } => {
             obj.sizes = ranges
                 .iter()
-                .filter_map(|r| super::types::resolve_range(r))
+                .filter_map(super::types::resolve_range)
                 .collect();
         }
         ir::Constraint::Range { ranges, .. } => {
             obj.ranges = ranges
                 .iter()
-                .filter_map(|r| super::types::resolve_range(r))
+                .filter_map(super::types::resolve_range)
                 .collect();
         }
     }
@@ -588,11 +588,10 @@ fn lookup_object_by_name(
     if let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_mod, name) {
         return Some(obj_id);
     }
-    if ctx.strictness.allow_global_fallbacks() {
-        if let Some(node_id) = ctx.lookup_node_global(name) {
+    if ctx.strictness.allow_global_fallbacks()
+        && let Some(node_id) = ctx.lookup_node_global(name) {
             return ctx.mib.tree().get(node_id).object;
         }
-    }
     None
 }
 
@@ -1231,7 +1230,7 @@ fn convert_defval(
                     defval_span,
                     format!("DEFVAL OID reference {:?} could not be resolved", name),
                 );
-                return DefVal::unset();
+                DefVal::unset()
             }
         }
         ir::syntax::DefVal::OidValue { components } => {
@@ -1358,7 +1357,7 @@ fn format_oid_components(components: &[ir::OidComponent]) -> String {
 
 fn hex_decode(s: &str) -> Vec<u8> {
     let mut clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if clean.len() % 2 != 0 {
+    if !clean.len().is_multiple_of(2) {
         clean.insert(0, '0');
     }
     let mut bytes = Vec::new();
@@ -1417,7 +1416,7 @@ fn binary_decode(s: &str, right_pad: bool) -> Vec<u8> {
         return Vec::new();
     }
     // Pad to byte boundary.
-    let padded_len = (clean.len() + 7) / 8 * 8;
+    let padded_len = clean.len().div_ceil(8) * 8;
     let padded = if right_pad {
         format!("{:0<width$}", clean, width = padded_len)
     } else {

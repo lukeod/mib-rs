@@ -269,11 +269,10 @@ fn load_modules_by_name(
 /// Ensure base modules are included and return sorted module list.
 fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
     for name in lower::base_modules::base_module_names() {
-        if !modules.contains_key(name) {
-            if let Some(base) = lower::base_modules::get_base_module(name) {
+        if !modules.contains_key(name)
+            && let Some(base) = lower::base_modules::get_base_module(name) {
                 modules.insert(name.to_string(), base.clone());
             }
-        }
     }
     let mut mods: Vec<ir::Module> = modules.into_values().collect();
     mods.sort_by(|a, b| a.name.cmp(&b.name));
