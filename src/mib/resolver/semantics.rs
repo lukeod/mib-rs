@@ -664,8 +664,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
 
         // Resolve members.
         for member_name in &members {
-            if let Some((member_node, used_import)) = lookup_member_node(ctx, ir_id, member_name)
-            {
+            if let Some((member_node, used_import)) = lookup_member_node(ctx, ir_id, member_name) {
                 if used_import {
                     ctx.mark_import_used(ir_id, member_name);
                 }
@@ -675,7 +674,10 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                     crate::types::DiagCode::GroupMemberUnresolved,
                     Some(ir_id),
                     span,
-                    format!("group {:?} references unresolved member {:?}", name, member_name),
+                    format!(
+                        "group {:?} references unresolved member {:?}",
+                        name, member_name
+                    ),
                 );
             }
         }
