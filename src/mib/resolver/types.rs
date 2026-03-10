@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tracing::trace;
+use tracing::{Level, enabled, trace};
 
 use crate::graph;
 use crate::ir;
@@ -278,18 +278,20 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
     let result = g.resolution_order();
 
     // Log cycles.
-    for cycle in &result.cycles {
-        let names: Vec<String> = cycle
-            .iter()
-            .map(|s| format!("{}::{}", s.module, s.name))
-            .collect();
-        trace!(
-            target: "mib_rs::resolver",
-            component = "resolver",
-            phase = "types",
-            cycle_path = %names.join(" -> "),
-            "type dependency cycle",
-        );
+    if enabled!(target: "mib_rs::resolver", Level::TRACE) {
+        for cycle in &result.cycles {
+            let names: Vec<String> = cycle
+                .iter()
+                .map(|s| format!("{}::{}", s.module, s.name))
+                .collect();
+            trace!(
+                target: "mib_rs::resolver",
+                component = "resolver",
+                phase = "types",
+                cycle_path = %names.join(" -> "),
+                "type dependency cycle",
+            );
+        }
     }
 
     // Record unresolved diagnostics for cycle members (gomib parity).

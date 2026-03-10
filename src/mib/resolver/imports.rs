@@ -179,6 +179,9 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         // Deterministic per symbol: keep valid symbols from a mixed import
         // group even when some peers are missing.
         if !candidates.is_empty() {
+            let resolved_symbol_count =
+                count_directly_resolved_symbols(ctx, &non_macro, &candidates);
+            let unresolved_symbol_count = non_macro.len().saturating_sub(resolved_symbol_count);
             trace!(
                 target: "mib_rs::resolver",
                 component = "resolver",
@@ -186,6 +189,8 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
                 module = %importing_module,
                 source_module = %from_module,
                 symbol_count = non_macro.len(),
+                resolved_symbol_count = resolved_symbol_count,
+                unresolved_symbol_count = unresolved_symbol_count,
                 resolution = "partial",
                 "partially resolved import group",
             );
@@ -201,6 +206,17 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         }
 
         // All fallbacks exhausted - report all symbols as unresolved.
+        trace!(
+            target: "mib_rs::resolver",
+            component = "resolver",
+            phase = "imports",
+            module = %importing_module,
+            source_module = %from_module,
+            symbol_count = non_macro.len(),
+            reason = REASON_MODULE_NOT_FOUND,
+            resolution = "unresolved",
+            "failed to resolve import group",
+        );
         for (name, span) in &non_macro {
             ctx.record_unresolved_import(
                 name,
@@ -212,6 +228,23 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             );
         }
     }
+}
+
+fn count_directly_resolved_symbols(
+    ctx: &ResolverContext,
+    symbols: &[&(String, Span)],
+    candidates: &[IrModuleId],
+) -> usize {
+    symbols
+        .iter()
+        .filter(|(name, _)| {
+            candidates.iter().any(|cand| {
+                ctx.module_def_names
+                    .get(cand)
+                    .is_some_and(|defs| defs.contains(name.as_str()))
+            })
+        })
+        .count()
 }
 
 fn find_candidate_with_all_symbols(

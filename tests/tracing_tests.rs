@@ -261,11 +261,108 @@ END
             && event.fields.contains(r#"unresolved_type_count=0"#)
     }));
     assert!(events.iter().any(|event| {
+        event.target == "mib_rs::resolver"
+            && event.fields.contains(r#"message=created resolved objects"#)
+            && event.fields.contains(r#"component="resolver""#)
+            && event.fields.contains(r#"phase="semantics""#)
+            && event.fields.contains(r#"object_count=1"#)
+    }));
+    assert!(events.iter().any(|event| {
+        event.target == "mib_rs::resolver"
+            && event
+                .fields
+                .contains(r#"message=classified object node kinds"#)
+            && event.fields.contains(r#"component="resolver""#)
+            && event.fields.contains(r#"phase="semantics""#)
+            && event.fields.contains(r#"scalar_count=1"#)
+    }));
+    assert!(events.iter().any(|event| {
         event.target == "mib_rs::load"
             && event.fields.contains(r#"message=load complete"#)
             && event.fields.contains(r#"component="load""#)
             && event.fields.contains(r#"module_count="#)
             && event.fields.contains(r#"type_count="#)
             && event.fields.contains(r#"warning_count=0"#)
+    }));
+}
+
+#[test]
+fn load_emits_resolver_trace_events_for_unresolved_imports_and_oid_fallbacks() {
+    let source = MemorySource {
+        modules: HashMap::from([(
+            "TRACE-TEST-MIB".to_string(),
+            r#"TRACE-TEST-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE FROM SNMPv2-SMI
+    MissingType FROM MISSING-MIB;
+
+traceTest MODULE-IDENTITY
+    LAST-UPDATED "202603100000Z"
+    ORGANIZATION "Example"
+    CONTACT-INFO "Example"
+    DESCRIPTION "Example"
+    ::= { enterprises 99998 }
+
+traceObject OBJECT-TYPE
+    SYNTAX OCTET STRING
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Example"
+    ::= { traceTest 1 }
+
+END
+"#,
+        )]),
+    };
+
+    let capture = Capture::default();
+    let subscriber = Registry::default().with(CaptureLayer::new(capture.clone()));
+
+    tracing::subscriber::with_default(subscriber, || {
+        let options = LoadOptions::new()
+            .source(Box::new(source))
+            .modules(["TRACE-TEST-MIB"])
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::silent());
+        let result = load(options).expect("load should succeed");
+        assert!(result.mib.module_by_name("TRACE-TEST-MIB").is_some());
+    });
+
+    let events = capture.events();
+    assert!(events.iter().any(|event| {
+        event.target == "mib_rs::resolver"
+            && event
+                .fields
+                .contains(r#"message=failed to resolve import group"#)
+            && event.fields.contains(r#"component="resolver""#)
+            && event.fields.contains(r#"phase="imports""#)
+            && event.fields.contains(r#"module=TRACE-TEST-MIB"#)
+            && event.fields.contains(r#"reason="module_not_found""#)
+            && event.fields.contains(r#"resolution="unresolved""#)
+            && event.fields.contains(r#"source_module=MISSING-MIB"#)
+    }));
+    assert!(events.iter().any(|event| {
+        event.target == "mib_rs::resolver"
+            && event
+                .fields
+                .contains(r#"message=resolved oid graph edge via constrained fallback"#)
+            && event.fields.contains(r#"component="resolver""#)
+            && event
+                .fields
+                .contains(r#"fallback="smi_global_root_graph_edge""#)
+            && event.fields.contains(r#"module=TRACE-TEST-MIB"#)
+            && event.fields.contains(r#"name=enterprises"#)
+            && event.fields.contains(r#"phase="oids""#)
+    }));
+    assert!(events.iter().any(|event| {
+        event.target == "mib_rs::resolver"
+            && event
+                .fields
+                .contains(r#"message=resolved oid name via constrained fallback"#)
+            && event.fields.contains(r#"component="resolver""#)
+            && event.fields.contains(r#"fallback="smi_global_root""#)
+            && event.fields.contains(r#"module=TRACE-TEST-MIB"#)
+            && event.fields.contains(r#"name=enterprises"#)
+            && event.fields.contains(r#"phase="oids""#)
     }));
 }

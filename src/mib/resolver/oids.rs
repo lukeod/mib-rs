@@ -271,7 +271,10 @@ fn first_component_dep_symbol(
             if is_well_known_root(name) {
                 return None;
             }
-            resolve_dep_symbol(ctx, ir_mod, name)
+            if let Some(symbol) = resolve_dep_symbol(ctx, ir_mod, name) {
+                return Some(symbol);
+            }
+            lookup_smi_global_root_symbol(ctx, ir_mod, name)
         }
         ir::OidComponent::NamedNumber { name, .. } => {
             if is_well_known_root(name) {
@@ -279,7 +282,10 @@ fn first_component_dep_symbol(
             }
             // NamedNumber can still resolve by numeric fallback; only add graph edge
             // when the symbolic parent is resolvable.
-            resolve_dep_symbol(ctx, ir_mod, name)
+            if let Some(symbol) = resolve_dep_symbol(ctx, ir_mod, name) {
+                return Some(symbol);
+            }
+            lookup_smi_global_root_symbol(ctx, ir_mod, name)
         }
         ir::OidComponent::QualifiedName { module, name, .. } => Some(graph::Symbol {
             module: module.clone(),
@@ -291,6 +297,40 @@ fn first_component_dep_symbol(
         }),
         ir::OidComponent::Number { .. } => None,
     }
+}
+
+fn lookup_smi_global_root_symbol(
+    ctx: &ResolverContext,
+    ir_mod: IrModuleId,
+    name: &str,
+) -> Option<graph::Symbol> {
+    if ctx.strictness.allow_constrained_fallbacks() && is_smi_global_root_symbol(ctx, name) {
+        trace!(
+            target: "mib_rs::resolver",
+            component = "resolver",
+            phase = "oids",
+            module = %ctx.modules[ir_mod.0 as usize].name,
+            name = %name,
+            fallback = "smi_global_root_graph_edge",
+            "resolved oid graph edge via constrained fallback",
+        );
+        return Some(graph::Symbol {
+            module: "SNMPv2-SMI".to_string(),
+            name: name.to_string(),
+        });
+    }
+    None
+}
+
+fn is_smi_global_root_symbol(ctx: &ResolverContext, name: &str) -> bool {
+    [ctx.snmpv2_smi, ctx.rfc1155_smi]
+        .into_iter()
+        .flatten()
+        .any(|ir_id| {
+            ctx.module_oid_def_names
+                .get(&ir_id)
+                .is_some_and(|defs| defs.contains(name))
+        })
 }
 
 /// Resolve a dependency name to a module-qualified symbol by checking
@@ -377,7 +417,7 @@ fn resolve_oid_component(
         ir::OidComponent::Name { name, span } => resolve_name_component(ctx, od, name, *span),
         ir::OidComponent::NamedNumber { name, number, .. } => {
             // Try name lookup first.
-            if let Some(node) = resolve_name_component(ctx, od, name, comp.span()) {
+            if let Some(node) = lookup_name_component(ctx, od, name) {
                 return Some(node);
             }
             // Fall back to creating a named child.
@@ -462,12 +502,7 @@ fn set_intermediate_node(ctx: &mut ResolverContext, od: &OidDef, child: NodeId, 
     }
 }
 
-fn resolve_name_component(
-    ctx: &mut ResolverContext,
-    od: &OidDef,
-    name: &str,
-    span: Span,
-) -> Option<NodeId> {
+fn lookup_name_component(ctx: &mut ResolverContext, od: &OidDef, name: &str) -> Option<NodeId> {
     // Well-known roots.
     if let Some(arc) = well_known_root_arc(name) {
         let root = ctx.mib.tree().root();
@@ -499,6 +534,19 @@ fn resolve_name_component(
             fallback = "smi_global_root",
             "resolved oid name via constrained fallback",
         );
+        return Some(node);
+    }
+
+    None
+}
+
+fn resolve_name_component(
+    ctx: &mut ResolverContext,
+    od: &OidDef,
+    name: &str,
+    span: Span,
+) -> Option<NodeId> {
+    if let Some(node) = lookup_name_component(ctx, od, name) {
         return Some(node);
     }
 

@@ -40,8 +40,8 @@ pub(super) fn run_checks(ctx: &mut ResolverContext) {
     check_defval_constraints(ctx);
     check_index_constraints(ctx);
     check_enum_subtyping(ctx);
+    check_smiv2_identifier_hyphens(ctx);
     check_hyphen_in_label(ctx);
-    check_basetype_imports(ctx);
     check_format_hints(ctx);
     check_capabilities_status(ctx);
     check_type_status_usage(ctx);
@@ -66,7 +66,6 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
         if base_modules::is_base_module(&m.name) {
             continue;
         }
-        let lang = m.language;
 
         for def in &m.definitions {
             let ot = match def {
@@ -87,7 +86,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
             let kind = ctx.mib.tree().get(node_id).kind;
 
             // Access keyword checks
-            if lang == Language::SMIv1 {
+            if m.language == Language::SMIv1 {
                 if matches!(
                     ot.access_keyword,
                     AccessKeyword::MaxAccess | AccessKeyword::MinAccess
@@ -107,7 +106,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                         format!("{}: write-only access is discouraged", ot.name),
                     ));
                 }
-            } else if lang == Language::SMIv2 {
+            } else if m.language == Language::SMIv2 {
                 if ot.access_keyword == AccessKeyword::Access {
                     diags.push((
                         DiagCode::AccessInSMIv2,
@@ -167,16 +166,6 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                         ),
                     ));
                 }
-            }
-
-            // Status checks
-            if lang == Language::SMIv2 && ot.status.is_smiv1() {
-                diags.push((
-                    DiagCode::StatusInvalidSMIv2,
-                    Some(ir_id),
-                    ot.status_span,
-                    format!("{}: invalid SMIv2 status {}", ot.name, ot.status),
-                ));
             }
         }
     }
@@ -270,6 +259,60 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            let (code, label) = match def {
+                ir::Definition::Notification(_) => (DiagCode::ParentNotification, "notification"),
+                ir::Definition::ObjectIdentity(_)
+                | ir::Definition::ModuleIdentity(_)
+                | ir::Definition::ValueAssignment(_) => (DiagCode::ParentNode, "node"),
+                ir::Definition::ObjectGroup(_) | ir::Definition::NotificationGroup(_) => {
+                    (DiagCode::ParentGroup, "group")
+                }
+                ir::Definition::ModuleCompliance(_) => (DiagCode::ParentCompliance, "compliance"),
+                ir::Definition::AgentCapabilities(_) => {
+                    (DiagCode::ParentCapabilities, "capabilities")
+                }
+                _ => continue,
+            };
+
+            let Some(node_id) = ctx
+                .module_symbol_to_node
+                .get(&ir_id)
+                .and_then(|syms| syms.get(def.name()))
+                .copied()
+            else {
+                continue;
+            };
+
+            let node = ctx.mib.tree().get(node_id);
+            let Some(parent_id) = node.parent else {
+                continue;
+            };
+            if parent_id == ctx.mib.tree().root() {
+                continue;
+            }
+            if !is_simple_parent_kind(ctx.mib.tree().get(parent_id).kind) {
+                diags.push((
+                    code,
+                    Some(ir_id),
+                    def.span(),
+                    format!(
+                        "{}: {}'s parent node must be a simple node",
+                        def.name(),
+                        label
+                    ),
+                ));
             }
         }
     }
@@ -462,16 +505,55 @@ fn check_trap_in_smiv2(ctx: &mut ResolverContext) {
 
 /// Warn about unreferenced type definitions.
 fn check_type_unreferenced(ctx: &mut ResolverContext) {
-    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut referenced: Vec<std::collections::HashSet<String>> =
+        vec![std::collections::HashSet::new(); ctx.modules.len()];
 
     for idx in 0..ctx.modules.len() {
         let m = &ctx.modules[idx];
-        if base_modules::is_base_module(&m.name) {
-            continue;
-        }
         for def in &m.definitions {
-            if let ir::Definition::ObjectType(ot) = def {
-                collect_type_refs(&ot.syntax, &mut referenced);
+            match def {
+                ir::Definition::ObjectType(ot) => {
+                    collect_type_refs(&ot.syntax, &mut referenced[idx]);
+                }
+                ir::Definition::TypeDef(td) => {
+                    collect_type_refs(&td.syntax, &mut referenced[idx]);
+                }
+                ir::Definition::ModuleCompliance(comp) => {
+                    for cm in &comp.modules {
+                        for obj in &cm.objects {
+                            if let Some(syntax) = &obj.syntax {
+                                collect_type_refs(syntax, &mut referenced[idx]);
+                            }
+                            if let Some(syntax) = &obj.write_syntax {
+                                collect_type_refs(syntax, &mut referenced[idx]);
+                            }
+                        }
+                    }
+                }
+                ir::Definition::AgentCapabilities(cap) => {
+                    for support in &cap.supports {
+                        for variation in &support.variations {
+                            if let Some(syntax) = &variation.syntax {
+                                collect_type_refs(syntax, &mut referenced[idx]);
+                            }
+                            if let Some(syntax) = &variation.write_syntax {
+                                collect_type_refs(syntax, &mut referenced[idx]);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        for import in &m.imports {
+            for (source_idx, source_module) in ctx.modules.iter().enumerate() {
+                if source_module.name == import.module {
+                    referenced[source_idx].insert(import.symbol.clone());
+                }
             }
         }
     }
@@ -487,14 +569,14 @@ fn check_type_unreferenced(ctx: &mut ResolverContext) {
 
         for def in &m.definitions {
             if let ir::Definition::TypeDef(td) = def
-                && td.is_textual_convention
-                && !referenced.contains(&td.name)
+                && !matches!(td.syntax, ir::TypeSyntax::Sequence { .. })
+                && !referenced[idx].contains(&td.name)
             {
                 diags.push((
                     DiagCode::TypeUnreferenced,
                     Some(ir_id),
                     td.span,
-                    format!("{}: textual convention is never referenced", td.name),
+                    format!("{}: type defined but never referenced", td.name),
                 ));
             }
         }
@@ -1118,13 +1200,16 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
             let (name, status, span) = match def {
                 ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.status_span),
                 ir::Definition::ObjectIdentity(oi) => (&oi.name, oi.status, oi.span),
-                ir::Definition::Notification(n) => (&n.name, n.status, n.span),
+                ir::Definition::Notification(n) if n.trap_info.is_none() => {
+                    (&n.name, n.status, n.span)
+                }
                 ir::Definition::TypeDef(td) if td.is_textual_convention => {
                     (&td.name, td.status, td.status_span)
                 }
                 ir::Definition::ObjectGroup(g) => (&g.name, g.status, g.span),
                 ir::Definition::NotificationGroup(g) => (&g.name, g.status, g.span),
                 ir::Definition::ModuleCompliance(c) => (&c.name, c.status, c.span),
+                ir::Definition::AgentCapabilities(c) => (&c.name, c.status, c.span),
                 _ => continue,
             };
 
@@ -2676,23 +2761,37 @@ fn index_element_sub_ids(
     entry: &crate::mib::types::IndexEntry,
 ) -> Option<usize> {
     use crate::types::IndexEncoding;
+    let obj_id = entry.object?;
+    let obj = ctx.mib.object(obj_id);
     match entry.encoding {
         IndexEncoding::Integer => Some(1),
         IndexEncoding::IpAddress => Some(4),
         IndexEncoding::FixedString => {
-            let obj_id = entry.object?;
-            let obj = ctx.mib.object(obj_id);
             let sizes = obj.effective_sizes();
             if sizes.is_empty() {
                 return None;
             }
             Some(sizes[0].max as usize)
         }
-        IndexEncoding::LengthPrefixed => None,
+        IndexEncoding::LengthPrefixed => {
+            let base = obj
+                .typ
+                .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))?;
+            if base == BaseType::ObjectIdentifier {
+                return Some(129);
+            }
+            let max = obj.effective_sizes().iter().map(|r| r.max).max()?;
+            usize::try_from(max).ok().map(|n| n + 1)
+        }
         IndexEncoding::Implied => {
-            // Implied: uses trailing octets without length prefix.
-            // Conservative: return 1 to avoid false positives.
-            Some(1)
+            let base = obj
+                .typ
+                .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))?;
+            if base == BaseType::ObjectIdentifier {
+                return Some(128);
+            }
+            let max = obj.effective_sizes().iter().map(|r| r.max).max()?;
+            usize::try_from(max).ok()
         }
         IndexEncoding::Unknown => None,
     }
@@ -2778,6 +2877,34 @@ fn check_enum_subtyping_syntax(
 
 // --- Hyphen in label ---
 
+fn check_smiv2_identifier_hyphens(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for idx in 0..ctx.modules.len() {
+        let m = &ctx.modules[idx];
+        let ir_id = IrModuleId(idx as u32);
+        if m.language != Language::SMIv2 || base_modules::is_base_module(&m.name) {
+            continue;
+        }
+
+        for def in &m.definitions {
+            if def.oid().is_some() && def.name().contains('-') {
+                diags.push((
+                    DiagCode::IdentifierHyphenSMIv2,
+                    Some(ir_id),
+                    def.span(),
+                    format!(
+                        "identifier {:?} should not contain hyphens in SMIv2 MIB",
+                        def.name()
+                    ),
+                ));
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
 fn check_hyphen_in_label(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
@@ -2835,88 +2962,6 @@ fn check_hyphen_in_syntax(
         }
         ir::TypeSyntax::Constrained { base, .. } => {
             check_hyphen_in_syntax(diags, ir_id, name, base, span);
-        }
-        _ => {}
-    }
-}
-
-// --- Basetype imports ---
-
-fn check_basetype_imports(ctx: &mut ResolverContext) {
-    const SMI_BASE_TYPES: &[(&str, &str)] = &[
-        ("Integer32", "SNMPv2-SMI"),
-        ("Counter32", "SNMPv2-SMI"),
-        ("Counter64", "SNMPv2-SMI"),
-        ("Gauge32", "SNMPv2-SMI"),
-        ("Unsigned32", "SNMPv2-SMI"),
-        ("TimeTicks", "SNMPv2-SMI"),
-        ("IpAddress", "SNMPv2-SMI"),
-        ("Opaque", "SNMPv2-SMI"),
-    ];
-
-    let base_type_map: HashMap<&str, &str> = SMI_BASE_TYPES.iter().copied().collect();
-    let mut diags = Vec::new();
-
-    for idx in 0..ctx.modules.len() {
-        let m = &ctx.modules[idx];
-        let ir_id = IrModuleId(idx as u32);
-        if m.language != Language::SMIv2 || base_modules::is_base_module(&m.name) {
-            continue;
-        }
-
-        let imported: HashSet<&str> = m.imports.iter().map(|i| i.symbol.as_str()).collect();
-
-        let mut referenced: HashSet<&str> = HashSet::new();
-        for def in &m.definitions {
-            match def {
-                ir::Definition::ObjectType(ot) => {
-                    collect_syntax_basetype_refs(&ot.syntax, &base_type_map, &mut referenced);
-                }
-                ir::Definition::TypeDef(td) => {
-                    collect_syntax_basetype_refs(&td.syntax, &base_type_map, &mut referenced);
-                }
-                _ => {}
-            }
-        }
-
-        for type_name in referenced {
-            if imported.contains(type_name) {
-                continue;
-            }
-            let expected_mod = base_type_map.get(type_name).unwrap_or(&"SNMPv2-SMI");
-            diags.push((
-                DiagCode::BasetypeNotImported,
-                Some(ir_id),
-                m.span,
-                format!(
-                    "{} used but not imported from {} in {}",
-                    type_name, expected_mod, m.name
-                ),
-            ));
-        }
-    }
-
-    emit_all(ctx, diags);
-}
-
-fn collect_syntax_basetype_refs<'a>(
-    syntax: &'a ir::TypeSyntax,
-    base_types: &HashMap<&str, &str>,
-    refs: &mut HashSet<&'a str>,
-) {
-    match syntax {
-        ir::TypeSyntax::TypeRef { name, .. } => {
-            if base_types.contains_key(name.as_str()) {
-                refs.insert(name.as_str());
-            }
-        }
-        ir::TypeSyntax::Constrained { base, .. } => {
-            collect_syntax_basetype_refs(base, base_types, refs);
-        }
-        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => {
-            if base_types.contains_key(base.as_str()) {
-                refs.insert(base.as_str());
-            }
         }
         _ => {}
     }

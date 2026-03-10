@@ -3,7 +3,7 @@
 // field-by-field. No static fixture files - gomib-fixturegen is built and
 // invoked as a subprocess, producing JSON on stdout.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -96,6 +96,8 @@ struct FixturePayload {
     nodes: HashMap<String, FixtureNode>,
     #[serde(rename = "Modules")]
     modules: HashMap<String, FixtureModule>,
+    #[serde(rename = "Diagnostics", default)]
+    diagnostics: Vec<FixtureDiagnostic>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +114,22 @@ struct RangeInfo {
     low: i64,
     #[serde(rename = "High")]
     high: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureDiagnostic {
+    #[serde(rename = "Code")]
+    code: String,
+    #[serde(rename = "Severity")]
+    severity: String,
+    #[serde(rename = "Module", default)]
+    module: String,
+    #[serde(rename = "Line", default)]
+    line: usize,
+    #[serde(rename = "Column", default)]
+    column: usize,
+    #[serde(rename = "Message")]
+    message: String,
 }
 
 // -- Paths --
@@ -157,18 +175,22 @@ fn fixturegen_bin() -> &'static PathBuf {
     })
 }
 
-fn run_fixturegen(strictness: &str) -> FixturePayload {
+fn run_fixturegen(strictness: &str, include_diagnostics: bool) -> FixturePayload {
     let bin = fixturegen_bin();
     let corpus = corpus_dir();
 
-    let output = Command::new(bin)
-        .args([
-            "-corpus",
-            corpus.to_str().unwrap(),
-            "-strictness",
-            strictness,
-            "-include-modules",
-        ])
+    let mut cmd = Command::new(bin);
+    cmd.args([
+        "-corpus",
+        corpus.to_str().unwrap(),
+        "-strictness",
+        strictness,
+        "-include-modules",
+    ]);
+    if include_diagnostics {
+        cmd.arg("-include-diagnostics");
+    }
+    let output = cmd
         .output()
         .unwrap_or_else(|e| panic!("failed to run gomib-fixturegen: {e}"));
 
@@ -191,6 +213,18 @@ fn load_mibrs(strictness: ResolverStrictness) -> Mib {
     // Never fail on diagnostics, matching Go's behavior where Load always
     // returns a valid Mib.
     let mut diag = DiagnosticConfig::default();
+    diag.fail_at = Severity::Fatal;
+    let opts = LoadOptions::new()
+        .source(src)
+        .resolver_strictness(strictness)
+        .diagnostic_config(diag);
+    load(opts).expect("load failed").mib
+}
+
+fn load_mibrs_with_diagnostics(strictness: ResolverStrictness) -> Mib {
+    let dir = corpus_dir();
+    let src = dir_source(&dir).expect("failed to create corpus source");
+    let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
     let opts = LoadOptions::new()
         .source(src)
@@ -236,6 +270,16 @@ struct ExtractedModule {
     description: String,
     last_updated: String,
     revisions: Vec<(String, String)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedDiagnostic {
+    code: String,
+    severity: String,
+    module: String,
+    line: usize,
+    column: usize,
+    message: String,
 }
 
 fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
@@ -553,10 +597,99 @@ fn compare_modules(got: &ExtractedModule, expected: &FixtureModule) -> Vec<Strin
     failures
 }
 
+fn extract_diagnostics(mib: &Mib) -> Vec<ExtractedDiagnostic> {
+    let mut diags: Vec<_> = mib
+        .diagnostics()
+        .iter()
+        .map(|d| ExtractedDiagnostic {
+            code: d.code.as_code().to_string(),
+            severity: d.severity.to_string(),
+            module: d.module.clone().unwrap_or_default(),
+            line: d.line.unwrap_or(0),
+            column: d.column.unwrap_or(0),
+            message: normalize_diagnostic_message(&d.message),
+        })
+        .collect();
+
+    diags.sort_by(|a, b| {
+        a.code
+            .cmp(&b.code)
+            .then_with(|| a.severity.cmp(&b.severity))
+            .then_with(|| a.module.cmp(&b.module))
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.message.cmp(&b.message))
+    });
+
+    diags
+}
+
+fn normalize_diagnostic_message(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn compare_diagnostics(
+    strictness_name: &str,
+    got: &[ExtractedDiagnostic],
+    expected: &[FixtureDiagnostic],
+) -> Vec<String> {
+    let expected: Vec<_> = expected
+        .iter()
+        .map(|d| ExtractedDiagnostic {
+            code: d.code.clone(),
+            severity: d.severity.clone(),
+            module: d.module.clone(),
+            line: d.line,
+            column: d.column,
+            message: normalize_diagnostic_message(&d.message),
+        })
+        .collect();
+
+    let got_counts = diagnostic_counts(got);
+    let expected_counts = diagnostic_counts(&expected);
+    let mut failures = Vec::new();
+    let all_keys: std::collections::BTreeSet<_> = got_counts
+        .keys()
+        .chain(expected_counts.keys())
+        .cloned()
+        .collect();
+    for key in all_keys {
+        let got_count = got_counts.get(&key).copied().unwrap_or(0);
+        let expected_count = expected_counts.get(&key).copied().unwrap_or(0);
+        if got_count != expected_count {
+            failures.push(format!(
+                "[{strictness_name}] diagnostic count mismatch for module={} code={} severity={}: got={} expected={}",
+                key.module, key.code, key.severity, got_count, expected_count
+            ));
+        }
+    }
+    failures
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DiagnosticCountKey {
+    code: String,
+    severity: String,
+    module: String,
+}
+
+fn diagnostic_counts(diags: &[ExtractedDiagnostic]) -> BTreeMap<DiagnosticCountKey, usize> {
+    let mut counts = BTreeMap::new();
+    for d in diags {
+        let key = DiagnosticCountKey {
+            code: d.code.clone(),
+            severity: d.severity.clone(),
+            module: d.module.clone(),
+        };
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    counts
+}
+
 // -- Core comparison logic --
 
 fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) -> Vec<String> {
-    let payload = run_fixturegen(strictness_name);
+    let payload = run_fixturegen(strictness_name, false);
     let gomib_nodes = payload.nodes;
     let gomib_modules = payload.modules;
     let mib = load_mibrs(strictness);
@@ -648,6 +781,15 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
     failures
 }
 
+fn compare_diagnostics_at_strictness(
+    strictness_name: &str,
+    strictness: ResolverStrictness,
+) -> Vec<String> {
+    let payload = run_fixturegen(strictness_name, true);
+    let got = extract_diagnostics(&load_mibrs_with_diagnostics(strictness));
+    compare_diagnostics(strictness_name, &got, &payload.diagnostics)
+}
+
 // -- Tests --
 
 fn assert_no_divergences(level: &str, strictness: ResolverStrictness) {
@@ -655,6 +797,17 @@ fn assert_no_divergences(level: &str, strictness: ResolverStrictness) {
     if !failures.is_empty() {
         panic!(
             "{} divergences at {level}:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+fn assert_no_diagnostic_divergences(level: &str, strictness: ResolverStrictness) {
+    let failures = compare_diagnostics_at_strictness(level, strictness);
+    if !failures.is_empty() {
+        panic!(
+            "{} diagnostic divergences at {level}:\n{}",
             failures.len(),
             failures.join("\n")
         );
@@ -674,4 +827,22 @@ fn cross_normal() {
 #[test]
 fn cross_strict() {
     assert_no_divergences("strict", ResolverStrictness::Strict);
+}
+
+#[test]
+#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
+fn diagnostics_cross_permissive() {
+    assert_no_diagnostic_divergences("permissive", ResolverStrictness::Permissive);
+}
+
+#[test]
+#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
+fn diagnostics_cross_normal() {
+    assert_no_diagnostic_divergences("normal", ResolverStrictness::Normal);
+}
+
+#[test]
+#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
+fn diagnostics_cross_strict() {
+    assert_no_diagnostic_divergences("strict", ResolverStrictness::Strict);
 }

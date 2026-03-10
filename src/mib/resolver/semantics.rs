@@ -1,6 +1,6 @@
 use crate::ir;
 use crate::mib::Oid;
-use crate::types::{Access, BaseType, Kind, Span};
+use crate::types::{Access, BaseType, DiagCode, Kind, Span, Status};
 use tracing::trace;
 
 use super::super::capability::CapabilityData;
@@ -16,6 +16,7 @@ pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
     infer_node_kinds(ctx);
     create_resolved_objects(ctx);
     link_object_indexes(ctx);
+    check_augments_nesting(ctx);
     create_resolved_notifications(ctx);
     create_resolved_groups(ctx);
     create_resolved_compliances(ctx);
@@ -76,6 +77,31 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
             }
         }
     }
+
+    let mut table_count = 0;
+    let mut row_count = 0;
+    let mut column_count = 0;
+    let mut scalar_count = 0;
+    for node_id in ctx.mib.tree().all_nodes() {
+        match ctx.mib.tree().get(node_id).kind {
+            Kind::Table => table_count += 1,
+            Kind::Row => row_count += 1,
+            Kind::Column => column_count += 1,
+            Kind::Scalar => scalar_count += 1,
+            _ => {}
+        }
+    }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        table_count = table_count,
+        row_count = row_count,
+        column_count = column_count,
+        scalar_count = scalar_count,
+        "classified object node kinds",
+    );
 }
 
 /// Create resolved Object instances from OBJECT-TYPE definitions.
@@ -94,6 +120,7 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         })
         .collect();
 
+    let mut created_object_count = 0;
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
@@ -184,7 +211,16 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         // Register in module.
         ctx.mib.module_mut(resolved_mod).add_object(&name, obj_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        created_object_count += 1;
     }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        object_count = created_object_count,
+        "created resolved objects",
+    );
 }
 
 fn resolve_object_type(
@@ -504,6 +540,42 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
     }
 }
 
+fn check_augments_nesting(ctx: &mut ResolverContext) {
+    for mod_idx in 0..ctx.modules.len() {
+        let ir_id = IrModuleId(mod_idx as u32);
+        let work: Vec<(String, String, Span)> = ctx.modules[mod_idx]
+            .definitions
+            .iter()
+            .filter_map(|def| match def {
+                ir::Definition::ObjectType(ot) if !ot.augments.is_empty() => {
+                    Some((ot.name.clone(), ot.augments.clone(), ot.span))
+                }
+                _ => None,
+            })
+            .collect();
+
+        for (name, augments, span) in work {
+            let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_id, &name) else {
+                continue;
+            };
+            let Some(target_obj_id) = ctx.mib.object(obj_id).augments() else {
+                continue;
+            };
+            if ctx.mib.object(target_obj_id).augments().is_some() {
+                ctx.emit_diagnostic(
+                    DiagCode::AugmentNested,
+                    Some(ir_id),
+                    span,
+                    format!(
+                        "{:?} augments {:?} which is not a base table row",
+                        name, augments
+                    ),
+                );
+            }
+        }
+    }
+}
+
 fn resolve_index_entry(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
@@ -635,6 +707,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         })
         .collect();
 
+    let mut created_notification_count = 0;
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
@@ -678,6 +751,17 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         for obj_name in &objects {
             let obj = lookup_object_by_name(ctx, ir_id, obj_name);
             if let Some(obj_id) = obj {
+                if ctx.mib.object(obj_id).access() == Access::NotAccessible {
+                    ctx.emit_diagnostic(
+                        DiagCode::NotifObjectAccess,
+                        Some(ir_id),
+                        span,
+                        format!(
+                            "notification {:?} references {:?} which is not-accessible",
+                            name, obj_name
+                        ),
+                    );
+                }
                 nd.objects.push(obj_id);
             } else {
                 let mod_name = ctx.modules[mod_idx].name.clone();
@@ -717,7 +801,16 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
             .module_mut(resolved_mod)
             .add_notification(&name, notif_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        created_notification_count += 1;
     }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        notification_count = created_notification_count,
+        "created resolved notifications",
+    );
 }
 
 /// Create resolved Group instances (both OBJECT-GROUP and NOTIFICATION-GROUP).
@@ -737,6 +830,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         })
         .collect();
 
+    let mut created_group_count = 0;
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
@@ -787,16 +881,80 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         gd.is_notification_group = is_notif;
         gd.entity.oid_refs = build_oid_refs(&oid);
 
+        let mut has_objects = false;
+        let mut has_notifications = false;
+
         // Resolve members.
         for member_name in &members {
             if let Some((member_node, used_import)) = lookup_member_node(ctx, ir_id, member_name) {
                 if used_import {
                     ctx.mark_import_used(ir_id, member_name);
                 }
+
+                let (kind, object_id) = {
+                    let node = ctx.mib.tree().get(member_node);
+                    (node.kind, node.object)
+                };
+
+                if is_notif {
+                    if kind.is_object_type() {
+                        has_objects = true;
+                        ctx.emit_diagnostic(
+                            DiagCode::GroupNotificationsObject,
+                            Some(ir_id),
+                            span,
+                            format!(
+                                "notification group {:?} includes object {:?}",
+                                name, member_name
+                            ),
+                        );
+                    } else if kind == Kind::Notification {
+                        has_notifications = true;
+                    }
+                } else {
+                    if kind == Kind::Notification {
+                        has_notifications = true;
+                        ctx.emit_diagnostic(
+                            DiagCode::GroupObjectsNotification,
+                            Some(ir_id),
+                            span,
+                            format!(
+                                "object group {:?} includes notification {:?}",
+                                name, member_name
+                            ),
+                        );
+                    } else if kind.is_object_type() {
+                        has_objects = true;
+                    }
+
+                    if let Some(obj_id) = object_id
+                        && ctx.mib.object(obj_id).access() == Access::NotAccessible
+                    {
+                        ctx.emit_diagnostic(
+                            DiagCode::GroupNotAccessible,
+                            Some(ir_id),
+                            span,
+                            format!(
+                                "object {:?} of group {:?} must not be not-accessible",
+                                member_name, name
+                            ),
+                        );
+                    }
+                }
+
+                check_group_member_status(
+                    ctx,
+                    ir_id,
+                    span,
+                    status,
+                    &name,
+                    member_node,
+                    member_name,
+                );
                 gd.members.push(member_node);
             } else {
                 ctx.emit_diagnostic(
-                    crate::types::DiagCode::GroupMemberUnresolved,
+                    DiagCode::GroupMemberUnresolved,
                     Some(ir_id),
                     span,
                     format!(
@@ -805,6 +963,18 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                     ),
                 );
             }
+        }
+
+        if has_objects && has_notifications {
+            ctx.emit_diagnostic(
+                DiagCode::GroupMemberMixed,
+                Some(ir_id),
+                span,
+                format!(
+                    "group {:?} contains scalars/columns and notifications",
+                    name
+                ),
+            );
         }
 
         let group_id = ctx.mib.add_group(gd);
@@ -817,6 +987,63 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
 
         ctx.mib.module_mut(resolved_mod).add_group(&name, group_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        created_group_count += 1;
+    }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        group_count = created_group_count,
+        "created resolved groups",
+    );
+}
+
+fn member_node_status(ctx: &ResolverContext, node_id: NodeId) -> Option<Status> {
+    let node = ctx.mib.tree().get(node_id);
+    if let Some(obj_id) = node.object {
+        return Some(ctx.mib.object(obj_id).status());
+    }
+    if let Some(notif_id) = node.notification {
+        return Some(ctx.mib.notification(notif_id).status());
+    }
+    None
+}
+
+fn status_ord(status: Status) -> u8 {
+    match status {
+        Status::Current => 0,
+        Status::Deprecated => 1,
+        Status::Obsolete => 2,
+        _ => 0,
+    }
+}
+
+fn check_group_member_status(
+    ctx: &mut ResolverContext,
+    ir_id: IrModuleId,
+    span: Span,
+    group_status: Status,
+    group_name: &str,
+    member_node: NodeId,
+    member_name: &str,
+) {
+    let Some(member_status) = member_node_status(ctx, member_node) else {
+        return;
+    };
+    if member_status.is_smiv1() || group_status.is_smiv1() {
+        return;
+    }
+    if status_ord(member_status) > status_ord(group_status) {
+        ctx.emit_diagnostic(
+            DiagCode::GroupObjectStatus,
+            Some(ir_id),
+            span,
+            format!(
+                "{} group {:?} includes {} member {:?}",
+                group_status, group_name, member_status, member_name
+            ),
+        );
     }
 }
 
@@ -835,6 +1062,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         })
         .collect();
 
+    let mut created_compliance_count = 0;
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
@@ -915,6 +1143,31 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
 
         let mut comp_modules = Vec::new();
         for cmd in &comp_mod_data {
+            if cmd.module_name == ir_mod_name {
+                for group_name in &cmd.mandatory_groups {
+                    if let Some((_, used_import)) = ctx.lookup_node_for_module(ir_id, group_name)
+                        && used_import
+                    {
+                        ctx.mark_import_used(ir_id, group_name);
+                    }
+                }
+                for group in &cmd.groups {
+                    if let Some((_, used_import)) = ctx.lookup_node_for_module(ir_id, &group.group)
+                        && used_import
+                    {
+                        ctx.mark_import_used(ir_id, &group.group);
+                    }
+                }
+                for object in &cmd.objects {
+                    if let Some((_, used_import)) =
+                        ctx.lookup_object_for_module(ir_id, &object.object)
+                        && used_import
+                    {
+                        ctx.mark_import_used(ir_id, &object.object);
+                    }
+                }
+            }
+
             let objects: Vec<ComplianceObject> = cmd
                 .objects
                 .iter()
@@ -978,7 +1231,16 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
             .module_mut(resolved_mod)
             .add_compliance(&name, comp_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        created_compliance_count += 1;
     }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        compliance_count = created_compliance_count,
+        "created resolved compliances",
+    );
 }
 
 struct VariationData {
@@ -1007,6 +1269,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         })
         .collect();
 
+    let mut created_capability_count = 0;
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
@@ -1156,7 +1419,16 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
             .module_mut(resolved_mod)
             .add_capability(&name, cap_id);
         ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        created_capability_count += 1;
     }
+
+    trace!(
+        target: "mib_rs::resolver",
+        component = "resolver",
+        phase = "semantics",
+        capability_count = created_capability_count,
+        "created resolved capabilities",
+    );
 }
 
 /// Convert an IR DEFVAL to a resolved DefVal.
@@ -1214,7 +1486,10 @@ fn convert_defval(
             });
             if is_oid {
                 // Try to look up as an OID reference.
-                if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, label) {
+                if let Some((node_id, used_import)) = ctx.lookup_node_for_module(ir_mod, label) {
+                    if used_import {
+                        ctx.mark_import_used(ir_mod, label);
+                    }
                     let oid = ctx.mib.tree().oid_of(node_id).clone();
                     return DefVal::oid(oid, label.clone());
                 }
@@ -1232,7 +1507,10 @@ fn convert_defval(
             DefVal::bits(labels.clone(), raw)
         }
         ir::syntax::DefVal::OidRef(name) => {
-            if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, name) {
+            if let Some((node_id, used_import)) = ctx.lookup_node_for_module(ir_mod, name) {
+                if used_import {
+                    ctx.mark_import_used(ir_mod, name);
+                }
                 let oid = ctx.mib.tree().oid_of(node_id).clone();
                 DefVal::oid(oid, name.clone())
             } else {
