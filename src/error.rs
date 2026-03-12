@@ -19,7 +19,7 @@ pub enum LoadError {
 
 impl LoadError {
     /// Create a Source error from any error type.
-    pub fn source(err: impl std::error::Error + Send + Sync + 'static) -> Self {
+    pub fn from_source(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         LoadError::Source(Box::new(err))
     }
 }

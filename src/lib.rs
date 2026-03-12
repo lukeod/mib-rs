@@ -2,14 +2,14 @@ pub mod ast;
 pub mod error;
 #[cfg(feature = "serde")]
 pub mod export;
-pub mod graph;
+pub(crate) mod graph;
 pub mod ir;
-pub mod lexer;
+pub(crate) mod lexer;
 pub mod load;
 pub mod lower;
 pub mod mib;
 pub mod parser;
-pub mod scan;
+pub(crate) mod scan;
 pub mod searchpath;
 pub mod source;
 pub mod token;

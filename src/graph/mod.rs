@@ -13,6 +13,7 @@ pub struct Symbol {
 }
 
 impl Symbol {
+    #[cfg(test)]
     pub fn new(module: impl Into<String>, name: impl Into<String>) -> Self {
         Symbol {
             module: module.into(),
@@ -29,7 +30,8 @@ impl fmt::Display for Symbol {
 
 /// Result of computing the resolution order.
 pub struct ResolutionResult {
-    /// Symbols in topological (dependency) order.
+    /// Symbols in topological (dependency) order (used by tests for validation).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub order: Vec<Symbol>,
     /// Node indices in topological (dependency) order (parallel to `order`).
     pub order_indices: Vec<NodeIndex>,

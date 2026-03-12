@@ -11,22 +11,18 @@ pub(super) fn check_module_identity_dates(
 ) {
     let now = now_utc();
 
-    let (last_updated_time, last_updated_valid) =
-        check_date(ctx, last_updated, last_updated_span, now);
+    let last_updated_time = check_date(ctx, last_updated, last_updated_span, now);
 
     // Validate each revision date and collect parsed times for ordering checks.
     let revs: Vec<(Option<DateComponents>, Span)> = revision_dates
         .iter()
-        .map(|(date, span)| {
-            let (t, valid) = check_date(ctx, date, *span, now);
-            (if valid { Some(t) } else { None }, *span)
-        })
+        .map(|(date, span)| (check_date(ctx, date, *span, now), *span))
         .collect();
 
     // Check revision ordering: must be reverse chronological (descending).
     for i in 1..revs.len() {
         if let (Some(prev), Some(curr)) = (&revs[i - 1].0, &revs[i].0)
-            && !curr.before(prev)
+            && curr >= prev
         {
             ctx.emit_diagnostic(
                 DiagCode::RevisionNotDescending,
@@ -40,10 +36,10 @@ pub(super) fn check_module_identity_dates(
     }
 
     // Check revision-after-update: no revision may exceed LAST-UPDATED.
-    if last_updated_valid {
+    if let Some(last_updated_time) = &last_updated_time {
         for (i, rev) in revs.iter().enumerate() {
             if let Some(t) = &rev.0
-                && t.after(&last_updated_time)
+                && t > last_updated_time
             {
                 ctx.emit_diagnostic(
                     DiagCode::RevisionAfterUpdate,
@@ -58,25 +54,13 @@ pub(super) fn check_module_identity_dates(
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct DateComponents {
     year: u32,
     month: u32,
     day: u32,
     hour: u32,
     min: u32,
-}
-
-impl DateComponents {
-    fn before(&self, other: &DateComponents) -> bool {
-        let self_tuple = (self.year, self.month, self.day, self.hour, self.min);
-        let other_tuple = (other.year, other.month, other.day, other.hour, other.min);
-        self_tuple < other_tuple
-    }
-
-    fn after(&self, other: &DateComponents) -> bool {
-        other.before(self)
-    }
 }
 
 /// Validates a single SMI date string (ExtUTCTime format).
@@ -86,17 +70,9 @@ fn check_date(
     date: &str,
     span: Span,
     now: DateComponents,
-) -> (DateComponents, bool) {
-    let zero = DateComponents {
-        year: 0,
-        month: 0,
-        day: 0,
-        hour: 0,
-        min: 0,
-    };
-
+) -> Option<DateComponents> {
     if date.is_empty() {
-        return (zero, false);
+        return None;
     }
 
     let bytes = date.as_bytes();
@@ -112,7 +88,7 @@ fn check_date(
                 bytes.len()
             ),
         );
-        return (zero, false);
+        return None;
     }
 
     // All characters before final must be digits, final must be 'Z'.
@@ -127,7 +103,7 @@ fn check_date(
                     i + 1
                 ),
             );
-            return (zero, false);
+            return None;
         }
     }
     if bytes[bytes.len() - 1] != b'Z' {
@@ -136,7 +112,7 @@ fn check_date(
             span,
             format!("date {:?} must end with 'Z'", date),
         );
-        return (zero, false);
+        return None;
     }
 
     // Parse numeric components.
@@ -169,7 +145,7 @@ fn check_date(
             span,
             format!("date {:?} has illegal month {:02}", date, month),
         );
-        return (zero, false);
+        return None;
     }
     if !(1..=31).contains(&day) {
         ctx.emit_diagnostic(
@@ -177,7 +153,7 @@ fn check_date(
             span,
             format!("date {:?} has illegal day {:02}", date, day),
         );
-        return (zero, false);
+        return None;
     }
     if hour > 23 {
         ctx.emit_diagnostic(
@@ -185,7 +161,7 @@ fn check_date(
             span,
             format!("date {:?} has illegal hour {:02}", date, hour),
         );
-        return (zero, false);
+        return None;
     }
     if min > 59 {
         ctx.emit_diagnostic(
@@ -193,7 +169,7 @@ fn check_date(
             span,
             format!("date {:?} has illegal minutes {:02}", date, min),
         );
-        return (zero, false);
+        return None;
     }
 
     // Check calendar validity (e.g. Feb 30 is not valid).
@@ -203,7 +179,7 @@ fn check_date(
             span,
             format!("date {:?} is not a valid calendar date", date),
         );
-        return (zero, false);
+        return None;
     }
 
     let dc = DateComponents {
@@ -223,14 +199,14 @@ fn check_date(
         hour: 0,
         min: 0,
     };
-    if dc.before(&smi_epoch) {
+    if dc < smi_epoch {
         ctx.emit_diagnostic(
             DiagCode::DateInPast,
             span,
             format!("date {:?} predates the SMI standard", date),
         );
     }
-    if dc.after(&now) {
+    if dc > now {
         ctx.emit_diagnostic(
             DiagCode::DateInFuture,
             span,
@@ -238,7 +214,7 @@ fn check_date(
         );
     }
 
-    (dc, true)
+    Some(dc)
 }
 
 fn is_leap_year(year: u32) -> bool {
@@ -329,8 +305,8 @@ mod tests {
             hour: 0,
             min: 0,
         };
-        assert!(d1.before(&d2));
-        assert!(d2.after(&d1));
-        assert!(!d1.after(&d2));
+        assert!(d1 < d2);
+        assert!(d2 > d1);
+        assert!(!(d1 > d2));
     }
 }

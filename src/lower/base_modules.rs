@@ -51,8 +51,17 @@ pub fn base_module_from_name(name: &str) -> Option<&'static BaseModuleInfo> {
 }
 
 /// Returns the canonical names of all base modules.
-pub fn base_module_names() -> Vec<&'static str> {
-    BASE_MODULES.iter().map(|bm| bm.name).collect()
+pub fn base_module_names() -> &'static [&'static str] {
+    static NAMES: &[&str] = &[
+        "SNMPv2-SMI",
+        "SNMPv2-TC",
+        "SNMPv2-CONF",
+        "RFC1155-SMI",
+        "RFC1065-SMI",
+        "RFC-1212",
+        "RFC-1215",
+    ];
+    NAMES
 }
 
 /// Returns synthetic Module IR values for all base modules.
