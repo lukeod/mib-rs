@@ -6,16 +6,47 @@ use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStr
 use super::super::mib::Mib;
 use super::super::types::*;
 
-pub(super) const REASON_MODULE_NOT_FOUND: &str = "module_not_found";
-pub(super) const REASON_SYMBOL_NOT_EXPORTED: &str = "symbol_not_exported";
-pub(super) const REASON_UNKNOWN_TYPE: &str = "unknown_type";
-pub(super) const REASON_UNKNOWN_PARENT: &str = "unknown_parent";
-pub(super) const REASON_UNKNOWN_INDEX_OBJECT: &str = "unknown_index_object";
-pub(super) const REASON_UNKNOWN_OBJECT: &str = "unknown_object";
+/// Reason an imported or referenced symbol could not be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnresolvedReason {
+    ModuleNotFound,
+    SymbolNotExported,
+    TypeNotFound,
+    DependencyCycle,
+    ComponentNotFound,
+    EnterpriseNotFound,
+    AugmentsTargetNotFound,
+    IndexObjectNotFound,
+    ObjectNotFound,
+}
+
+impl UnresolvedReason {
+    /// Convert to the public-facing reason string used in UnresolvedRef.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ModuleNotFound => "module_not_found",
+            Self::SymbolNotExported => "symbol_not_exported",
+            Self::TypeNotFound => "unknown_type",
+            Self::DependencyCycle => "dependency_cycle",
+            Self::ComponentNotFound => "unknown_parent",
+            Self::EnterpriseNotFound => "unknown_parent",
+            Self::AugmentsTargetNotFound => "unknown_parent",
+            Self::IndexObjectNotFound => "unknown_index_object",
+            Self::ObjectNotFound => "unknown_object",
+        }
+    }
+}
 
 /// Resolver-internal module index (index into ctx.modules Vec).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct IrModuleId(pub u32);
+
+impl IrModuleId {
+    /// Return the index into the modules Vec.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 /// All mutable state for the five resolver phases.
 pub(super) struct ResolverContext {
@@ -75,7 +106,7 @@ pub(super) struct UnresolvedTracking {
     pub kind: UnresolvedKind,
     pub symbol: String,
     pub module: String,
-    pub reason: String,
+    pub reason: UnresolvedReason,
 }
 
 impl ResolverContext {
@@ -109,6 +140,20 @@ impl ResolverContext {
         }
     }
 
+    /// Iterate all modules as (IrModuleId, &Module) pairs.
+    pub fn all_modules(&self) -> impl Iterator<Item = (IrModuleId, &ir::Module)> {
+        self.modules
+            .iter()
+            .enumerate()
+            .map(|(idx, m)| (IrModuleId(idx as u32), m))
+    }
+
+    /// Iterate user (non-base) modules as (IrModuleId, &Module) pairs.
+    pub fn user_modules(&self) -> impl Iterator<Item = (IrModuleId, &ir::Module)> {
+        self.all_modules()
+            .filter(|(_, m)| !crate::lower::base_modules::is_base_module(&m.name))
+    }
+
     /// Emit a diagnostic if the config says to report it.
     pub fn emit_diagnostic(
         &mut self,
@@ -123,7 +168,7 @@ impl ResolverContext {
         }
         let (module_name, line, col) = match ir_mod {
             Some(id) => {
-                let m = &self.modules[id.0 as usize];
+                let m = &self.modules[id.index()];
                 let (l, c) = line_col_from_module(m, span);
                 (m.name.clone(), l, c)
             }
@@ -287,8 +332,7 @@ impl ResolverContext {
 
     /// Global node lookup across all modules.
     pub fn lookup_node_global(&self, name: &str) -> Option<NodeId> {
-        for ir_mod_id in 0..self.modules.len() {
-            let id = IrModuleId(ir_mod_id as u32);
+        for (id, _) in self.all_modules() {
             if let Some(node) = self
                 .module_symbol_to_node
                 .get(&id)
@@ -317,12 +361,12 @@ impl ResolverContext {
 
     /// Get the language of an IR module.
     pub fn module_language(&self, id: IrModuleId) -> Language {
-        self.modules[id.0 as usize].language
+        self.modules[id.index()].language
     }
 
     /// Extract LAST-UPDATED from an IR module's first ModuleIdentity def.
     pub fn extract_last_updated(&self, id: IrModuleId) -> String {
-        let m = &self.modules[id.0 as usize];
+        let m = &self.modules[id.index()];
         for def in &m.definitions {
             if let ir::Definition::ModuleIdentity(mi) = def {
                 return mi.last_updated.clone();
@@ -337,11 +381,11 @@ impl ResolverContext {
         symbol: &str,
         importing_module: &str,
         from_module: &str,
-        reason: &str,
+        reason: UnresolvedReason,
         ir_mod: IrModuleId,
         span: Span,
     ) {
-        let code = if reason == REASON_MODULE_NOT_FOUND {
+        let code = if reason == UnresolvedReason::ModuleNotFound {
             DiagCode::ImportModuleNotFound
         } else {
             DiagCode::ImportNotFound
@@ -350,13 +394,13 @@ impl ResolverContext {
             kind: UnresolvedKind::Import,
             symbol: symbol.to_string(),
             module: importing_module.to_string(),
-            reason: reason.to_string(),
+            reason,
         });
         self.emit_diagnostic(
             code,
             Some(ir_mod),
             span,
-            format!("unresolved import: {:?} from {:?} ({})", symbol, from_module, reason),
+            format!("unresolved import: {:?} from {:?} ({})", symbol, from_module, reason.as_str()),
         );
     }
 
@@ -372,7 +416,7 @@ impl ResolverContext {
             kind: UnresolvedKind::Type,
             symbol: symbol.to_string(),
             module: module.to_string(),
-            reason: "type_not_found".to_string(),
+            reason: UnresolvedReason::TypeNotFound,
         });
         self.emit_diagnostic(
             DiagCode::TypeUnknown,
@@ -387,7 +431,7 @@ impl ResolverContext {
         def_name: &str,
         component: &str,
         module: &str,
-        reason: &str,
+        reason: UnresolvedReason,
         ir_mod: IrModuleId,
         span: Span,
     ) {
@@ -395,9 +439,9 @@ impl ResolverContext {
             kind: UnresolvedKind::Oid,
             symbol: component.to_string(),
             module: module.to_string(),
-            reason: reason.to_string(),
+            reason,
         });
-        let code = if reason == "dependency_cycle" {
+        let code = if reason == UnresolvedReason::DependencyCycle {
             DiagCode::OidRecursive
         } else {
             DiagCode::OidOrphan
@@ -415,7 +459,6 @@ impl ResolverContext {
         row: &str,
         index_object: &str,
         module: &str,
-        reason: &str,
         ir_mod: IrModuleId,
         span: Span,
     ) {
@@ -423,7 +466,7 @@ impl ResolverContext {
             kind: UnresolvedKind::Index,
             symbol: index_object.to_string(),
             module: module.to_string(),
-            reason: reason.to_string(),
+            reason: UnresolvedReason::IndexObjectNotFound,
         });
         self.emit_diagnostic(
             DiagCode::IndexUnresolved,
@@ -438,7 +481,6 @@ impl ResolverContext {
         notification: &str,
         object: &str,
         module: &str,
-        reason: &str,
         ir_mod: IrModuleId,
         span: Span,
     ) {
@@ -446,7 +488,7 @@ impl ResolverContext {
             kind: UnresolvedKind::NotificationObject,
             symbol: object.to_string(),
             module: module.to_string(),
-            reason: reason.to_string(),
+            reason: UnresolvedReason::ObjectNotFound,
         });
         self.emit_diagnostic(
             DiagCode::ObjectsUnresolved,
@@ -458,10 +500,10 @@ impl ResolverContext {
 
     /// Drop parsed modules after resolution to free memory.
     pub fn drop_modules(&mut self) {
-        self.modules = Vec::new();
-        self.module_index = HashMap::new();
-        self.module_def_names = HashMap::new();
-        self.module_oid_def_names = HashMap::new();
+        self.modules.clear();
+        self.module_index.clear();
+        self.module_def_names.clear();
+        self.module_oid_def_names.clear();
     }
 
     /// Convert unresolved tracking entries to the public UnresolvedRef type.
@@ -475,18 +517,11 @@ impl ResolverContext {
             .chain(self.unresolved_notif_objects.drain(..));
 
         for u in all {
-            let reason = match u.kind {
-                UnresolvedKind::Import => u.reason.clone(),
-                UnresolvedKind::Type => REASON_UNKNOWN_TYPE.to_string(),
-                UnresolvedKind::Oid => REASON_UNKNOWN_PARENT.to_string(),
-                UnresolvedKind::Index => REASON_UNKNOWN_INDEX_OBJECT.to_string(),
-                UnresolvedKind::NotificationObject => REASON_UNKNOWN_OBJECT.to_string(),
-            };
             self.mib.add_unresolved(UnresolvedRef {
                 kind: u.kind,
                 symbol: u.symbol,
                 module: u.module,
-                reason,
+                reason: u.reason.as_str().to_string(),
             });
         }
     }

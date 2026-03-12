@@ -4,9 +4,7 @@ use tracing::trace;
 
 use crate::types::{DiagCode, Language, Span};
 
-use super::context::{
-    IrModuleId, REASON_MODULE_NOT_FOUND, REASON_SYMBOL_NOT_EXPORTED, ResolverContext,
-};
+use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::registration::group_imports;
 
 /// Well-known macro names that are syntactic constructs, not resolvable symbols.
@@ -37,7 +35,7 @@ pub(super) fn resolve_imports(ctx: &mut ResolverContext) {
 }
 
 fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
-    let m = &ctx.modules[ir_mod.0 as usize];
+    let m = &ctx.modules[ir_mod.index()];
     let importing_module = m.name.clone();
     if m.imports.is_empty() {
         return;
@@ -213,7 +211,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             module = %importing_module,
             source_module = %from_module,
             symbol_count = non_macro.len(),
-            reason = REASON_MODULE_NOT_FOUND,
+            reason = UnresolvedReason::ModuleNotFound.as_str(),
             resolution = "unresolved",
             "failed to resolve import group",
         );
@@ -222,7 +220,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
                 name,
                 &importing_module,
                 from_module,
-                REASON_MODULE_NOT_FOUND,
+                UnresolvedReason::ModuleNotFound,
                 ir_mod,
                 *span,
             );
@@ -356,7 +354,7 @@ fn candidate_import_source_module<'a>(
     candidate: IrModuleId,
     symbol: &str,
 ) -> Option<&'a str> {
-    let m = &ctx.modules[candidate.0 as usize];
+    let m = &ctx.modules[candidate.index()];
     m.imports
         .iter()
         .find(|imp| imp.symbol == symbol)
@@ -395,7 +393,7 @@ fn try_partial_resolution(
                 name,
                 importing_module,
                 from_module,
-                REASON_SYMBOL_NOT_EXPORTED,
+                UnresolvedReason::SymbolNotExported,
                 ir_mod,
                 *span,
             );
@@ -486,10 +484,7 @@ fn resolve_ultimate_definer(ctx: &ResolverContext, start: IrModuleId, symbol: &s
 pub(super) fn check_unused_imports(ctx: &mut ResolverContext) {
     let mut diagnostics = Vec::new();
 
-    for idx in 0..ctx.modules.len() {
-        let ir_id = IrModuleId(idx as u32);
-        let m = &ctx.modules[ir_id.0 as usize];
-
+    for (ir_id, m) in ctx.all_modules() {
         if m.imports.is_empty() {
             continue;
         }
@@ -526,10 +521,7 @@ pub(super) fn check_unused_imports(ctx: &mut ResolverContext) {
 pub(super) fn check_obsolete_imports(ctx: &mut ResolverContext) {
     let mut diagnostics = Vec::new();
 
-    for idx in 0..ctx.modules.len() {
-        let ir_id = IrModuleId(idx as u32);
-        let m = &ctx.modules[ir_id.0 as usize];
-
+    for (ir_id, m) in ctx.all_modules() {
         if m.language != Language::SMIv2 {
             continue;
         }
@@ -569,7 +561,7 @@ pub(super) fn copy_used_imports_to_modules(ctx: &mut ResolverContext) {
             None => continue,
         };
 
-        let ir_mod = &ctx.modules[ir_id.0 as usize];
+        let ir_mod = &ctx.modules[ir_id.index()];
         let grouped = group_imports(ir_mod);
 
         let used = ctx.used_imports.get(&ir_id);

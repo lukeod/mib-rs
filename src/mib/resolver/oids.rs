@@ -8,7 +8,7 @@ use crate::lower::base_modules;
 use crate::types::{Kind, Span};
 
 use super::super::types::*;
-use super::context::{IrModuleId, ResolverContext};
+use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::util::{language_rank, normalize_timestamp};
 
 /// An OID definition collected for resolution.
@@ -60,7 +60,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
 
     for (i, od) in oid_defs.iter().enumerate() {
         let sym = graph::Symbol {
-            module: ctx.modules[od.ir_mod.0 as usize].name.clone(),
+            module: ctx.modules[od.ir_mod.index()].name.clone(),
             name: od.name.clone(),
         };
         let gn = g.add_node(sym.clone());
@@ -70,7 +70,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
 
     // Add edges based on first OID component.
     for (i, od) in oid_defs.iter().enumerate() {
-        let m = &ctx.modules[od.ir_mod.0 as usize];
+        let m = &ctx.modules[od.ir_mod.index()];
         let oid = get_oid_assignment(m, od.def_idx);
         if let Some(oid_assign) = oid
             && let Some(first) = oid_assign.components.first()
@@ -91,7 +91,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
         .iter()
         .filter(|od| cycle_symbols.contains(&def_symbol(ctx, od)))
         .map(|od| {
-            let m = &ctx.modules[od.ir_mod.0 as usize];
+            let m = &ctx.modules[od.ir_mod.index()];
             let span = get_def_span(m, od.def_idx);
             (od.name.clone(), m.name.clone(), od.ir_mod, span)
         })
@@ -107,7 +107,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
         );
     }
     for (name, mod_name, ir_mod, span) in cycle_unresolved {
-        ctx.record_unresolved_oid(&name, &name, &mod_name, "dependency_cycle", ir_mod, span);
+        ctx.record_unresolved_oid(&name, &name, &mod_name, UnresolvedReason::DependencyCycle, ir_mod, span);
     }
 
     // Map graph nodes back to OidDef indices.
@@ -139,10 +139,7 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
     let mut trap_defs = Vec::new();
     let mut notif_without_oid: Vec<(IrModuleId, Span, String)> = Vec::new();
 
-    for idx in 0..ctx.modules.len() {
-        let ir_id = IrModuleId(idx as u32);
-        let m = &ctx.modules[idx];
-
+    for (ir_id, m) in ctx.all_modules() {
         for (def_idx, def) in m.definitions.iter().enumerate() {
             match def {
                 ir::Definition::ObjectType(d) => {
@@ -248,7 +245,7 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
 
 fn def_symbol(ctx: &ResolverContext, od: &OidDef) -> graph::Symbol {
     graph::Symbol {
-        module: ctx.modules[od.ir_mod.0 as usize].name.clone(),
+        module: ctx.modules[od.ir_mod.index()].name.clone(),
         name: od.name.clone(),
     }
 }
@@ -309,7 +306,7 @@ fn lookup_smi_global_root_symbol(
             target: "mib_rs::resolver",
             component = "resolver",
             phase = "oids",
-            module = %ctx.modules[ir_mod.0 as usize].name,
+            module = %ctx.modules[ir_mod.index()].name,
             name = %name,
             fallback = "smi_global_root_graph_edge",
             "resolved oid graph edge via constrained fallback",
@@ -340,7 +337,7 @@ fn resolve_dep_symbol(
     ir_mod: IrModuleId,
     name: &str,
 ) -> Option<graph::Symbol> {
-    let m = &ctx.modules[ir_mod.0 as usize];
+    let m = &ctx.modules[ir_mod.index()];
     // Check if defined in the same module.
     if ctx
         .module_def_names
@@ -359,7 +356,7 @@ fn resolve_dep_symbol(
         .and_then(|imps| imps.get(name))
     {
         return Some(graph::Symbol {
-            module: ctx.modules[source.0 as usize].name.clone(),
+            module: ctx.modules[source.index()].name.clone(),
             name: name.to_string(),
         });
     }
@@ -380,7 +377,7 @@ fn well_known_root_arc(name: &str) -> Option<u32> {
 }
 
 fn try_resolve_oid_definition(ctx: &mut ResolverContext, od: &OidDef) {
-    let m = &ctx.modules[od.ir_mod.0 as usize];
+    let m = &ctx.modules[od.ir_mod.index()];
     let oid_assign = match get_oid_assignment(m, od.def_idx) {
         Some(oa) => oa.clone(),
         None => return,
@@ -442,13 +439,13 @@ fn resolve_oid_component(
             if let Some(node) = ctx.lookup_node_in_module(module, name) {
                 Some(node)
             } else {
-                let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
+                let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
                 let comp_name = format!("{module}.{name}");
                 ctx.record_unresolved_oid(
                     &od.name,
                     &comp_name,
                     &mod_name,
-                    "component_not_found",
+                    UnresolvedReason::ComponentNotFound,
                     od.ir_mod,
                     comp.span(),
                 );
@@ -531,7 +528,7 @@ fn lookup_name_component(ctx: &mut ResolverContext, od: &OidDef, name: &str) -> 
             target: "mib_rs::resolver",
             component = "resolver",
             phase = "oids",
-            module = %ctx.modules[od.ir_mod.0 as usize].name,
+            module = %ctx.modules[od.ir_mod.index()].name,
             name = %name,
             fallback = "smi_global_root",
             "resolved oid name via constrained fallback",
@@ -552,8 +549,8 @@ fn resolve_name_component(
         return Some(node);
     }
 
-    let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
-    ctx.record_unresolved_oid(&od.name, name, &mod_name, "component_not_found", od.ir_mod, span);
+    let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
+    ctx.record_unresolved_oid(&od.name, name, &mod_name, UnresolvedReason::ComponentNotFound, od.ir_mod, span);
     None
 }
 
@@ -579,7 +576,7 @@ fn lookup_smi_global_oid_root(ctx: &ResolverContext, name: &str) -> Option<NodeI
 
 fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {
     let (def_span, oid_definition_text, oid_definition_status) = {
-        let m = &ctx.modules[od.ir_mod.0 as usize];
+        let m = &ctx.modules[od.ir_mod.index()];
         let def = &m.definitions[od.def_idx];
         let def_span = def.span();
         let (oid_definition_text, oid_definition_status) = match def {
@@ -737,7 +734,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
     for od in trap_defs {
         // Extract data from IR before mutable operations.
         let (enterprise_name, trap_number, span) = {
-            let m = &ctx.modules[od.ir_mod.0 as usize];
+            let m = &ctx.modules[od.ir_mod.index()];
             let def = &m.definitions[od.def_idx];
             let notif = match def {
                 ir::Definition::Notification(n) => n,
@@ -771,12 +768,12 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
         let enterprise_node = match enterprise_node {
             Some(n) => n,
             None => {
-                let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
+                let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
                 ctx.record_unresolved_oid(
                     &od.name,
                     &enterprise_name,
                     &mod_name,
-                    "enterprise_not_found",
+                    UnresolvedReason::EnterpriseNotFound,
                     od.ir_mod,
                     span,
                 );
@@ -821,8 +818,8 @@ pub(super) fn should_prefer_module(
 
     // Base modules always win. They are the authoritative source for
     // well-known OIDs (iso, org, dod, internet, etc.).
-    let new_is_base = base_modules::is_base_module(&ctx.modules[new_ir.0 as usize].name);
-    let current_is_base = base_modules::is_base_module(&ctx.modules[current_ir.0 as usize].name);
+    let new_is_base = base_modules::is_base_module(&ctx.modules[new_ir.index()].name);
+    let current_is_base = base_modules::is_base_module(&ctx.modules[current_ir.index()].name);
     if new_is_base != current_is_base {
         return new_is_base;
     }
@@ -843,7 +840,7 @@ pub(super) fn should_prefer_module(
 
     // Deterministic fallback: lexicographic module name for stable results
     // across implementations. No semantic basis, but reproducible.
-    let new_name = &ctx.modules[new_ir.0 as usize].name;
-    let current_name = &ctx.modules[current_ir.0 as usize].name;
+    let new_name = &ctx.modules[new_ir.index()].name;
+    let current_name = &ctx.modules[current_ir.index()].name;
     new_name < current_name
 }

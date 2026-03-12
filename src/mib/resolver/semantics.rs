@@ -9,7 +9,7 @@ use super::super::group::GroupData;
 use super::super::notification::NotificationData;
 use super::super::object::ObjectData;
 use super::super::types::*;
-use super::context::{IrModuleId, ResolverContext};
+use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 
 /// Phase 5: Create resolved entities and run structural validation.
 pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
@@ -240,7 +240,7 @@ fn resolve_object_type(
                     ctx.mark_import_used(ir_mod, name);
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
-                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                let mod_name = ctx.modules[ir_mod.index()].name.clone();
                 ctx.record_unresolved_type(referrer, name, &mod_name, ir_mod, obj.syntax_span);
             }
         }
@@ -257,7 +257,7 @@ fn resolve_object_type(
                         ctx.mark_import_used(ir_mod, base);
                     }
                 } else {
-                    let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                    let mod_name = ctx.modules[ir_mod.index()].name.clone();
                     ctx.record_unresolved_type(referrer, base, &mod_name, ir_mod, obj.syntax_span);
                 }
             } else {
@@ -367,7 +367,7 @@ fn resolve_syntax_type(
                     ctx.mark_import_used(ir_mod, name);
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
-                let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                let mod_name = ctx.modules[ir_mod.index()].name.clone();
                 ctx.record_unresolved_type(owner_name, name, &mod_name, ir_mod, *span);
             }
         }
@@ -383,7 +383,7 @@ fn resolve_syntax_type(
                         ctx.mark_import_used(ir_mod, base);
                     }
                 } else {
-                    let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
+                    let mod_name = ctx.modules[ir_mod.index()].name.clone();
                     ctx.record_unresolved_type(owner_name, base, &mod_name, ir_mod, Span::SYNTHETIC);
                 }
             } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
@@ -452,7 +452,7 @@ fn compute_effective_values(ctx: &ResolverContext, obj: &mut ObjectData) {
     };
 
     let types = ctx.mib.types_slice();
-    let t = &types[type_id.0 as usize];
+    let t = &types[type_id.index() as usize];
 
     // Display hint: object-level is empty, so walk type chain.
     if obj.hint.is_empty() {
@@ -513,7 +513,6 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                             &name,
                             &item.object,
                             &mod_name,
-                            "index_object_not_found",
                             ir_id,
                             item.span,
                         );
@@ -529,7 +528,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                     &name,
                     &augments,
                     &mod_name,
-                    "augments_target_not_found",
+                    UnresolvedReason::AugmentsTargetNotFound,
                     ir_id,
                     augments_span,
                 );
@@ -714,7 +713,7 @@ fn lookup_object_by_name(
             target: "mib_rs::resolver",
             component = "resolver",
             phase = "semantics",
-            module = %ctx.modules[ir_mod.0 as usize].name,
+            module = %ctx.modules[ir_mod.index()].name,
             name = %name,
             fallback = "global_object_lookup",
             "resolved object via global fallback",
@@ -815,7 +814,6 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                     &name,
                     obj_name,
                     &mod_name,
-                    "object_not_found",
                     ir_id,
                     span,
                 );
@@ -1784,7 +1782,7 @@ fn is_sequence_type_def(ctx: &ResolverContext, ir_mod: IrModuleId, name: &str) -
         })
     }
 
-    let m = &ctx.modules[ir_mod.0 as usize];
+    let m = &ctx.modules[ir_mod.index()];
     if has_sequence_def(m, name) {
         return true;
     }
@@ -1793,7 +1791,7 @@ fn is_sequence_type_def(ctx: &ResolverContext, ir_mod: IrModuleId, name: &str) -
         .get(&ir_mod)
         .and_then(|imps| imps.get(name))
     {
-        let src_mod = &ctx.modules[source.0 as usize];
+        let src_mod = &ctx.modules[source.index()];
         if has_sequence_def(src_mod, name) {
             return true;
         }

@@ -57,7 +57,7 @@ fn create_user_types(ctx: &mut ResolverContext) {
             None => continue,
         };
 
-        let m = &ctx.modules[idx];
+        let m = &ctx.modules[ir_id.index()];
         for def in &m.definitions {
             let typedef = match def {
                 ir::Definition::TypeDef(td) => td,
@@ -216,9 +216,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
     // Build graph: type_id -> parent type name reference.
     let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, Span)> = Vec::new();
 
-    for idx in 0..ctx.modules.len() {
-        let ir_id = IrModuleId(idx as u32);
-        let m = &ctx.modules[idx];
+    for (ir_id, m) in ctx.all_modules() {
         for def in &m.definitions {
             let typedef = match def {
                 ir::Definition::TypeDef(td) => td,
@@ -252,7 +250,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
 
     // Add all type nodes.
     for (&ir_id, type_map) in &ctx.module_symbol_to_type {
-        let mod_name = &ctx.modules[ir_id.0 as usize].name;
+        let mod_name = &ctx.modules[ir_id.index()].name;
         for (name, &type_id) in type_map {
             let gn = g.add_node(graph::Symbol {
                 module: mod_name.clone(),
@@ -317,7 +315,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             let Some((ir_id, ref_name, span)) = parent_ref_by_type.get(&tid) else {
                 continue;
             };
-            let mod_name = ctx.modules[ir_id.0 as usize].name.clone();
+            let mod_name = ctx.modules[ir_id.index()].name.clone();
             let type_name = ctx.mib.type_(tid).name().to_string();
             ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
         }
@@ -353,7 +351,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                 }
             } else {
                 let type_name = ctx.mib.type_(type_id).name().to_string();
-                let mod_name = ctx.modules[ir_id.0 as usize].name.clone();
+                let mod_name = ctx.modules[ir_id.index()].name.clone();
                 ctx.record_unresolved_type(
                     &type_name,
                     ref_name,
@@ -506,7 +504,7 @@ fn resolve_base_from_chain(types: &[TypeData], type_id: TypeId) -> Option<BaseTy
         if depth >= 1000 {
             break;
         }
-        let t = &types[id.0 as usize];
+        let t = &types[id.index() as usize];
         if t.base != BaseType::Unknown {
             return Some(t.base);
         }
@@ -547,14 +545,8 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
 
     let mut diagnostics = Vec::new();
 
-    for idx in 0..ctx.modules.len() {
-        let ir_id = IrModuleId(idx as u32);
-        let m = &ctx.modules[idx];
-
+    for (ir_id, m) in ctx.user_modules() {
         if m.language != Language::SMIv2 {
-            continue;
-        }
-        if crate::lower::base_modules::is_base_module(&m.name) {
             continue;
         }
 
