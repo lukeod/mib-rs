@@ -67,6 +67,7 @@ impl Mib {
         &self.tree
     }
 
+    #[must_use]
     pub fn root(&self) -> NodeId {
         self.tree.root()
     }
@@ -77,6 +78,7 @@ impl Mib {
         &self.objects[id.0 as usize]
     }
 
+    #[must_use]
     pub fn type_(&self, id: TypeId) -> &TypeData {
         &self.types[id.0 as usize]
     }
@@ -129,6 +131,7 @@ impl Mib {
     }
 
     /// Look up a node by name. Prefers nodes with objects, then notifications.
+    #[must_use]
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         let nodes = self.name_to_nodes.get(name)?;
         for &id in nodes {
@@ -145,70 +148,83 @@ impl Mib {
     }
 
     /// Look up an object by name.
+    #[must_use]
     pub fn object_by_name(&self, name: &str) -> Option<ObjectId> {
         self.find_in_nodes(name, |n| n.object)
     }
 
     /// Look up a type by name.
+    #[must_use]
     pub fn type_by_name(&self, name: &str) -> Option<TypeId> {
         self.type_by_name.get(name).copied()
     }
 
     /// Look up a notification by name.
+    #[must_use]
     pub fn notification_by_name(&self, name: &str) -> Option<NotificationId> {
         self.find_in_nodes(name, |n| n.notification)
     }
 
     /// Look up a group by name.
+    #[must_use]
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
         self.find_in_nodes(name, |n| n.group)
     }
 
     /// Look up a compliance by name.
+    #[must_use]
     pub fn compliance_by_name(&self, name: &str) -> Option<ComplianceId> {
         self.find_in_nodes(name, |n| n.compliance)
     }
 
     /// Look up a capability by name.
+    #[must_use]
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
         self.find_in_nodes(name, |n| n.capability)
     }
 
     /// Look up a module by name.
+    #[must_use]
     pub fn module_by_name(&self, name: &str) -> Option<ModuleId> {
         self.module_by_name.get(name).copied()
     }
 
     /// Look up a symbol by name. Priority: objects, notifications, groups,
     /// compliances, capabilities, plain nodes, then types.
+    #[must_use]
     pub fn symbol_by_name(&self, name: &str) -> Option<Symbol> {
         if let Some(nodes) = self.name_to_nodes.get(name) {
+            let mut notification = None;
+            let mut group = None;
+            let mut compliance = None;
+            let mut capability = None;
+            let mut node = None;
+
             for &id in nodes {
-                if let Some(obj_id) = self.tree.get(id).object {
-                    return Some(Symbol::Object(obj_id));
+                let entry = self.tree.get(id);
+                node.get_or_insert(id);
+                if let Some(object) = entry.object {
+                    return Some(Symbol::Object(object));
                 }
+                notification = notification.or(entry.notification);
+                group = group.or(entry.group);
+                compliance = compliance.or(entry.compliance);
+                capability = capability.or(entry.capability);
             }
-            for &id in nodes {
-                if let Some(notif_id) = self.tree.get(id).notification {
-                    return Some(Symbol::Notification(notif_id));
-                }
+
+            if let Some(id) = notification {
+                return Some(Symbol::Notification(id));
             }
-            for &id in nodes {
-                if let Some(group_id) = self.tree.get(id).group {
-                    return Some(Symbol::Group(group_id));
-                }
+            if let Some(id) = group {
+                return Some(Symbol::Group(id));
             }
-            for &id in nodes {
-                if let Some(comp_id) = self.tree.get(id).compliance {
-                    return Some(Symbol::Compliance(comp_id));
-                }
+            if let Some(id) = compliance {
+                return Some(Symbol::Compliance(id));
             }
-            for &id in nodes {
-                if let Some(cap_id) = self.tree.get(id).capability {
-                    return Some(Symbol::Capability(cap_id));
-                }
+            if let Some(id) = capability {
+                return Some(Symbol::Capability(id));
             }
-            if let Some(&id) = nodes.first() {
+            if let Some(id) = node {
                 return Some(Symbol::Node(id));
             }
         }
@@ -221,12 +237,14 @@ impl Mib {
     // --- OID lookups ---
 
     /// Look up a node at an exact numeric OID.
+    #[must_use]
     pub fn node_by_oid(&self, oid: &Oid) -> Option<NodeId> {
         let (id, exact) = self.tree.walk_oid(self.tree.root(), oid);
         if exact { Some(id) } else { None }
     }
 
     /// Find the deepest node matching a prefix of the OID, starting from root.
+    #[must_use]
     pub fn longest_prefix_by_oid(&self, oid: &Oid) -> NodeId {
         self.tree.longest_prefix(oid)
     }
@@ -237,12 +255,14 @@ impl Mib {
     }
 
     /// Find the deepest descendant of `start` matching a prefix of `oid`.
+    #[must_use]
     pub fn longest_prefix_from(&self, start: NodeId, oid: &Oid) -> NodeId {
         self.tree.longest_prefix_from(start, oid)
     }
 
     /// Returns the effective module for a node, using entity priority:
     /// object > notification > group > compliance > capability > base module.
+    #[must_use]
     pub fn effective_module(&self, id: NodeId) -> Option<ModuleId> {
         let node = self.tree.get(id);
         if let Some(obj_id) = node.object {

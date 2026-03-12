@@ -9,11 +9,13 @@ pub struct Oid(SmallVec<[u32; 16]>);
 
 impl Oid {
     /// Returns the last arc, if any.
+    #[must_use]
     pub fn last_arc(&self) -> Option<u32> {
         self.0.last().copied()
     }
 
     /// Returns the parent OID (all arcs except the last).
+    #[must_use]
     pub fn parent(&self) -> Option<Oid> {
         if self.0.len() <= 1 {
             return None;
@@ -22,6 +24,7 @@ impl Oid {
     }
 
     /// Returns a child OID with the given arc appended.
+    #[must_use]
     pub fn child(&self, arc: u32) -> Oid {
         let mut arcs = self.0.clone();
         arcs.push(arc);

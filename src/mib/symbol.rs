@@ -16,6 +16,7 @@ pub enum Symbol {
 
 impl Symbol {
     /// Returns the name of this symbol, looking it up in the appropriate arena.
+    #[must_use]
     pub fn name<'a>(&self, mib: &'a super::mib::Mib) -> &'a str {
         match self {
             Symbol::Object(id) => mib.object(*id).name(),
@@ -29,6 +30,7 @@ impl Symbol {
     }
 
     /// Returns the span of this symbol.
+    #[must_use]
     pub fn span(&self, mib: &super::mib::Mib) -> Span {
         match self {
             Symbol::Object(id) => mib.object(*id).span(),
@@ -42,6 +44,7 @@ impl Symbol {
     }
 
     /// Returns the module that defines this symbol.
+    #[must_use]
     pub fn module(&self, mib: &super::mib::Mib) -> Option<ModuleId> {
         match self {
             Symbol::Object(id) => mib.object(*id).module(),
@@ -55,6 +58,7 @@ impl Symbol {
     }
 
     /// Returns the OID tree node for this symbol, or None for Type symbols.
+    #[must_use]
     pub fn node(&self, mib: &super::mib::Mib) -> Option<NodeId> {
         match self {
             Symbol::Object(id) => mib.object(*id).node(),
@@ -68,6 +72,7 @@ impl Symbol {
     }
 
     /// Returns the status of this symbol.
+    #[must_use]
     pub fn status(&self, mib: &super::mib::Mib) -> Status {
         match self {
             Symbol::Object(id) => mib.object(*id).status(),
@@ -80,6 +85,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_object(&self) -> Option<ObjectId> {
         match self {
             Symbol::Object(id) => Some(*id),
@@ -87,6 +93,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_notification(&self) -> Option<NotificationId> {
         match self {
             Symbol::Notification(id) => Some(*id),
@@ -94,6 +101,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_group(&self) -> Option<GroupId> {
         match self {
             Symbol::Group(id) => Some(*id),
@@ -101,6 +109,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_compliance(&self) -> Option<ComplianceId> {
         match self {
             Symbol::Compliance(id) => Some(*id),
@@ -108,6 +117,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_capability(&self) -> Option<CapabilityId> {
         match self {
             Symbol::Capability(id) => Some(*id),
@@ -115,6 +125,7 @@ impl Symbol {
         }
     }
 
+    #[must_use]
     pub fn as_type(&self) -> Option<TypeId> {
         match self {
             Symbol::Type(id) => Some(*id),

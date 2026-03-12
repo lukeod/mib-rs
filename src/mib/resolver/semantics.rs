@@ -1529,13 +1529,23 @@ fn hex_decode(s: &str) -> Vec<u8> {
         clean.insert(0, '0');
     }
     let mut bytes = Vec::new();
-    let mut chars = clean.chars();
-    while let Some(hi) = chars.next() {
-        let lo = chars.next().unwrap_or('0');
-        let byte = u8::from_str_radix(&format!("{hi}{lo}"), 16).unwrap_or(0);
-        bytes.push(byte);
+    let mut digits = clean.bytes();
+    while let Some(hi) = digits.next() {
+        let lo = digits.next().unwrap_or(b'0');
+        let hi = hex_nibble(hi).unwrap_or(0);
+        let lo = hex_nibble(lo).unwrap_or(0);
+        bytes.push((hi << 4) | lo);
     }
     bytes
+}
+
+fn hex_nibble(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        b'A'..=b'F' => Some(digit - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn lookup_member_node(
@@ -1661,4 +1671,19 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
         }
     }
     refs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hex_decode;
+
+    #[test]
+    fn hex_decode_accepts_mixed_case_and_separators() {
+        assert_eq!(hex_decode("'aF 0c'H"), vec![0xAF, 0x0C]);
+    }
+
+    #[test]
+    fn hex_decode_pads_odd_digit_count() {
+        assert_eq!(hex_decode("'ABC'H"), vec![0x0A, 0xBC]);
+    }
 }
