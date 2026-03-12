@@ -15,7 +15,7 @@ use super::util::{language_rank, normalize_timestamp};
 struct OidDef {
     ir_mod: IrModuleId,
     def_idx: usize,
-    name: String,
+    symbol: graph::Symbol,
     kind: OidDefKind,
 }
 
@@ -60,8 +60,8 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
 
     for (i, od) in oid_defs.iter().enumerate() {
         let sym = graph::Symbol {
-            module: ctx.modules[od.ir_mod.index()].name.clone(),
-            name: od.name.clone(),
+            module: od.symbol.module.clone(),
+            name: od.symbol.name.clone(),
         };
         let gn = g.add_node(sym.clone());
         def_to_gn.push(gn);
@@ -89,11 +89,11 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
 
     let cycle_unresolved: Vec<_> = oid_defs
         .iter()
-        .filter(|od| cycle_symbols.contains(&def_symbol(ctx, od)))
+        .filter(|od| cycle_symbols.contains(&od.symbol))
         .map(|od| {
             let m = &ctx.modules[od.ir_mod.index()];
             let span = get_def_span(m, od.def_idx);
-            (od.name.clone(), m.name.clone(), od.ir_mod, span)
+            (od.symbol.name.clone(), m.name.clone(), od.ir_mod, span)
         })
         .collect();
     if !result.cycles.is_empty() {
@@ -131,7 +131,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
             None => continue,
         };
         let od = &oid_defs[idx];
-        if cycle_symbols.contains(&def_symbol(ctx, od)) {
+        if cycle_symbols.contains(&od.symbol) {
             continue;
         }
         try_resolve_oid_definition(ctx, od);
@@ -153,7 +153,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ObjectType,
                     });
                 }
@@ -161,7 +164,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ModuleIdentity,
                     });
                 }
@@ -169,7 +175,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ObjectIdentity,
                     });
                 }
@@ -179,14 +188,20 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                         trap_defs.push(OidDef {
                             ir_mod: ir_id,
                             def_idx,
-                            name: d.name.clone(),
+                            symbol: graph::Symbol {
+                                module: m.name.clone(),
+                                name: d.name.clone(),
+                            },
                             kind: OidDefKind::Notification,
                         });
                     } else if d.oid.is_some() {
                         oid_defs.push(OidDef {
                             ir_mod: ir_id,
                             def_idx,
-                            name: d.name.clone(),
+                            symbol: graph::Symbol {
+                                module: m.name.clone(),
+                                name: d.name.clone(),
+                            },
                             kind: OidDefKind::Notification,
                         });
                     } else {
@@ -197,7 +212,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ValueAssignment,
                     });
                 }
@@ -205,7 +223,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ObjectGroup,
                     });
                 }
@@ -213,7 +234,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::NotificationGroup,
                     });
                 }
@@ -221,7 +245,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::ModuleCompliance,
                     });
                 }
@@ -229,7 +256,10 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                     oid_defs.push(OidDef {
                         ir_mod: ir_id,
                         def_idx,
-                        name: d.name.clone(),
+                        symbol: graph::Symbol {
+                            module: m.name.clone(),
+                            name: d.name.clone(),
+                        },
                         kind: OidDefKind::AgentCapabilities,
                     });
                 }
@@ -248,13 +278,6 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
     }
 
     (oid_defs, trap_defs)
-}
-
-fn def_symbol(ctx: &ResolverContext, od: &OidDef) -> graph::Symbol {
-    graph::Symbol {
-        module: ctx.modules[od.ir_mod.index()].name.clone(),
-        name: od.name.clone(),
-    }
 }
 
 fn get_oid_assignment(m: &ir::Module, def_idx: usize) -> Option<&ir::OidAssignment> {

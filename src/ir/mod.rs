@@ -12,7 +12,7 @@ use crate::types::{Diagnostic, Language, Span};
 ///
 /// Lowering transforms AST structures into this simplified representation
 /// independent of whether the source was SMIv1 or SMIv2.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
     pub language: Language,

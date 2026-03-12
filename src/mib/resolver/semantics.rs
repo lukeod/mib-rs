@@ -951,22 +951,9 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
-        let ir_mod_name = ctx.modules[mod_idx].name.clone();
 
-        let mc = match &ctx.modules[mod_idx].definitions[def_idx] {
-            ir::Definition::ModuleCompliance(mc) => mc,
-            _ => continue,
-        };
-
-        let name = mc.name.clone();
-        let span = mc.span;
-        let status = mc.status;
-        let description = mc.description.clone();
-        let reference = mc.reference.clone();
-        let oid = mc.oid.clone();
-
-        // Pre-extract compliance module data to release the borrow on
-        // ctx.modules before calling resolve_type_syntax.
+        // Pre-extract compliance module data in a scoped borrow so later
+        // resolution work can mutate ctx without borrow-ending placeholders.
         struct CompObjData {
             object: String,
             syntax: Option<ir::TypeSyntax>,
@@ -983,48 +970,60 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
             span: Span,
         }
 
-        let comp_mod_data: Vec<CompModData> = mc
-            .modules
-            .iter()
-            .map(|cm| {
-                let module_name = if cm.module_name.is_empty() {
-                    ir_mod_name.clone()
-                } else {
-                    cm.module_name.clone()
-                };
-                let groups = cm
-                    .groups
-                    .iter()
-                    .map(|g| ComplianceGroup {
-                        group: g.group.clone(),
-                        description: g.description.clone(),
-                        span: g.span,
-                    })
-                    .collect();
-                let objects = cm
-                    .objects
-                    .iter()
-                    .map(|o| CompObjData {
-                        object: o.object.clone(),
-                        syntax: o.syntax.clone(),
-                        write_syntax: o.write_syntax.clone(),
-                        min_access: o.min_access,
-                        description: o.description.clone(),
-                        span: o.span,
-                    })
-                    .collect();
-                CompModData {
-                    module_name,
-                    mandatory_groups: cm.mandatory_groups.clone(),
-                    groups,
-                    objects,
-                    span: cm.span,
-                }
-            })
-            .collect();
+        let (name, span, status, description, reference, oid, ir_mod_name, comp_mod_data) = {
+            let mc = match &ctx.modules[mod_idx].definitions[def_idx] {
+                ir::Definition::ModuleCompliance(mc) => mc,
+                _ => continue,
+            };
 
-        // End borrow on ctx.modules.
-        let _ = mc;
+            (
+                mc.name.clone(),
+                mc.span,
+                mc.status,
+                mc.description.clone(),
+                mc.reference.clone(),
+                mc.oid.clone(),
+                ctx.modules[mod_idx].name.clone(),
+                mc.modules
+                    .iter()
+                    .map(|cm| {
+                        let module_name = if cm.module_name.is_empty() {
+                            ctx.modules[mod_idx].name.clone()
+                        } else {
+                            cm.module_name.clone()
+                        };
+                        let groups = cm
+                            .groups
+                            .iter()
+                            .map(|g| ComplianceGroup {
+                                group: g.group.clone(),
+                                description: g.description.clone(),
+                                span: g.span,
+                            })
+                            .collect();
+                        let objects = cm
+                            .objects
+                            .iter()
+                            .map(|o| CompObjData {
+                                object: o.object.clone(),
+                                syntax: o.syntax.clone(),
+                                write_syntax: o.write_syntax.clone(),
+                                min_access: o.min_access,
+                                description: o.description.clone(),
+                                span: o.span,
+                            })
+                            .collect();
+                        CompModData {
+                            module_name,
+                            mandatory_groups: cm.mandatory_groups.clone(),
+                            groups,
+                            objects,
+                            span: cm.span,
+                        }
+                    })
+                    .collect(),
+            )
+        };
 
         let mut comp_modules = Vec::new();
         for cmd in &comp_mod_data {
@@ -1148,21 +1147,8 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
 
-        // Extract all needed data from IR.
-        let ac = match &ctx.modules[mod_idx].definitions[def_idx] {
-            ir::Definition::AgentCapabilities(ac) => ac,
-            _ => continue,
-        };
-
-        let name = ac.name.clone();
-        let span = ac.span;
-        let status = ac.status;
-        let description = ac.description.clone();
-        let reference = ac.reference.clone();
-        let product_release = ac.product_release.clone();
-        let oid = ac.oid.clone();
-
-        // Pre-extract supports data.
+        // Pre-extract capability support data in a scoped borrow so later
+        // resolution work can mutate ctx without borrow-ending placeholders.
         struct SupportsData {
             module_name: String,
             includes: Vec<String>,
@@ -1170,32 +1156,44 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
             span: Span,
         }
 
-        let supports_data: Vec<SupportsData> = ac
-            .supports
-            .iter()
-            .map(|sm| SupportsData {
-                module_name: sm.module_name.clone(),
-                includes: sm.includes.clone(),
-                variations: sm
-                    .variations
+        let (name, span, status, description, reference, product_release, oid, supports_data) = {
+            let ac = match &ctx.modules[mod_idx].definitions[def_idx] {
+                ir::Definition::AgentCapabilities(ac) => ac,
+                _ => continue,
+            };
+
+            (
+                ac.name.clone(),
+                ac.span,
+                ac.status,
+                ac.description.clone(),
+                ac.reference.clone(),
+                ac.product_release.clone(),
+                ac.oid.clone(),
+                ac.supports
                     .iter()
-                    .map(|v| VariationData {
-                        name: v.name.clone(),
-                        syntax: v.syntax.clone(),
-                        write_syntax: v.write_syntax.clone(),
-                        access: v.access,
-                        description: v.description.clone(),
-                        span: v.span,
-                        creation_requires: v.creation_requires.clone(),
-                        defval: v.defval.clone(),
+                    .map(|sm| SupportsData {
+                        module_name: sm.module_name.clone(),
+                        includes: sm.includes.clone(),
+                        variations: sm
+                            .variations
+                            .iter()
+                            .map(|v| VariationData {
+                                name: v.name.clone(),
+                                syntax: v.syntax.clone(),
+                                write_syntax: v.write_syntax.clone(),
+                                access: v.access,
+                                description: v.description.clone(),
+                                span: v.span,
+                                creation_requires: v.creation_requires.clone(),
+                                defval: v.defval.clone(),
+                            })
+                            .collect(),
+                        span: sm.span,
                     })
                     .collect(),
-                span: sm.span,
-            })
-            .collect();
-
-        // End borrow on ctx.modules.
-        let _ = ac;
+            )
+        };
 
         let node_id = match ctx
             .module_symbol_to_node

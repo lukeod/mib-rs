@@ -227,45 +227,39 @@ impl ModuleData {
 
     // Builder methods used during resolution.
 
-    pub(crate) fn add_object(&mut self, name: &str, id: ObjectId) {
+    pub(crate) fn add_object(&mut self, name: impl Into<String>, id: ObjectId) {
         self.objects.push(id);
-        self.objects_by_name.entry(name.to_string()).or_insert(id);
+        self.objects_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_type(&mut self, name: &str, id: TypeId) {
+    pub(crate) fn add_type(&mut self, name: impl Into<String>, id: TypeId) {
         self.types.push(id);
-        self.types_by_name.entry(name.to_string()).or_insert(id);
+        self.types_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_notification(&mut self, name: &str, id: NotificationId) {
+    pub(crate) fn add_notification(&mut self, name: impl Into<String>, id: NotificationId) {
         self.notifications.push(id);
-        self.notifications_by_name
-            .entry(name.to_string())
-            .or_insert(id);
+        self.notifications_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_group(&mut self, name: &str, id: GroupId) {
+    pub(crate) fn add_group(&mut self, name: impl Into<String>, id: GroupId) {
         self.groups.push(id);
-        self.groups_by_name.entry(name.to_string()).or_insert(id);
+        self.groups_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_compliance(&mut self, name: &str, id: ComplianceId) {
+    pub(crate) fn add_compliance(&mut self, name: impl Into<String>, id: ComplianceId) {
         self.compliances.push(id);
-        self.compliances_by_name
-            .entry(name.to_string())
-            .or_insert(id);
+        self.compliances_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_capability(&mut self, name: &str, id: CapabilityId) {
+    pub(crate) fn add_capability(&mut self, name: impl Into<String>, id: CapabilityId) {
         self.capabilities.push(id);
-        self.capabilities_by_name
-            .entry(name.to_string())
-            .or_insert(id);
+        self.capabilities_by_name.entry(name.into()).or_insert(id);
     }
 
-    pub(crate) fn add_node(&mut self, name: &str, id: NodeId) {
+    pub(crate) fn add_node(&mut self, name: impl Into<String>, id: NodeId) {
         self.nodes.push(id);
-        self.nodes_by_name.entry(name.to_string()).or_insert(id);
+        self.nodes_by_name.entry(name.into()).or_insert(id);
     }
 
     /// Yield all definitions in this module as Symbol values.
