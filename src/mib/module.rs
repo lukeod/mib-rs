@@ -269,29 +269,11 @@ impl ModuleData {
     }
 
     /// Yield all definitions in this module as Symbol values.
-    pub fn definitions(&self) -> Vec<Symbol> {
-        let mut result = Vec::new();
-        for &id in &self.objects {
-            result.push(Symbol::Object(id));
-        }
-        for &id in &self.types {
-            result.push(Symbol::Type(id));
-        }
-        for &id in &self.notifications {
-            result.push(Symbol::Notification(id));
-        }
-        for &id in &self.groups {
-            result.push(Symbol::Group(id));
-        }
-        for &id in &self.compliances {
-            result.push(Symbol::Compliance(id));
-        }
-        for &id in &self.capabilities {
-            result.push(Symbol::Capability(id));
-        }
-
-        // Plain nodes are nodes not attached to object/notification/group/
-        // compliance/capability entities.
+    ///
+    /// Plain nodes (nodes not attached to an object/notification/group/
+    /// compliance/capability entity) are yielded last.
+    pub fn definitions(&self) -> impl Iterator<Item = Symbol> + '_ {
+        // Covered node IDs: nodes whose names also appear in an entity map.
         let covered_node_ids: HashSet<NodeId> = self
             .nodes_by_name
             .iter()
@@ -305,13 +287,20 @@ impl ModuleData {
             })
             .collect();
 
-        for &id in &self.nodes {
-            if !covered_node_ids.contains(&id) {
-                result.push(Symbol::Node(id));
-            }
-        }
-
-        result
+        self.objects
+            .iter()
+            .map(|&id| Symbol::Object(id))
+            .chain(self.types.iter().map(|&id| Symbol::Type(id)))
+            .chain(self.notifications.iter().map(|&id| Symbol::Notification(id)))
+            .chain(self.groups.iter().map(|&id| Symbol::Group(id)))
+            .chain(self.compliances.iter().map(|&id| Symbol::Compliance(id)))
+            .chain(self.capabilities.iter().map(|&id| Symbol::Capability(id)))
+            .chain(
+                self.nodes
+                    .iter()
+                    .filter(move |id| !covered_node_ids.contains(id))
+                    .map(|&id| Symbol::Node(id)),
+            )
     }
 }
 
@@ -341,7 +330,7 @@ mod tests {
         module.add_node("ifIndex", object_node);
         module.add_node("internet", plain_node);
 
-        let defs = module.definitions();
+        let defs: Vec<_> = module.definitions().collect();
 
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0], Symbol::Object(object_id));
@@ -358,7 +347,7 @@ mod tests {
         module.add_type("DisplayString", type_id);
         module.add_node("DisplayString", plain_node);
 
-        let defs = module.definitions();
+        let defs: Vec<_> = module.definitions().collect();
 
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0], Symbol::Type(type_id));

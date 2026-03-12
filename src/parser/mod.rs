@@ -605,97 +605,7 @@ impl<'src> Parser<'src> {
         let first = self.peek().kind;
         let second = self.peek_nth(1).kind;
 
-        // Value assignment: name OBJECT IDENTIFIER ::=
-        if first.is_identifier()
-            && second == TokenKind::KwObject
-            && self.peek_nth(2).kind == TokenKind::KwIdentifier
-        {
-            return self.parse_value_assignment();
-        }
-
-        // OBJECT-TYPE
-        if first.is_identifier() && second == TokenKind::KwObjectType {
-            return self.parse_object_type();
-        }
-
-        // MODULE-IDENTITY
-        if first.is_identifier() && second == TokenKind::KwModuleIdentity {
-            return self.parse_module_identity();
-        }
-
-        // OBJECT-IDENTITY
-        if first.is_identifier() && second == TokenKind::KwObjectIdentity {
-            return self.parse_object_identity();
-        }
-
-        // NOTIFICATION-TYPE
-        if first.is_identifier() && second == TokenKind::KwNotificationType {
-            return self.parse_notification_type();
-        }
-
-        // TRAP-TYPE (SMIv1)
-        if first.is_identifier() && second == TokenKind::KwTrapType {
-            return self.parse_trap_type();
-        }
-
-        // TEXTUAL-CONVENTION (macro-style: Name TEXTUAL-CONVENTION ...)
-        if first == TokenKind::UppercaseIdent && second == TokenKind::KwTextualConvention {
-            return self.parse_textual_convention();
-        }
-
-        // OBJECT-GROUP
-        if first.is_identifier() && second == TokenKind::KwObjectGroup {
-            return self.parse_object_group();
-        }
-
-        // NOTIFICATION-GROUP
-        if first.is_identifier() && second == TokenKind::KwNotificationGroup {
-            return self.parse_notification_group();
-        }
-
-        // MODULE-COMPLIANCE
-        if first.is_identifier() && second == TokenKind::KwModuleCompliance {
-            return self.parse_module_compliance();
-        }
-
-        // AGENT-CAPABILITIES
-        if first.is_identifier() && second == TokenKind::KwAgentCapabilities {
-            return self.parse_agent_capabilities();
-        }
-
-        // Type assignment or assignment-style TC: TypeName ::= ...
-        // Type keywords (IpAddress, Counter32, etc.) can appear on LHS in base
-        // module definitions like SNMPv2-SMI.
-        if (first == TokenKind::UppercaseIdent
-            || first == TokenKind::LowercaseIdent
-            || first.is_type_keyword())
-            && second == TokenKind::ColonColonEqual
-        {
-            if self.peek_nth(2).kind == TokenKind::KwTextualConvention {
-                return self.parse_textual_convention_with_assignment();
-            }
-            if first == TokenKind::LowercaseIdent {
-                let name = self.text(self.peek().span).to_string();
-                self.emit_diagnostic(
-                    DiagCode::BadIdentifierCase,
-                    self.peek().span,
-                    format!(
-                        "type assignment {:?} should start with an uppercase letter",
-                        name
-                    ),
-                );
-            }
-            return self.parse_type_assignment();
-        }
-
-        // MACRO definition (name can be a macro keyword like OBJECT-TYPE)
-        if (first == TokenKind::UppercaseIdent || first.is_macro_keyword())
-            && second == TokenKind::KwMacro
-        {
-            return self.parse_macro_definition();
-        }
-
-        // EXPORTS (body already consumed by lexer)
+        // EXPORTS only checks first token (body already consumed by lexer)
         if first == TokenKind::KwExports {
             self.advance();
             if self.check(TokenKind::Semicolon) {
@@ -704,10 +614,74 @@ impl<'src> Parser<'src> {
             return self.parse_definition();
         }
 
-        Err(self.make_error(format!(
-            "unexpected token: {}",
-            self.peek().kind.display_name()
-        )))
+        match second {
+            // Value assignment: name OBJECT IDENTIFIER ::=
+            TokenKind::KwObject
+                if first.is_identifier()
+                    && self.peek_nth(2).kind == TokenKind::KwIdentifier =>
+            {
+                self.parse_value_assignment()
+            }
+
+            // SMI macro definitions dispatched by keyword
+            TokenKind::KwObjectType if first.is_identifier() => self.parse_object_type(),
+            TokenKind::KwModuleIdentity if first.is_identifier() => self.parse_module_identity(),
+            TokenKind::KwObjectIdentity if first.is_identifier() => self.parse_object_identity(),
+            TokenKind::KwNotificationType if first.is_identifier() => {
+                self.parse_notification_type()
+            }
+            TokenKind::KwTrapType if first.is_identifier() => self.parse_trap_type(),
+            TokenKind::KwTextualConvention if first == TokenKind::UppercaseIdent => {
+                self.parse_textual_convention()
+            }
+            TokenKind::KwObjectGroup if first.is_identifier() => self.parse_object_group(),
+            TokenKind::KwNotificationGroup if first.is_identifier() => {
+                self.parse_notification_group()
+            }
+            TokenKind::KwModuleCompliance if first.is_identifier() => {
+                self.parse_module_compliance()
+            }
+            TokenKind::KwAgentCapabilities if first.is_identifier() => {
+                self.parse_agent_capabilities()
+            }
+
+            // Type assignment or assignment-style TC: TypeName ::= ...
+            // Type keywords (IpAddress, Counter32, etc.) can appear on LHS in base
+            // module definitions like SNMPv2-SMI.
+            TokenKind::ColonColonEqual
+                if first == TokenKind::UppercaseIdent
+                    || first == TokenKind::LowercaseIdent
+                    || first.is_type_keyword() =>
+            {
+                if self.peek_nth(2).kind == TokenKind::KwTextualConvention {
+                    return self.parse_textual_convention_with_assignment();
+                }
+                if first == TokenKind::LowercaseIdent {
+                    let name = self.text(self.peek().span).to_string();
+                    self.emit_diagnostic(
+                        DiagCode::BadIdentifierCase,
+                        self.peek().span,
+                        format!(
+                            "type assignment {:?} should start with an uppercase letter",
+                            name
+                        ),
+                    );
+                }
+                self.parse_type_assignment()
+            }
+
+            // MACRO definition (name can be a macro keyword like OBJECT-TYPE)
+            TokenKind::KwMacro
+                if first == TokenKind::UppercaseIdent || first.is_macro_keyword() =>
+            {
+                self.parse_macro_definition()
+            }
+
+            _ => Err(self.make_error(format!(
+                "unexpected token: {}",
+                self.peek().kind.display_name()
+            ))),
+        }
     }
 
     // ---- Definition parsers ----

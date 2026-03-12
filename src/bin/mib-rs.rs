@@ -7,6 +7,25 @@ use mib_rs::mib::Mib;
 use mib_rs::source::dir_source;
 use mib_rs::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
 
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliReportingLevel {
+    Silent,
+    Quiet,
+    Default,
+    Verbose,
+}
+
+impl From<CliReportingLevel> for ReportingLevel {
+    fn from(level: CliReportingLevel) -> Self {
+        match level {
+            CliReportingLevel::Silent => ReportingLevel::Silent,
+            CliReportingLevel::Quiet => ReportingLevel::Quiet,
+            CliReportingLevel::Default => ReportingLevel::Default,
+            CliReportingLevel::Verbose => ReportingLevel::Verbose,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "mib-rs", about = "SNMP MIB parser and resolver")]
 struct Cli {
@@ -29,14 +48,14 @@ enum Command {
         /// Module names to load (omit to load all)
         modules: Vec<String>,
         /// Use strict resolver mode
-        #[arg(long)]
+        #[arg(long, conflicts_with = "permissive")]
         strict: bool,
         /// Use permissive resolver mode
-        #[arg(long)]
+        #[arg(long, conflicts_with = "strict")]
         permissive: bool,
-        /// Reporting level (silent, quiet, default, verbose)
+        /// Reporting level
         #[arg(long, default_value = "default")]
-        report: String,
+        report: CliReportingLevel,
         /// Show detailed stats
         #[arg(long)]
         stats: bool,
@@ -96,10 +115,10 @@ enum Command {
         /// Module names to load (omit to load all)
         modules: Vec<String>,
         /// Use strict resolver mode
-        #[arg(long)]
+        #[arg(long, conflicts_with = "permissive")]
         strict: bool,
         /// Use permissive resolver mode
-        #[arg(long)]
+        #[arg(long, conflicts_with = "strict")]
         permissive: bool,
     },
 }
@@ -126,7 +145,7 @@ fn main() {
             permissive,
             report,
             stats,
-        } => cmd_load(&cli.paths, modules, strict, permissive, &report, stats),
+        } => cmd_load(&cli.paths, modules, strict, permissive, report, stats),
         Command::Get {
             query,
             modules,
@@ -198,21 +217,12 @@ fn load_mib(
     }
 }
 
-fn parse_reporting_level(s: &str) -> ReportingLevel {
-    match s {
-        "silent" => ReportingLevel::Silent,
-        "quiet" => ReportingLevel::Quiet,
-        "verbose" => ReportingLevel::Verbose,
-        _ => ReportingLevel::Default,
-    }
-}
-
 fn cmd_load(
     paths: &[String],
     modules: Vec<String>,
     strict: bool,
     permissive: bool,
-    report: &str,
+    report: CliReportingLevel,
     stats: bool,
 ) -> i32 {
     let strictness = if strict {
@@ -222,7 +232,7 @@ fn cmd_load(
     } else {
         ResolverStrictness::Normal
     };
-    let diag_config = DiagnosticConfig::for_reporting(parse_reporting_level(report));
+    let diag_config = DiagnosticConfig::for_reporting(report.into());
 
     let all = modules.is_empty();
     let mib = match load_mib(paths, modules, all, strictness, diag_config) {
