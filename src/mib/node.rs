@@ -9,6 +9,7 @@ use super::types::*;
 /// A single node in the OID tree.
 ///
 /// All fields are pub(crate) - external access goes through the Mib API.
+#[derive(Debug)]
 pub struct NodeData {
     pub(crate) arc: u32,
     pub(crate) name: String,
@@ -127,6 +128,7 @@ impl NodeData {
 /// All nodes are stored in a contiguous Vec. The tree is built during
 /// resolution via get_or_create_child / set_name / attach_* methods,
 /// then accessed read-only through the Mib API.
+#[derive(Debug)]
 pub struct OidTree {
     nodes: Vec<NodeData>,
     root: NodeId,

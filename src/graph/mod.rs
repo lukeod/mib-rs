@@ -47,10 +47,7 @@ pub struct Graph {
 
 impl Graph {
     pub fn new() -> Self {
-        Graph {
-            inner: DiGraph::new(),
-            node_index: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Add a node to the graph. Returns the node index.
@@ -121,7 +118,10 @@ impl Graph {
 
 impl Default for Graph {
     fn default() -> Self {
-        Self::new()
+        Graph {
+            inner: DiGraph::new(),
+            node_index: HashMap::new(),
+        }
     }
 }
 

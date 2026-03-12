@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
@@ -62,8 +62,8 @@ impl SourceConfig {
 /// A source backed by a directory tree on disk.
 /// The directory is eagerly indexed at construction time.
 struct DirSource {
-    root: String,
-    index: HashMap<String, String>,
+    root: PathBuf,
+    index: HashMap<String, PathBuf>,
 }
 
 /// Create a Source that recursively indexes a directory tree.
@@ -86,10 +86,9 @@ pub fn dir_source_with_config(
             format!("not a directory: {}", root.display()),
         ));
     }
-    let root_str = root.to_string_lossy().to_string();
     let index = build_tree_index(root, &config.extensions)?;
     Ok(Box::new(DirSource {
-        root: root_str,
+        root: root.to_path_buf(),
         index,
     }))
 }
@@ -100,7 +99,7 @@ impl Source for DirSource {
             Some(p) => p,
             None => return Ok(None),
         };
-        let full_path = Path::new(&self.root).join(rel_path);
+        let full_path = self.root.join(rel_path);
         let content = std::fs::read(&full_path)?;
         Ok(Some(FindResult {
             content,
@@ -154,7 +153,7 @@ impl Source for MultiSource {
 }
 
 /// Build a module name -> relative path index by walking a directory tree.
-fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<String, String>> {
+fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<String, PathBuf>> {
     let ext_set: HashSet<&str> = extensions.iter().map(|s| s.as_str()).collect();
     let mut index = HashMap::new();
 
@@ -201,8 +200,7 @@ fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<St
         let rel_path = path
             .strip_prefix(root)
             .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
+            .to_path_buf();
 
         for name in names {
             index.entry(name).or_insert_with(|| rel_path.clone());

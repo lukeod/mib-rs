@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use tracing::debug;
 
@@ -69,9 +70,11 @@ fn discover_libsmi_paths() -> Vec<String> {
     paths
 }
 
+static HOME_DIR: LazyLock<Option<PathBuf>> = LazyLock::new(dirs::home_dir);
+
 fn netsnmp_defaults() -> Vec<String> {
     let mut paths = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = HOME_DIR.as_ref() {
         paths.push(
             home.join(".snmp")
                 .join("mibs")
@@ -103,7 +106,7 @@ fn libsmi_defaults() -> Vec<String> {
 
 fn netsnmp_config_files() -> Vec<PathBuf> {
     let mut files = vec![PathBuf::from("/etc/snmp/snmp.conf")];
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = HOME_DIR.as_ref() {
         files.push(home.join(".snmp").join("snmp.conf"));
     }
     files
@@ -111,7 +114,7 @@ fn netsnmp_config_files() -> Vec<PathBuf> {
 
 fn libsmi_config_files() -> Vec<PathBuf> {
     let mut files = vec![PathBuf::from("/etc/smi.conf")];
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = HOME_DIR.as_ref() {
         files.push(home.join(".smirc"));
     }
     files

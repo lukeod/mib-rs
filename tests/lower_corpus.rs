@@ -80,11 +80,12 @@ fn primary_corpus_lowering_no_panics() {
 
 #[test]
 fn base_modules_have_definitions() {
-    let base_modules = mib_rs::lower::base_modules::create_base_modules();
-    assert_eq!(base_modules.len(), 7);
+    use mib_rs::lower::base_modules::{base_module_names, get_base_module};
+
+    assert_eq!(base_module_names().len(), 7);
 
     // SNMPv2-SMI should have OIDs and type definitions
-    let smi = &base_modules[0];
+    let smi = get_base_module("SNMPv2-SMI").expect("missing SNMPv2-SMI");
     assert_eq!(smi.name, "SNMPv2-SMI");
     assert_eq!(smi.language, mib_rs::types::Language::SMIv2);
     assert!(!smi.definitions.is_empty());
@@ -99,7 +100,7 @@ fn base_modules_have_definitions() {
     assert!(names.contains(&"IpAddress"), "missing IpAddress type");
 
     // SNMPv2-TC should have textual conventions
-    let tc = &base_modules[1];
+    let tc = get_base_module("SNMPv2-TC").expect("missing SNMPv2-TC");
     assert_eq!(tc.name, "SNMPv2-TC");
     let tc_names: Vec<&str> = tc.definitions.iter().map(|d| d.name()).collect();
     assert!(tc_names.contains(&"DisplayString"), "missing DisplayString");
@@ -108,12 +109,12 @@ fn base_modules_have_definitions() {
     assert!(tc_names.contains(&"MacAddress"), "missing MacAddress");
 
     // SNMPv2-CONF should be empty (MACROs only)
-    let conf = &base_modules[2];
+    let conf = get_base_module("SNMPv2-CONF").expect("missing SNMPv2-CONF");
     assert_eq!(conf.name, "SNMPv2-CONF");
     assert!(conf.definitions.is_empty());
 
     // RFC1155-SMI should have SMIv1 types
-    let rfc1155 = &base_modules[3];
+    let rfc1155 = get_base_module("RFC1155-SMI").expect("missing RFC1155-SMI");
     assert_eq!(rfc1155.name, "RFC1155-SMI");
     assert_eq!(rfc1155.language, mib_rs::types::Language::SMIv1);
     let rfc1155_names: Vec<&str> = rfc1155.definitions.iter().map(|d| d.name()).collect();
@@ -122,8 +123,10 @@ fn base_modules_have_definitions() {
     assert!(rfc1155_names.contains(&"iso"), "missing iso OID");
 
     // RFC-1212 and RFC-1215 should be empty
-    assert!(base_modules[5].definitions.is_empty());
-    assert!(base_modules[6].definitions.is_empty());
+    let rfc1212 = get_base_module("RFC-1212").expect("missing RFC-1212");
+    assert!(rfc1212.definitions.is_empty());
+    let rfc1215 = get_base_module("RFC-1215").expect("missing RFC-1215");
+    assert!(rfc1215.definitions.is_empty());
 }
 
 #[test]

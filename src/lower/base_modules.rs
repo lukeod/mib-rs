@@ -66,7 +66,7 @@ pub fn base_module_names() -> &'static [&'static str] {
 
 /// Returns synthetic Module IR values for all base modules.
 /// These should be prepended to the user module list before resolution.
-pub fn create_base_modules() -> Vec<ir::Module> {
+pub(crate) fn create_base_modules() -> Vec<ir::Module> {
     vec![
         create_snmpv2_smi(),
         create_snmpv2_tc(),

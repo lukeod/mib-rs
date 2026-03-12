@@ -547,9 +547,7 @@ impl<'src> Lexer<'src> {
             }
         }
     }
-}
 
-impl Lexer<'_> {
     /// Returns diagnostics accumulated during tokenization.
     pub fn diagnostics(&self) -> &[SpanDiagnostic] {
         &self.diagnostics
