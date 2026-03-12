@@ -179,7 +179,12 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         // Resolve type reference.
         let obj_name = obj.entity.name.clone();
-        resolve_object_type(ctx, ir_id, &syntax, &obj_name, &mut obj);
+        let resolved = resolve_type_syntax(ctx, ir_id, &syntax, &obj_name, obj.syntax_span);
+        obj.typ = resolved.type_id;
+        obj.enums = resolved.enums;
+        obj.bits = resolved.bits;
+        obj.sizes = resolved.sizes;
+        obj.ranges = resolved.ranges;
 
         // Convert DEFVAL.
         if let Some(dv) = &defval {
@@ -225,119 +230,17 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
     );
 }
 
-fn resolve_object_type(
+/// Resolve type syntax into a SyntaxConstraints, handling type lookups,
+/// named numbers, bits, and constraints.
+///
+/// Used by both OBJECT-TYPE resolution and SYNTAX/WRITE-SYNTAX clauses in
+/// MODULE-COMPLIANCE and AGENT-CAPABILITIES.
+fn resolve_type_syntax(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
     referrer: &str,
-    obj: &mut ObjectData,
-) {
-    match syntax {
-        ir::TypeSyntax::TypeRef { name, .. } => {
-            if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, name) {
-                obj.typ = Some(type_id);
-                if used_import {
-                    ctx.mark_import_used(ir_mod, name);
-                }
-            } else if !is_sequence_type_def(ctx, ir_mod, name) {
-                let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                ctx.record_unresolved_type(referrer, name, &mod_name, ir_mod, obj.syntax_span);
-            }
-        }
-        ir::TypeSyntax::IntegerEnum {
-            base,
-            named_numbers,
-            ..
-        } => {
-            // Look up named base type (e.g., TPSPRateType { kbps(1) }).
-            if !base.is_empty() {
-                if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, base) {
-                    obj.typ = Some(type_id);
-                    if used_import {
-                        ctx.mark_import_used(ir_mod, base);
-                    }
-                } else {
-                    let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                    ctx.record_unresolved_type(referrer, base, &mod_name, ir_mod, obj.syntax_span);
-                }
-            } else {
-                // Bare INTEGER { ... } enum with no named base.
-                if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
-                    obj.typ = Some(type_id);
-                }
-            }
-            obj.enums = named_numbers
-                .iter()
-                .map(|nn| NamedValue {
-                    label: nn.name.clone(),
-                    value: nn.value,
-                    span: nn.span,
-                })
-                .collect();
-        }
-        ir::TypeSyntax::Bits { named_bits, .. } => {
-            // BITS resolves to the BITS primitive.
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "BITS") {
-                obj.typ = Some(type_id);
-            }
-            obj.bits = named_bits
-                .iter()
-                .map(|nb| NamedValue {
-                    label: nb.name.clone(),
-                    value: nb.position as i64,
-                    span: nb.span,
-                })
-                .collect();
-        }
-        ir::TypeSyntax::Constrained {
-            base, constraint, ..
-        } => {
-            resolve_object_type(ctx, ir_mod, base, referrer, obj);
-            extract_object_constraint(constraint, obj);
-        }
-        ir::TypeSyntax::SequenceOf { entry_type, .. } => {
-            obj.sequence_type_name = entry_type.clone();
-        }
-        ir::TypeSyntax::Sequence { .. } => {}
-        ir::TypeSyntax::OctetString => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
-                obj.typ = Some(type_id);
-            }
-        }
-        ir::TypeSyntax::ObjectIdentifier => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER") {
-                obj.typ = Some(type_id);
-            }
-        }
-    }
-}
-
-fn extract_object_constraint(constraint: &ir::Constraint, obj: &mut ObjectData) {
-    match constraint {
-        ir::Constraint::Size { ranges, .. } => {
-            obj.sizes = ranges
-                .iter()
-                .filter_map(super::types::resolve_range)
-                .collect();
-        }
-        ir::Constraint::Range { ranges, .. } => {
-            obj.ranges = ranges
-                .iter()
-                .filter_map(super::types::resolve_range)
-                .collect();
-        }
-    }
-}
-
-/// Resolve an optional IR TypeSyntax into a SyntaxConstraints.
-///
-/// Used for SYNTAX/WRITE-SYNTAX clauses in MODULE-COMPLIANCE objects and
-/// AGENT-CAPABILITIES variations.
-fn resolve_syntax_constraints(
-    ctx: &mut ResolverContext,
-    ir_mod: IrModuleId,
-    syntax: &ir::TypeSyntax,
-    owner_name: &str,
+    span: Span,
 ) -> SyntaxConstraints {
     let mut sc = SyntaxConstraints {
         type_id: None,
@@ -346,21 +249,20 @@ fn resolve_syntax_constraints(
         enums: Vec::new(),
         bits: Vec::new(),
     };
-    resolve_syntax_type(ctx, ir_mod, syntax, owner_name, &mut sc);
+    resolve_type_syntax_into(ctx, ir_mod, syntax, referrer, span, &mut sc);
     sc
 }
 
-/// Resolve the type reference within a TypeSyntax, populating sc.type_id and
-/// extracting any inline constraints/enums/bits.
-fn resolve_syntax_type(
+fn resolve_type_syntax_into(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
-    owner_name: &str,
+    referrer: &str,
+    span: Span,
     sc: &mut SyntaxConstraints,
 ) {
     match syntax {
-        ir::TypeSyntax::TypeRef { name, span, .. } => {
+        ir::TypeSyntax::TypeRef { name, .. } => {
             if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, name) {
                 sc.type_id = Some(type_id);
                 if used_import {
@@ -368,7 +270,7 @@ fn resolve_syntax_type(
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
                 let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                ctx.record_unresolved_type(owner_name, name, &mod_name, ir_mod, *span);
+                ctx.record_unresolved_type(referrer, name, &mod_name, ir_mod, span);
             }
         }
         ir::TypeSyntax::IntegerEnum {
@@ -384,7 +286,7 @@ fn resolve_syntax_type(
                     }
                 } else {
                     let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                    ctx.record_unresolved_type(owner_name, base, &mod_name, ir_mod, Span::SYNTHETIC);
+                    ctx.record_unresolved_type(referrer, base, &mod_name, ir_mod, span);
                 }
             } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
                 sc.type_id = Some(type_id);
@@ -414,7 +316,7 @@ fn resolve_syntax_type(
         ir::TypeSyntax::Constrained {
             base, constraint, ..
         } => {
-            resolve_syntax_type(ctx, ir_mod, base, owner_name, sc);
+            resolve_type_syntax_into(ctx, ir_mod, base, referrer, span, sc);
             match constraint {
                 ir::Constraint::Size { ranges, .. } => {
                     sc.sizes = ranges
@@ -430,6 +332,7 @@ fn resolve_syntax_type(
                 }
             }
         }
+        ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
         ir::TypeSyntax::OctetString => {
             if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
                 sc.type_id = Some(type_id);
@@ -440,7 +343,6 @@ fn resolve_syntax_type(
                 sc.type_id = Some(type_id);
             }
         }
-        ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
     }
 }
 
@@ -1125,7 +1027,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         let oid = mc.oid.clone();
 
         // Pre-extract compliance module data to release the borrow on
-        // ctx.modules before calling resolve_syntax_constraints.
+        // ctx.modules before calling resolve_type_syntax.
         struct CompObjData {
             object: String,
             syntax: Option<ir::TypeSyntax>,
@@ -1219,11 +1121,11 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                     let resolved_syntax = o
                         .syntax
                         .as_ref()
-                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &o.object));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.span));
                     let resolved_write_syntax = o
                         .write_syntax
                         .as_ref()
-                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &o.object));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.span));
                     ComplianceObject {
                         object: o.object.clone(),
                         syntax: resolved_syntax,
@@ -1417,11 +1319,11 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                     let syntax = var
                         .syntax
                         .as_ref()
-                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &var.name));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.span));
                     let write_syntax = var
                         .write_syntax
                         .as_ref()
-                        .map(|s| resolve_syntax_constraints(ctx, ir_id, s, &var.name));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.span));
                     // For defval, derive the type from the resolved syntax if
                     // present, otherwise fall back to None.
                     let defval_typ = syntax.as_ref().and_then(|sc| sc.type_id);

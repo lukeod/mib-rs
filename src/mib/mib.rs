@@ -8,7 +8,7 @@ use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
 use super::group::GroupData;
 use super::module::ModuleData;
-use super::node::OidTree;
+use super::node::{NodeData, OidTree};
 use super::notification::NotificationData;
 use super::object::ObjectData;
 use super::symbol::Symbol;
@@ -117,6 +117,17 @@ impl Mib {
 
     // --- Name lookups ---
 
+    /// Search nodes associated with `name` for the first one where `get`
+    /// returns Some.
+    fn find_in_nodes<T>(&self, name: &str, get: impl Fn(&NodeData) -> Option<T>) -> Option<T> {
+        for &id in self.name_to_nodes.get(name)? {
+            if let Some(val) = get(self.tree.get(id)) {
+                return Some(val);
+            }
+        }
+        None
+    }
+
     /// Look up a node by name. Prefers nodes with objects, then notifications.
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         let nodes = self.name_to_nodes.get(name)?;
@@ -135,12 +146,7 @@ impl Mib {
 
     /// Look up an object by name.
     pub fn object_by_name(&self, name: &str) -> Option<ObjectId> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(obj_id) = self.tree.get(id).object {
-                return Some(obj_id);
-            }
-        }
-        None
+        self.find_in_nodes(name, |n| n.object)
     }
 
     /// Look up a type by name.
@@ -150,42 +156,22 @@ impl Mib {
 
     /// Look up a notification by name.
     pub fn notification_by_name(&self, name: &str) -> Option<NotificationId> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(notif_id) = self.tree.get(id).notification {
-                return Some(notif_id);
-            }
-        }
-        None
+        self.find_in_nodes(name, |n| n.notification)
     }
 
     /// Look up a group by name.
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(group_id) = self.tree.get(id).group {
-                return Some(group_id);
-            }
-        }
-        None
+        self.find_in_nodes(name, |n| n.group)
     }
 
     /// Look up a compliance by name.
     pub fn compliance_by_name(&self, name: &str) -> Option<ComplianceId> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(comp_id) = self.tree.get(id).compliance {
-                return Some(comp_id);
-            }
-        }
-        None
+        self.find_in_nodes(name, |n| n.compliance)
     }
 
     /// Look up a capability by name.
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(cap_id) = self.tree.get(id).capability {
-                return Some(cap_id);
-            }
-        }
-        None
+        self.find_in_nodes(name, |n| n.capability)
     }
 
     /// Look up a module by name.

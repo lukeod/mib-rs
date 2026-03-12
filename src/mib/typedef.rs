@@ -122,13 +122,14 @@ impl TypeData {
 impl TypeData {
     /// Walk the parent type chain and return the first non-default base type.
     pub fn effective_base(&self, types: &[TypeData]) -> BaseType {
-        walk_type_chain(self, types, |t| {
+        walk_type_chain_ref(self, types, |t| {
             if t.base != BaseType::Unknown {
-                Some(t.base)
+                Some(&t.base)
             } else {
                 None
             }
         })
+        .copied()
         .unwrap_or(BaseType::Unknown)
     }
 
@@ -146,48 +147,33 @@ impl TypeData {
 
     /// Walk the parent type chain and return the first non-empty size constraints.
     pub fn effective_sizes<'a>(&'a self, types: &'a [TypeData]) -> &'a [Range] {
-        walk_type_chain_ref(self, types, |t| {
-            if t.sizes.is_empty() {
-                None
-            } else {
-                Some(t.sizes.as_slice())
-            }
-        })
-        .unwrap_or(&[])
+        self.effective_slice(types, |t| &t.sizes)
     }
 
     /// Walk the parent type chain and return the first non-empty range constraints.
     pub fn effective_ranges<'a>(&'a self, types: &'a [TypeData]) -> &'a [Range] {
-        walk_type_chain_ref(self, types, |t| {
-            if t.ranges.is_empty() {
-                None
-            } else {
-                Some(t.ranges.as_slice())
-            }
-        })
-        .unwrap_or(&[])
+        self.effective_slice(types, |t| &t.ranges)
     }
 
     /// Walk the parent type chain and return the first non-empty enumeration values.
     pub fn effective_enums<'a>(&'a self, types: &'a [TypeData]) -> &'a [NamedValue] {
-        walk_type_chain_ref(self, types, |t| {
-            if t.enums.is_empty() {
-                None
-            } else {
-                Some(t.enums.as_slice())
-            }
-        })
-        .unwrap_or(&[])
+        self.effective_slice(types, |t| &t.enums)
     }
 
     /// Walk the parent type chain and return the first non-empty BITS definitions.
     pub fn effective_bits<'a>(&'a self, types: &'a [TypeData]) -> &'a [NamedValue] {
+        self.effective_slice(types, |t| &t.bits)
+    }
+
+    /// Walk the parent type chain, returning the first non-empty slice from `get`.
+    fn effective_slice<'a, T>(
+        &'a self,
+        types: &'a [TypeData],
+        get: impl Fn(&'a TypeData) -> &'a [T],
+    ) -> &'a [T] {
         walk_type_chain_ref(self, types, |t| {
-            if t.bits.is_empty() {
-                None
-            } else {
-                Some(t.bits.as_slice())
-            }
+            let s = get(t);
+            if s.is_empty() { None } else { Some(s) }
         })
         .unwrap_or(&[])
     }
@@ -213,31 +199,6 @@ impl TypeData {
     pub fn is_bits(&self, types: &[TypeData]) -> bool {
         walk_type_chain_has_slice(self, types, |t| &t.bits)
     }
-}
-
-/// Walk the type chain, returning the first Some value from `get`.
-fn walk_type_chain<T>(
-    start: &TypeData,
-    types: &[TypeData],
-    get: impl Fn(&TypeData) -> Option<T>,
-) -> Option<T> {
-    if let Some(v) = get(start) {
-        return Some(v);
-    }
-    let mut current_id = start.parent;
-    let mut depth = 1;
-    while let Some(id) = current_id {
-        if depth >= MAX_TYPE_CHAIN_DEPTH {
-            break;
-        }
-        let t = &types[id.0 as usize];
-        if let Some(v) = get(t) {
-            return Some(v);
-        }
-        current_id = t.parent;
-        depth += 1;
-    }
-    None
 }
 
 /// Walk the type chain, returning the first Some reference from `get`.
@@ -271,21 +232,9 @@ fn walk_type_chain_has_slice(
     types: &[TypeData],
     get: impl Fn(&TypeData) -> &[NamedValue],
 ) -> bool {
-    if !get(start).is_empty() {
-        return true;
-    }
-    let mut current_id = start.parent;
-    let mut depth = 1;
-    while let Some(id) = current_id {
-        if depth >= MAX_TYPE_CHAIN_DEPTH {
-            break;
-        }
-        let t = &types[id.0 as usize];
-        if !get(t).is_empty() {
-            return true;
-        }
-        current_id = t.parent;
-        depth += 1;
-    }
-    false
+    walk_type_chain_ref(start, types, |t| {
+        let s = get(t);
+        if s.is_empty() { None } else { Some(s) }
+    })
+    .is_some()
 }
