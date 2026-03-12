@@ -422,11 +422,7 @@ fn make_oid_ref(name: &str, module: &str, oid: &str) -> ExportOidRef {
     }
 }
 
-fn resolve_object_ref(
-    mib: &Mib,
-    name: &str,
-    fallback_module: &str,
-) -> ExportOidRef {
+fn resolve_object_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
     if let Some(obj_id) = mib.object_by_name(name) {
         let obj = mib.object(obj_id);
         let mod_name = obj.module().map(|mid| mib.module(mid).name()).unwrap_or("");
@@ -466,11 +462,7 @@ fn resolve_node_ref_with_fallback(mib: &Mib, name: &str, fallback_module: &str) 
     }
 }
 
-fn resolve_notification_ref(
-    mib: &Mib,
-    name: &str,
-    fallback_module: &str,
-) -> ExportOidRef {
+fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
     if let Some(notif_id) = mib.notification_by_name(name) {
         let notif = mib.notification(notif_id);
         let mod_name = notif
@@ -976,20 +968,14 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 let mandatory_groups: Vec<ExportOidRef> = cm
                     .mandatory_groups
                     .iter()
-                    .map(|name| {
-                        resolve_node_ref_with_fallback(mib, name, &effective_module)
-                    })
+                    .map(|name| resolve_node_ref_with_fallback(mib, name, &effective_module))
                     .collect();
 
                 let grps: Vec<ExportComplianceGroup> = cm
                     .groups
                     .iter()
                     .map(|cg| ExportComplianceGroup {
-                        group: resolve_node_ref_with_fallback(
-                            mib,
-                            &cg.group,
-                            &effective_module,
-                        ),
+                        group: resolve_node_ref_with_fallback(mib, &cg.group, &effective_module),
                         description: opt_string(&cg.description),
                     })
                     .collect();
@@ -998,11 +984,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                     .objects
                     .iter()
                     .map(|co| ExportComplianceObject {
-                        object: resolve_object_ref(
-                            mib,
-                            &co.object,
-                            &effective_module,
-                        ),
+                        object: resolve_object_ref(mib, &co.object, &effective_module),
                         syntax: co
                             .syntax
                             .as_ref()
@@ -1065,9 +1047,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 let includes: Vec<ExportOidRef> = sm
                     .includes
                     .iter()
-                    .map(|name| {
-                        resolve_node_ref_with_fallback(mib, name, &sm.module_name)
-                    })
+                    .map(|name| resolve_node_ref_with_fallback(mib, name, &sm.module_name))
                     .collect();
 
                 let obj_vars: Vec<ExportObjectVariation> =
@@ -1077,21 +1057,11 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                             let creation_req: Vec<ExportOidRef> = ov
                                 .creation_requires
                                 .iter()
-                                .map(|name| {
-                                    resolve_object_ref(
-                                        mib,
-                                        name,
-                                        &sm.module_name,
-                                    )
-                                })
+                                .map(|name| resolve_object_ref(mib, name, &sm.module_name))
                                 .collect();
 
                             ExportObjectVariation {
-                                object: resolve_object_ref(
-                                    mib,
-                                    &ov.object,
-                                    &sm.module_name,
-                                ),
+                                object: resolve_object_ref(mib, &ov.object, &sm.module_name),
                                 syntax: ov
                                     .syntax
                                     .as_ref()
@@ -1250,7 +1220,6 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -197,10 +197,7 @@ fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<St
         };
 
         let names = crate::scan::scan_module_names(&content);
-        let rel_path = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_path_buf();
+        let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
         for name in names {
             index.entry(name).or_insert_with(|| rel_path.clone());

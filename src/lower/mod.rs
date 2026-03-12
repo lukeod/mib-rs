@@ -271,7 +271,10 @@ fn lower_imports(
     imports
 }
 
-fn lower_definition(def: &ast::Definition, ctx: &mut LoweringContext<'_>) -> Option<ir::Definition> {
+fn lower_definition(
+    def: &ast::Definition,
+    ctx: &mut LoweringContext<'_>,
+) -> Option<ir::Definition> {
     match def {
         ast::Definition::ObjectType(d) => {
             Some(ir::Definition::ObjectType(lower_object_type(d, ctx)))
@@ -454,7 +457,11 @@ fn check_module_name_suffix(ctx: &mut LoweringContext<'_>, module: &ir::Module) 
     }
 }
 
-fn check_module_identity(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module, module: &ir::Module) {
+fn check_module_identity(
+    ctx: &mut LoweringContext<'_>,
+    ast_module: &ast::Module,
+    module: &ir::Module,
+) {
     let mut module_identities: Vec<(usize, &ir::ModuleIdentity)> = Vec::new();
     for (i, def) in module.definitions.iter().enumerate() {
         if let ir::Definition::ModuleIdentity(mi) = def {
@@ -534,7 +541,11 @@ fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ir::ModuleIde
     );
 }
 
-fn check_macro_imports(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module, module: &ir::Module) {
+fn check_macro_imports(
+    ctx: &mut LoweringContext<'_>,
+    ast_module: &ast::Module,
+    module: &ir::Module,
+) {
     let mut imported_macros = HashSet::new();
     for clause in &ast_module.imports {
         for sym in &clause.symbols {
@@ -603,7 +614,14 @@ fn check_macro_imports(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module, 
 fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext<'_>) -> ir::ObjectType {
     let name = &def.name.name;
     check_optional_description_reference(ctx, &def.description, &def.reference, def.span, name);
-    check_empty_optional(ctx, &def.units, def.span, name, "UNITS", DiagCode::EmptyUnits);
+    check_empty_optional(
+        ctx,
+        &def.units,
+        def.span,
+        name,
+        "UNITS",
+        DiagCode::EmptyUnits,
+    );
 
     let augments = def
         .augments
@@ -662,9 +680,30 @@ fn lower_module_identity(
     ctx: &mut LoweringContext<'_>,
 ) -> ir::ModuleIdentity {
     let name = &def.name.name;
-    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
-    check_empty_required(ctx, &def.organization.value, def.span, name, "ORGANIZATION", DiagCode::EmptyOrganization);
-    check_empty_required(ctx, &def.contact_info.value, def.span, name, "CONTACT-INFO", DiagCode::EmptyContact);
+    check_empty_required(
+        ctx,
+        &def.description.value,
+        def.span,
+        name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_required(
+        ctx,
+        &def.organization.value,
+        def.span,
+        name,
+        "ORGANIZATION",
+        DiagCode::EmptyOrganization,
+    );
+    check_empty_required(
+        ctx,
+        &def.contact_info.value,
+        def.span,
+        name,
+        "CONTACT-INFO",
+        DiagCode::EmptyContact,
+    );
 
     let revisions = def
         .revisions
@@ -752,7 +791,14 @@ fn lower_textual_convention(
 ) -> ir::TypeDef {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
-    check_empty_optional(ctx, &def.display_hint, def.span, name, "DISPLAY-HINT", DiagCode::EmptyFormat);
+    check_empty_optional(
+        ctx,
+        &def.display_hint,
+        def.span,
+        name,
+        "DISPLAY-HINT",
+        DiagCode::EmptyFormat,
+    );
 
     ir::TypeDef {
         name: name.clone(),
@@ -772,7 +818,10 @@ fn lower_textual_convention(
     }
 }
 
-fn lower_type_assignment(def: &ast::TypeAssignmentDef, ctx: &mut LoweringContext<'_>) -> ir::TypeDef {
+fn lower_type_assignment(
+    def: &ast::TypeAssignmentDef,
+    ctx: &mut LoweringContext<'_>,
+) -> ir::TypeDef {
     ir::TypeDef {
         name: def.name.name.clone(),
         span: def.span,
@@ -940,7 +989,10 @@ fn lower_agent_capabilities(
     }
 }
 
-fn lower_supports_module(s: &ast::SupportsModule, ctx: &mut LoweringContext<'_>) -> ir::SupportsModule {
+fn lower_supports_module(
+    s: &ast::SupportsModule,
+    ctx: &mut LoweringContext<'_>,
+) -> ir::SupportsModule {
     let variations = s
         .variations
         .iter()

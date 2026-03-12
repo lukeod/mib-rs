@@ -410,9 +410,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                 }
             }
 
-            if !augments.is_empty()
-                && ctx.lookup_node_for_module(ir_id, &augments).is_none()
-            {
+            if !augments.is_empty() && ctx.lookup_node_for_module(ir_id, &augments).is_none() {
                 let mod_name = ctx.modules[mod_idx].name.clone();
                 ctx.record_unresolved_oid(
                     &name,
@@ -678,13 +676,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                 nd.objects.push(obj_id);
             } else {
                 let mod_name = ctx.modules[mod_idx].name.clone();
-                ctx.record_unresolved_notification_object(
-                    &name,
-                    obj_name,
-                    &mod_name,
-                    ir_id,
-                    span,
-                );
+                ctx.record_unresolved_notification_object(&name, obj_name, &mod_name, ir_id, span);
             }
         }
 
@@ -953,8 +945,7 @@ fn check_group_member_status(
 
 /// Create resolved Compliance instances.
 fn create_resolved_compliances(ctx: &mut ResolverContext) {
-    let work =
-        ctx.collect_definitions(|def| matches!(def, ir::Definition::ModuleCompliance(_)));
+    let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ModuleCompliance(_)));
 
     let mut created_compliance_count = 0;
     for (mod_idx, def_idx) in work {
@@ -1150,8 +1141,7 @@ struct VariationData {
 
 /// Create resolved Capability instances.
 fn create_resolved_capabilities(ctx: &mut ResolverContext) {
-    let work =
-        ctx.collect_definitions(|def| matches!(def, ir::Definition::AgentCapabilities(_)));
+    let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::AgentCapabilities(_)));
 
     let mut created_capability_count = 0;
     for (mod_idx, def_idx) in work {

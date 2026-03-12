@@ -225,7 +225,6 @@ fn load_all_modules(
                 })
                 .clone();
 
-
             // Return only the requested module from possibly multi-module file.
             let target = cached.iter().find(|m| m.name == *name).cloned();
             Ok(target)
@@ -305,7 +304,6 @@ fn load_modules_by_name(
         let mods = file_cache
             .entry(result.path.clone())
             .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
-
 
         // Find the target module.
         let target = mods.iter().find(|m| m.name == name);

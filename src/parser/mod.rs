@@ -273,32 +273,32 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(Some(self.parse_quoted_string()?))
     }
 
-    fn parse_u32(&mut self, span: Span, context: &str) -> u32 {
+    fn parse_u32(&mut self, span: Span, context: &str) -> Result<u32, SpanDiagnostic> {
         let text = self.text(span);
         match text.parse::<u32>() {
-            Ok(v) => v,
+            Ok(v) => Ok(v),
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidU32,
                     span,
                     format!("invalid {} (not a valid u32)", context),
                 );
-                0
+                Err(self.make_error(format!("invalid {} (not a valid u32)", context)))
             }
         }
     }
 
-    fn parse_i64(&mut self, span: Span, context: &str) -> i64 {
+    fn parse_i64(&mut self, span: Span, context: &str) -> Result<i64, SpanDiagnostic> {
         let text = self.text(span);
         match text.parse::<i64>() {
-            Ok(v) => v,
+            Ok(v) => Ok(v),
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidI64,
                     span,
                     format!("invalid {} (not a valid i64)", context),
                 );
-                0
+                Err(self.make_error(format!("invalid {} (not a valid i64)", context)))
             }
         }
     }
@@ -614,8 +614,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         match second {
             // Value assignment: name OBJECT IDENTIFIER ::=
             TokenKind::KwObject
-                if first.is_identifier()
-                    && self.peek_nth(2).kind == TokenKind::KwIdentifier =>
+                if first.is_identifier() && self.peek_nth(2).kind == TokenKind::KwIdentifier =>
             {
                 self.parse_value_assignment()
             }
@@ -926,7 +925,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // ::= number
         self.expect(TokenKind::ColonColonEqual)?;
         let num_token = self.expect(TokenKind::Number)?;
-        let trap_number = self.parse_u32(num_token.span, "trap number");
+        let trap_number = self.parse_u32(num_token.span, "trap number")?;
 
         let span = Span::new(start, self.last_end);
         Ok(Definition::TrapType(TrapTypeDef {
@@ -1641,7 +1640,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
             TokenKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "DEFVAL number");
+                let v = self.parse_i64(token.span, "DEFVAL number")?;
                 Ok(DefVal::Integer(v))
             }
             TokenKind::QuotedString => {
@@ -1768,7 +1767,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let first_component = if self.check(TokenKind::LParen) {
             self.advance();
             let num_token = self.expect(TokenKind::Number)?;
-            let num = self.parse_u32(num_token.span, "OID component");
+            let num = self.parse_u32(num_token.span, "OID component")?;
             self.expect(TokenKind::RParen)?;
             OidComponent::NamedNumber {
                 span: Span::new(first.span.start, self.last_end),
@@ -2091,13 +2090,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if let Ok(v) = text.parse::<u64>() {
                     Ok(RangeValue::Unsigned(v))
                 } else {
-                    let v = self.parse_i64(token.span, "range value");
+                    let v = self.parse_i64(token.span, "range value")?;
                     Ok(RangeValue::Signed(v))
                 }
             }
             TokenKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "range value");
+                let v = self.parse_i64(token.span, "range value")?;
                 Ok(RangeValue::Signed(v))
             }
             TokenKind::HexString => {
@@ -2149,10 +2148,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
             let value = if self.check(TokenKind::NegativeNumber) {
                 let num_token = self.advance();
-                self.parse_i64(num_token.span, "named number")
+                self.parse_i64(num_token.span, "named number")?
             } else {
                 let num_token = self.expect(TokenKind::Number)?;
-                self.parse_i64(num_token.span, "named number")
+                self.parse_i64(num_token.span, "named number")?
             };
 
             self.expect(TokenKind::RParen)?;
@@ -2227,7 +2226,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         match self.peek().kind {
             TokenKind::Number => {
                 let token = self.advance();
-                let value = self.parse_u32(token.span, "OID component");
+                let value = self.parse_u32(token.span, "OID component")?;
                 Ok(OidComponent::Number {
                     value,
                     span: token.span,
@@ -2249,7 +2248,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                         if self.check(TokenKind::LParen) {
                             self.advance();
                             let num_token = self.expect(TokenKind::Number)?;
-                            let num = self.parse_u32(num_token.span, "OID component number");
+                            let num = self.parse_u32(num_token.span, "OID component number")?;
                             self.expect(TokenKind::RParen)?;
                             let span = Span::new(ident.span.start, self.last_end);
                             return Ok(OidComponent::QualifiedNamedNumber {
@@ -2273,7 +2272,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if self.check(TokenKind::LParen) {
                     self.advance();
                     let num_token = self.expect(TokenKind::Number)?;
-                    let num = self.parse_u32(num_token.span, "OID component number");
+                    let num = self.parse_u32(num_token.span, "OID component number")?;
                     self.expect(TokenKind::RParen)?;
                     let span = Span::new(ident.span.start, self.last_end);
                     return Ok(OidComponent::NamedNumber {

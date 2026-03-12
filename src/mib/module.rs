@@ -291,7 +291,11 @@ impl ModuleData {
             .iter()
             .map(|&id| Symbol::Object(id))
             .chain(self.types.iter().map(|&id| Symbol::Type(id)))
-            .chain(self.notifications.iter().map(|&id| Symbol::Notification(id)))
+            .chain(
+                self.notifications
+                    .iter()
+                    .map(|&id| Symbol::Notification(id)),
+            )
             .chain(self.groups.iter().map(|&id| Symbol::Group(id)))
             .chain(self.compliances.iter().map(|&id| Symbol::Compliance(id)))
             .chain(self.capabilities.iter().map(|&id| Symbol::Capability(id)))

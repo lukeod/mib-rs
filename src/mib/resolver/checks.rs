@@ -65,7 +65,6 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let ot = match def {
                 ir::Definition::ObjectType(ot) => ot,
@@ -112,7 +111,10 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                         code: DiagCode::AccessInSMIv2,
                         ir_id: Some(ir_id),
                         span: ot.span,
-                        message: format!("{:?}: ACCESS is SMIv1 style, use MAX-ACCESS in SMIv2", ot.name),
+                        message: format!(
+                            "{:?}: ACCESS is SMIv1 style, use MAX-ACCESS in SMIv2",
+                            ot.name
+                        ),
                     });
                 }
                 if ot.access == Access::WriteOnly {
@@ -178,7 +180,6 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let ot = match def {
                 ir::Definition::ObjectType(ot) => ot,
@@ -259,7 +260,6 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
     }
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let (code, label) = match def {
                 ir::Definition::Notification(_) => (DiagCode::ParentNotification, "notification"),
@@ -322,7 +322,6 @@ fn check_table_row_naming(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let ot = match def {
                 ir::Definition::ObjectType(ot) => ot,
@@ -577,7 +576,6 @@ fn check_named_number_ordering(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let (name, syntax, span) = match def {
                 ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
@@ -638,7 +636,6 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             match def {
                 ir::Definition::TypeDef(td) => {
@@ -816,7 +813,12 @@ fn collect_range_diags(
                         code: DiagCode::RangeOverlap,
                         ir_id: Some(ir_id),
                         span,
-                        message: format!("{:?}: range {} overlaps with {}", name, format_ir_range(r), format_ir_range(prev)),
+                        message: format!(
+                            "{:?}: range {} overlaps with {}",
+                            name,
+                            format_ir_range(r),
+                            format_ir_range(prev)
+                        ),
                     });
                 }
             }
@@ -917,7 +919,6 @@ fn check_tc_nested(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let td = match def {
                 ir::Definition::TypeDef(td) if td.is_textual_convention => td,
@@ -1125,7 +1126,6 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         // Group definitions by lowercased name, excluding SEQUENCE types.
         let mut by_lower: HashMap<String, Vec<(&str, Span)>> = HashMap::new();
         for def in &m.definitions {
@@ -1177,7 +1177,6 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let (name, status, span) = match def {
                 ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.span),
@@ -1262,7 +1261,6 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         // Find SEQUENCE type definitions in this module.
         let mut seq_types: HashMap<String, &[ir::SequenceField]> = HashMap::new();
         for def in &m.definitions {
@@ -1568,7 +1566,10 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                             code: DiagCode::OptionalGroupExists,
                             ir_id: Some(ir_id),
                             span: comp.span,
-                            message: format!("duplicate optional group {:?} in {:?}", g.group, comp.name),
+                            message: format!(
+                                "duplicate optional group {:?} in {:?}",
+                                g.group, comp.name
+                            ),
                         });
                     }
                 }
@@ -1580,7 +1581,10 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                             code: DiagCode::RefinementExists,
                             ir_id: Some(ir_id),
                             span: comp.span,
-                            message: format!("duplicate refinement for {:?} in {:?}", o.object, comp.name),
+                            message: format!(
+                                "duplicate refinement for {:?} in {:?}",
+                                o.object, comp.name
+                            ),
                         });
                     }
                 }
@@ -2770,7 +2774,6 @@ fn check_enum_subtyping(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let (name, syntax, span) = match def {
                 ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
@@ -2901,7 +2904,10 @@ fn check_hyphen_in_syntax(
                         code: DiagCode::HyphenInLabel,
                         ir_id: Some(ir_id),
                         span,
-                        message: format!("{:?}: named number {:?} contains a hyphen", name, nn.name),
+                        message: format!(
+                            "{:?}: named number {:?} contains a hyphen",
+                            name, nn.name
+                        ),
                     });
                 }
             }
@@ -2931,7 +2937,6 @@ fn check_format_hints(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let td = match def {
                 ir::Definition::TypeDef(td) if td.is_textual_convention => td,
@@ -3081,7 +3086,6 @@ fn check_capabilities_status(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let ac = match def {
                 ir::Definition::AgentCapabilities(ac) => ac,
@@ -3156,7 +3160,6 @@ fn check_compliance_status(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             let comp = match def {
                 ir::Definition::ModuleCompliance(c) => c,
@@ -3341,7 +3344,6 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
     let mut diags = Vec::new();
 
     for (ir_id, m) in ctx.user_modules() {
-
         for def in &m.definitions {
             match def {
                 ir::Definition::ObjectGroup(g) => {

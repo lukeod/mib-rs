@@ -409,9 +409,7 @@ fn fixture_types() {
             }
             None => String::new(),
         };
-        if (!fn_.tc_name.is_empty() || !got_tc.is_empty())
-            && got_tc != fn_.tc_name
-        {
+        if (!fn_.tc_name.is_empty() || !got_tc.is_empty()) && got_tc != fn_.tc_name {
             failures.push(format!(
                 "{}: TC name: got={got_tc:?} fixture={:?}",
                 fn_.name, fn_.tc_name
@@ -420,8 +418,7 @@ fn fixture_types() {
 
         // Display hint
         let got_hint = obj.effective_display_hint();
-        if (!fn_.hint.is_empty() || !got_hint.is_empty())
-            && !hints_equivalent(got_hint, &fn_.hint)
+        if (!fn_.hint.is_empty() || !got_hint.is_empty()) && !hints_equivalent(got_hint, &fn_.hint)
         {
             failures.push(format!(
                 "{}: hint: got={got_hint:?} fixture={:?}",

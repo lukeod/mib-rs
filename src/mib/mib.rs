@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::mib::Oid;
+use crate::mib::{Oid, ParseOidError};
 use crate::types::{BaseType, Diagnostic, Kind, Severity};
 
 use super::capability::CapabilityData;
@@ -310,14 +310,14 @@ impl Mib {
     }
 
     /// Convert a symbolic or numeric OID string to a numeric OID.
-    pub fn resolve_oid(&self, query: &str) -> Result<Oid, String> {
+    pub fn resolve_oid(&self, query: &str) -> Result<Oid, ResolveOidError> {
         if query.is_empty() {
-            return Err("empty query".into());
+            return Err(ResolveOidError::EmptyQuery);
         }
 
         let q = query.strip_prefix('.').unwrap_or(query);
         if q.starts_with(|c: char| c.is_ascii_digit()) {
-            return q.parse::<Oid>().map_err(|e| format!("invalid OID: {e}"));
+            return q.parse::<Oid>().map_err(ResolveOidError::InvalidOid);
         }
 
         // Qualified name: MODULE::name[.suffix]
@@ -326,10 +326,13 @@ impl Mib {
             let mod_id = self
                 .module_by_name
                 .get(mod_name)
-                .ok_or_else(|| format!("module not found: {mod_name}"))?;
+                .ok_or_else(|| ResolveOidError::ModuleNotFound(mod_name.to_string()))?;
             let node_id = self.modules[mod_id.0 as usize]
                 .node_by_name(name)
-                .ok_or_else(|| format!("node not found: {mod_name}::{name}"))?;
+                .ok_or_else(|| ResolveOidError::QualifiedNodeNotFound {
+                    module: mod_name.to_string(),
+                    name: name.to_string(),
+                })?;
             let base = self.tree.oid_of(node_id).clone();
             return append_suffix(base, suffix);
         }
@@ -338,7 +341,7 @@ impl Mib {
         let (name, suffix) = split_name_suffix(query);
         let node_id = self
             .node_by_name(name)
-            .ok_or_else(|| format!("node not found: {name}"))?;
+            .ok_or_else(|| ResolveOidError::NodeNotFound(name.to_string()))?;
         let base = self.tree.oid_of(node_id).clone();
         append_suffix(base, suffix)
     }
@@ -763,14 +766,37 @@ fn split_name_suffix(s: &str) -> (&str, &str) {
     }
 }
 
-fn append_suffix(base: Oid, suffix: &str) -> Result<Oid, String> {
+fn append_suffix(base: Oid, suffix: &str) -> Result<Oid, ResolveOidError> {
     if suffix.is_empty() {
         return Ok(base);
     }
     let extra: Oid = suffix
         .parse()
-        .map_err(|e| format!("invalid instance suffix {suffix:?}: {e}"))?;
+        .map_err(|source| ResolveOidError::InvalidSuffix {
+            suffix: suffix.to_string(),
+            source,
+        })?;
     Ok(base.child_oid(&extra))
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ResolveOidError {
+    #[error("empty query")]
+    EmptyQuery,
+    #[error("invalid OID: {0}")]
+    InvalidOid(#[source] ParseOidError),
+    #[error("module not found: {0}")]
+    ModuleNotFound(String),
+    #[error("node not found: {0}")]
+    NodeNotFound(String),
+    #[error("node not found: {module}::{name}")]
+    QualifiedNodeNotFound { module: String, name: String },
+    #[error("invalid instance suffix {suffix:?}: {source}")]
+    InvalidSuffix {
+        suffix: String,
+        #[source]
+        source: ParseOidError,
+    },
 }
 
 // Extension method for building child OIDs with multiple arcs.

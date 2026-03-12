@@ -156,23 +156,18 @@ impl ResolverContext {
 
     /// Collect (module_index, definition_index) pairs for definitions matching a predicate.
     /// Used to gather work items before mutating ctx.
-    pub fn collect_definitions(
-        &self,
-        filter: fn(&ir::Definition) -> bool,
-    ) -> Vec<(usize, usize)> {
+    pub fn collect_definitions(&self, filter: fn(&ir::Definition) -> bool) -> Vec<(usize, usize)> {
         (0..self.modules.len())
             .flat_map(|idx| {
                 self.modules[idx]
                     .definitions
                     .iter()
                     .enumerate()
-                    .filter_map(move |(di, def)| {
-                        if filter(def) {
-                            Some((idx, di))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(
+                        move |(di, def)| {
+                            if filter(def) { Some((idx, di)) } else { None }
+                        },
+                    )
             })
             .collect()
     }
@@ -401,13 +396,15 @@ impl ResolverContext {
     /// Record an unresolved reference and emit a diagnostic.
     pub fn record_unresolved_import(
         &mut self,
-        symbol: &str,
-        importing_module: &str,
-        from_module: &str,
+        symbol: impl Into<String>,
+        importing_module: impl Into<String>,
+        from_module: impl AsRef<str>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        let symbol = symbol.into();
+        let importing_module = importing_module.into();
         let code = if reason == UnresolvedReason::ModuleNotFound {
             DiagCode::ImportModuleNotFound
         } else {
@@ -415,53 +412,66 @@ impl ResolverContext {
         };
         self.unresolved_imports.push(UnresolvedTracking {
             kind: UnresolvedKind::Import,
-            symbol: symbol.to_string(),
-            module: importing_module.to_string(),
+            symbol: symbol.clone(),
+            module: importing_module,
             reason,
         });
         self.emit_diagnostic(
             code,
             Some(ir_mod),
             span,
-            format!("unresolved import: {:?} from {:?} ({})", symbol, from_module, reason.as_str()),
+            format!(
+                "unresolved import: {:?} from {:?} ({})",
+                symbol,
+                from_module.as_ref(),
+                reason.as_str()
+            ),
         );
     }
 
     pub fn record_unresolved_type(
         &mut self,
-        referrer: &str,
-        symbol: &str,
-        module: &str,
+        referrer: impl AsRef<str>,
+        symbol: impl Into<String>,
+        module: impl Into<String>,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        let symbol = symbol.into();
+        let module = module.into();
         self.unresolved_types.push(UnresolvedTracking {
             kind: UnresolvedKind::Type,
-            symbol: symbol.to_string(),
-            module: module.to_string(),
+            symbol: symbol.clone(),
+            module,
             reason: UnresolvedReason::TypeNotFound,
         });
         self.emit_diagnostic(
             DiagCode::TypeUnknown,
             Some(ir_mod),
             span,
-            format!("unresolved type: {:?} references unknown type {:?}", referrer, symbol),
+            format!(
+                "unresolved type: {:?} references unknown type {:?}",
+                referrer.as_ref(),
+                symbol
+            ),
         );
     }
 
     pub fn record_unresolved_oid(
         &mut self,
-        def_name: &str,
-        component: &str,
-        module: &str,
+        def_name: impl AsRef<str>,
+        component: impl Into<String>,
+        module: impl Into<String>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        let component = component.into();
+        let module = module.into();
         self.unresolved_oids.push(UnresolvedTracking {
             kind: UnresolvedKind::Oid,
-            symbol: component.to_string(),
-            module: module.to_string(),
+            symbol: component.clone(),
+            module,
             reason,
         });
         let code = if reason == UnresolvedReason::DependencyCycle {
@@ -473,51 +483,67 @@ impl ResolverContext {
             code,
             Some(ir_mod),
             span,
-            format!("unresolved OID: {:?} references unknown parent {:?}", def_name, component),
+            format!(
+                "unresolved OID: {:?} references unknown parent {:?}",
+                def_name.as_ref(),
+                component
+            ),
         );
     }
 
     pub fn record_unresolved_index(
         &mut self,
-        row: &str,
-        index_object: &str,
-        module: &str,
+        row: impl AsRef<str>,
+        index_object: impl Into<String>,
+        module: impl Into<String>,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        let index_object = index_object.into();
+        let module = module.into();
         self.unresolved_indexes.push(UnresolvedTracking {
             kind: UnresolvedKind::Index,
-            symbol: index_object.to_string(),
-            module: module.to_string(),
+            symbol: index_object.clone(),
+            module,
             reason: UnresolvedReason::IndexObjectNotFound,
         });
         self.emit_diagnostic(
             DiagCode::IndexUnresolved,
             Some(ir_mod),
             span,
-            format!("unresolved INDEX: {:?} references unknown object {:?}", row, index_object),
+            format!(
+                "unresolved INDEX: {:?} references unknown object {:?}",
+                row.as_ref(),
+                index_object
+            ),
         );
     }
 
     pub fn record_unresolved_notification_object(
         &mut self,
-        notification: &str,
-        object: &str,
-        module: &str,
+        notification: impl AsRef<str>,
+        object: impl Into<String>,
+        module: impl Into<String>,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        let object = object.into();
+        let module = module.into();
         self.unresolved_notif_objects.push(UnresolvedTracking {
             kind: UnresolvedKind::NotificationObject,
-            symbol: object.to_string(),
-            module: module.to_string(),
+            symbol: object.clone(),
+            module,
             reason: UnresolvedReason::ObjectNotFound,
         });
         self.emit_diagnostic(
             DiagCode::ObjectsUnresolved,
             Some(ir_mod),
             span,
-            format!("unresolved OBJECTS: {:?} references unknown object {:?}", notification, object),
+            format!(
+                "unresolved OBJECTS: {:?} references unknown object {:?}",
+                notification.as_ref(),
+                object
+            ),
         );
     }
 

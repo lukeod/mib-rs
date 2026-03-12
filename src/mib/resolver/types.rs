@@ -352,13 +352,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             } else {
                 let type_name = ctx.mib.type_(type_id).name().to_string();
                 let mod_name = ctx.modules[ir_id.index()].name.clone();
-                ctx.record_unresolved_type(
-                    &type_name,
-                    ref_name,
-                    &mod_name,
-                    *ir_id,
-                    *span,
-                );
+                ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
             }
         }
     }
@@ -570,7 +564,10 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
                 diagnostics.push((
                     ir_id,
                     m.span,
-                    format!("{} used but not imported from SNMPv2-SMI in {}", ref_name, m.name),
+                    format!(
+                        "{} used but not imported from SNMPv2-SMI in {}",
+                        ref_name, m.name
+                    ),
                 ));
             }
         }

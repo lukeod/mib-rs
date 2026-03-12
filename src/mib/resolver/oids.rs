@@ -107,7 +107,14 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
         );
     }
     for (name, mod_name, ir_mod, span) in cycle_unresolved {
-        ctx.record_unresolved_oid(&name, &name, &mod_name, UnresolvedReason::DependencyCycle, ir_mod, span);
+        ctx.record_unresolved_oid(
+            &name,
+            &name,
+            &mod_name,
+            UnresolvedReason::DependencyCycle,
+            ir_mod,
+            span,
+        );
     }
 
     // Map graph nodes back to OidDef indices.
@@ -550,7 +557,14 @@ fn resolve_name_component(
     }
 
     let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
-    ctx.record_unresolved_oid(&od.name, name, &mod_name, UnresolvedReason::ComponentNotFound, od.ir_mod, span);
+    ctx.record_unresolved_oid(
+        &od.name,
+        name,
+        &mod_name,
+        UnresolvedReason::ComponentNotFound,
+        od.ir_mod,
+        span,
+    );
     None
 }
 

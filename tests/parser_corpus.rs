@@ -302,10 +302,7 @@ fn parse_multimodule_file() {
         modules.len()
     );
     for m in &modules {
-        assert!(
-            m.name.is_some(),
-            "all modules should parse successfully"
-        );
+        assert!(m.name.is_some(), "all modules should parse successfully");
     }
 }
 
