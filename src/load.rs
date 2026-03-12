@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -188,7 +189,7 @@ fn load_all_modules(
     );
 
     // Cache decoded files by path to avoid re-parsing multi-module files.
-    let path_cache: DashMap<String, Arc<Vec<ir::Module>>> = DashMap::new();
+    let path_cache: DashMap<PathBuf, Arc<Vec<ir::Module>>> = DashMap::new();
 
     // Parallel load.
     let results: Result<Vec<Option<ir::Module>>, LoadError> = all_modules
@@ -224,6 +225,7 @@ fn load_all_modules(
                 })
                 .clone();
 
+
             // Return only the requested module from possibly multi-module file.
             let target = cached.iter().find(|m| m.name == *name).cloned();
             Ok(target)
@@ -254,7 +256,7 @@ fn load_modules_by_name(
     diag_config: &DiagnosticConfig,
 ) -> Result<Vec<ir::Module>, LoadError> {
     let mut modules: HashMap<String, ir::Module> = HashMap::new();
-    let mut file_cache: HashMap<String, Vec<ir::Module>> = HashMap::new();
+    let mut file_cache: HashMap<PathBuf, Vec<ir::Module>> = HashMap::new();
 
     fn find_in_sources(
         sources: &[Box<dyn Source>],
@@ -273,7 +275,7 @@ fn load_modules_by_name(
         name: &str,
         sources: &[Box<dyn Source>],
         modules: &mut HashMap<String, ir::Module>,
-        file_cache: &mut HashMap<String, Vec<ir::Module>>,
+        file_cache: &mut HashMap<PathBuf, Vec<ir::Module>>,
         diag_config: &DiagnosticConfig,
     ) -> Result<(), LoadError> {
         if modules.contains_key(name) {
@@ -303,6 +305,7 @@ fn load_modules_by_name(
         let mods = file_cache
             .entry(result.path.clone())
             .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
+
 
         // Find the target module.
         let target = mods.iter().find(|m| m.name == name);
@@ -354,14 +357,15 @@ fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Mod
 /// Run the heuristic/parse/lower pipeline on raw MIB content.
 fn decode_modules(
     content: &[u8],
-    source_path: &str,
+    source_path: &Path,
     diag_config: &DiagnosticConfig,
 ) -> Vec<ir::Module> {
+    let path_display = source_path.display();
     let span = debug_span!(
         target: "mib_rs::load",
         "decode_modules",
         component = "load",
-        path = %source_path,
+        path = %path_display,
         byte_count = content.len(),
     );
     let _guard = span.enter();
@@ -370,7 +374,7 @@ fn decode_modules(
         debug!(
             target: "mib_rs::load",
             component = "load",
-            path = %source_path,
+            path = %path_display,
             reason = "heuristic_rejected",
             "content rejected by heuristic",
         );
@@ -378,10 +382,11 @@ fn decode_modules(
     }
 
     let ast_modules = parser::parse(content, diag_config.clone());
+    let path_str = source_path.to_string_lossy();
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %source_path,
+        path = %path_display,
         ast_module_count = ast_modules.len(),
         "parsed source into AST modules",
     );
@@ -389,13 +394,13 @@ fn decode_modules(
     let mut modules = Vec::new();
     for am in ast_modules {
         let mut module = lower::lower(am, content, diag_config);
-        module.source_path = source_path.to_string();
+        module.source_path = path_str.to_string();
         modules.push(module);
     }
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %source_path,
+        path = %path_display,
         ir_module_count = modules.len(),
         "lowered source into IR modules",
     );

@@ -100,7 +100,7 @@ impl Source for MemorySource {
     fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
         Ok(self.modules.get(name).map(|content| FindResult {
             content: content.as_bytes().to_vec(),
-            path: format!("memory:{name}"),
+            path: format!("memory:{name}").into(),
         }))
     }
 

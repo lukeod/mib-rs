@@ -5,6 +5,8 @@
 // no normalization beyond what the Go fixture generator itself does.
 // Any divergence is a potential bug in mib-rs.
 
+mod common;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +15,8 @@ use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
 use serde::Deserialize;
+
+use common::corpus_dir;
 
 // -- Fixture schema (matches gomib-fixturegen output exactly) --
 
@@ -88,10 +92,6 @@ const GOMIB_MODULES: &[&str] = &[
     "ATM-MIB",
     "DISMAN-EVENT-MIB",
 ];
-
-fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
-}
 
 fn fixture_path(module: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

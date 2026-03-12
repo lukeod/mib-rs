@@ -9,6 +9,7 @@ rust-version = "1.88"
 [[bin]]
 name = "mib-rs"
 path = "src/bin/mib-rs.rs"
+required-features = ["cli"]
 
 [dependencies]
 thiserror = "2"
@@ -17,16 +18,17 @@ rayon = "1.11"
 smallvec = { version = "1.15", features = ["union"] }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive"], optional = true }
 petgraph = "0.8"
 walkdir = "2"
 dashmap = "6"
 dirs = "6"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
 
 [features]
-default = ["serde"]
+default = ["serde", "cli"]
 serde = ["dep:serde", "dep:serde_json", "smallvec/serde"]
+cli = ["dep:clap", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 pretty_assertions = "1"

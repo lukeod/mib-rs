@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::{Path, PathBuf};
 
 use mib_rs::load::{LoadOptions, load};
@@ -6,13 +8,7 @@ use mib_rs::mib::{Mib, NodeId, UnresolvedKind};
 use mib_rs::source::{dir_source, multi_source};
 use mib_rs::types::{BaseType, DiagCode, DiagnosticConfig, ResolverStrictness, Severity};
 
-fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
-}
-
-fn problems_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/problems")
-}
+use common::{corpus_dir, problems_dir};
 
 fn violations_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/strictness/violations")

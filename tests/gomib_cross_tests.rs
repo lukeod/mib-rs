@@ -3,6 +3,8 @@
 // field-by-field. No static fixture files - gomib-fixturegen is built and
 // invoked as a subprocess, producing JSON on stdout.
 
+mod common;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,6 +15,8 @@ use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, ResolverStrictness, Severity};
 use serde::Deserialize;
+
+use common::corpus_dir;
 
 // -- Fixture schema (matches gomib-fixturegen JSON output) --
 
@@ -257,10 +261,6 @@ struct FixtureDiagnostic {
 }
 
 // -- Paths --
-
-fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
-}
 
 fn gomib_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

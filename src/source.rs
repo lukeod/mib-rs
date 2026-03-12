@@ -12,7 +12,7 @@ pub const DEFAULT_EXTENSIONS: &[&str] = &["", ".mib", ".smi", ".txt", ".my"];
 pub struct FindResult {
     pub content: Vec<u8>,
     /// Path used in diagnostic messages to identify the source.
-    pub path: String,
+    pub path: PathBuf,
 }
 
 /// Provides access to MIB files for the loading pipeline.
@@ -103,7 +103,7 @@ impl Source for DirSource {
         let content = std::fs::read(&full_path)?;
         Ok(Some(FindResult {
             content,
-            path: full_path.to_string_lossy().to_string(),
+            path: full_path,
         }))
     }
 

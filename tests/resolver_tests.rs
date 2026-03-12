@@ -1,20 +1,15 @@
 // Integration tests: full pipeline from source files through resolution.
 
+mod common;
+
 use mib_rs::load::{LoadOptions, load};
 use mib_rs::mib::Oid;
 use mib_rs::source::dir_source;
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
 };
-use std::path::{Path, PathBuf};
 
-fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
-}
-
-fn problems_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/problems")
-}
+use common::{corpus_dir, problems_dir};
 
 fn load_corpus(modules: &[&str]) -> mib_rs::load::LoadResult {
     let dir = corpus_dir();

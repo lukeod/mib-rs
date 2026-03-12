@@ -1,6 +1,8 @@
 // Integration tests comparing mib-rs resolution output against net-snmp
 // ground-truth fixtures in testdata/fixtures/netsnmp/.
 
+mod common;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +11,8 @@ use mib_rs::mib::Mib;
 use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
 use serde::Deserialize;
+
+use common::corpus_dir;
 
 // -- Fixture schema --
 
@@ -57,10 +61,6 @@ struct RangeInfo {
 // -- Fixture loading --
 
 const FIXTURE_MODULES: &[&str] = &["IF-MIB", "SNMPv2-MIB", "IP-MIB", "ENTITY-MIB", "BRIDGE-MIB"];
-
-fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
-}
 
 fn fixture_path(module: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
