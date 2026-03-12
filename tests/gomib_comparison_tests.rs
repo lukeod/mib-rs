@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
-use mib_rs::source::dir_source;
+use mib_rs::source::dir as dir_source;
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
 
 use common::{FixtureNode, corpus_dir};
@@ -121,7 +121,11 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         // Type: Go does `normalizeType(obj.Type())` which returns "" for nil,
         // else `t.EffectiveBase().String()`
         e.typ = match obj.type_id() {
-            Some(tid) => mib.raw().type_(tid).effective_base(mib.types_slice()).to_string(),
+            Some(tid) => mib
+                .raw()
+                .type_(tid)
+                .effective_base(mib.types_slice())
+                .to_string(),
             None => String::new(),
         };
 

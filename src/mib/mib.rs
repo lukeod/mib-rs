@@ -46,10 +46,7 @@ pub struct Mib {
 }
 
 impl Mib {
-    /// Create an empty `Mib`.
-    ///
-    /// Most callers should construct a resolved `Mib` through [`crate::Loader`].
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             tree: OidTree::new(),
             objects: Vec::new(),
@@ -86,48 +83,43 @@ impl Mib {
         RawMib::new(self)
     }
 
-    pub fn node_data(&self, id: NodeId) -> &NodeData {
+    pub(crate) fn node_data(&self, id: NodeId) -> &NodeData {
         self.tree.get(id)
     }
 
     #[must_use]
-    pub fn root(&self) -> NodeId {
-        self.tree.root()
-    }
-
-    #[must_use]
     pub fn root_node(&self) -> Node<'_> {
-        Node::new(self, self.root())
+        Node::new(self, self.tree.root())
     }
 
     // --- Entity accessors ---
 
-    pub fn object_data(&self, id: ObjectId) -> &ObjectData {
+    pub(crate) fn object_data(&self, id: ObjectId) -> &ObjectData {
         &self.objects[id.0 as usize]
     }
 
     #[must_use]
-    pub fn type_data(&self, id: TypeId) -> &TypeData {
+    pub(crate) fn type_data(&self, id: TypeId) -> &TypeData {
         &self.types[id.0 as usize]
     }
 
-    pub fn notification_data(&self, id: NotificationId) -> &NotificationData {
+    pub(crate) fn notification_data(&self, id: NotificationId) -> &NotificationData {
         &self.notifications[id.0 as usize]
     }
 
-    pub fn group_data(&self, id: GroupId) -> &GroupData {
+    pub(crate) fn group_data(&self, id: GroupId) -> &GroupData {
         &self.groups[id.0 as usize]
     }
 
-    pub fn compliance_data(&self, id: ComplianceId) -> &ComplianceData {
+    pub(crate) fn compliance_data(&self, id: ComplianceId) -> &ComplianceData {
         &self.compliances[id.0 as usize]
     }
 
-    pub fn capability_data(&self, id: CapabilityId) -> &CapabilityData {
+    pub(crate) fn capability_data(&self, id: CapabilityId) -> &CapabilityData {
         &self.capabilities[id.0 as usize]
     }
 
-    pub fn module_data(&self, id: ModuleId) -> &ModuleData {
+    pub(crate) fn module_data(&self, id: ModuleId) -> &ModuleData {
         &self.modules[id.0 as usize]
     }
 

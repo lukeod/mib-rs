@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::object::ObjectData;
 use mib_rs::mib::{Mib, NodeId, UnresolvedKind};
-use mib_rs::source::{dir_source, multi_source};
+use mib_rs::source::{chain, dir};
 use mib_rs::types::{BaseType, DiagCode, DiagnosticConfig, ResolverStrictness, Severity};
 
 use common::{corpus_dir, problems_dir};
@@ -15,9 +15,9 @@ fn violations_dir() -> PathBuf {
 }
 
 fn load_at_strictness(module: &str, strictness: ResolverStrictness) -> Mib {
-    let src = multi_source(vec![
-        dir_source(corpus_dir()).expect("failed to create corpus source"),
-        dir_source(problems_dir()).expect("failed to create problems source"),
+    let src = chain(vec![
+        dir(corpus_dir()).expect("failed to create corpus source"),
+        dir(problems_dir()).expect("failed to create problems source"),
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
@@ -30,9 +30,9 @@ fn load_at_strictness(module: &str, strictness: ResolverStrictness) -> Mib {
 }
 
 fn load_violation_mib(module: &str, strictness: ResolverStrictness) -> Mib {
-    let src = multi_source(vec![
-        dir_source(corpus_dir()).expect("failed to create corpus source"),
-        dir_source(violations_dir()).expect("failed to create violations source"),
+    let src = chain(vec![
+        dir(corpus_dir()).expect("failed to create corpus source"),
+        dir(violations_dir()).expect("failed to create violations source"),
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
@@ -323,7 +323,8 @@ fn strict_imported_metadata_preserved() {
 
     let display = require_object(&mib, "problemStrictDisplayString");
     assert_eq!(
-        mib.raw().type_(display.type_id().expect("type missing"))
+        mib.raw()
+            .type_(display.type_id().expect("type missing"))
             .effective_base(mib.types_slice()),
         BaseType::OctetString
     );
@@ -456,17 +457,20 @@ fn mixed_import_group_keeps_forwarded_oid_symbol() {
     let row = require_object(&mib, "sapBaseInfoEntry");
     assert_eq!(row.index().len(), 3);
     assert_eq!(
-        mib.raw().object(row.index()[0].object.expect("svcId index"))
+        mib.raw()
+            .object(row.index()[0].object.expect("svcId index"))
             .name(),
         "svcId"
     );
     assert_eq!(
-        mib.raw().object(row.index()[1].object.expect("sapPortId index"))
+        mib.raw()
+            .object(row.index()[1].object.expect("sapPortId index"))
             .name(),
         "sapPortId"
     );
     assert_eq!(
-        mib.raw().object(row.index()[2].object.expect("sapEncapValue index"))
+        mib.raw()
+            .object(row.index()[2].object.expect("sapEncapValue index"))
             .name(),
         "sapEncapValue"
     );

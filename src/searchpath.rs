@@ -20,7 +20,7 @@ pub fn discover_system_sources() -> Vec<Box<dyn Source>> {
     let dirs = discover_system_paths();
     let mut sources = Vec::new();
     for d in dirs {
-        match source::dir_source(&d) {
+        match source::dir(&d) {
             Ok(src) => sources.push(src),
             Err(e) => debug!(
                 target: "mib_rs::searchpath",

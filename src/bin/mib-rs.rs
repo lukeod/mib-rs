@@ -4,7 +4,7 @@ use clap::Parser;
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
-use mib_rs::source::dir_source;
+use mib_rs::source::dir;
 use mib_rs::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -177,7 +177,7 @@ fn main() {
 fn build_sources(paths: &[String]) -> Vec<Box<dyn mib_rs::source::Source>> {
     let mut sources = Vec::new();
     for p in paths {
-        match dir_source(p) {
+        match dir(p) {
             Ok(src) => sources.push(src),
             Err(e) => eprintln!("warning: skipping path {p}: {e}"),
         }

@@ -182,16 +182,6 @@ pub fn memory_modules(
     Box::new(MemorySource { modules: map })
 }
 
-pub fn embedded(name: impl Into<String>, bytes: &'static [u8]) -> Box<dyn Source> {
-    memory(name, bytes)
-}
-
-pub fn embedded_modules(
-    modules: impl IntoIterator<Item = (impl Into<String>, &'static [u8])>,
-) -> Box<dyn Source> {
-    memory_modules(modules)
-}
-
 impl Source for MemorySource {
     fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
         Ok(self.modules.get(name).map(|(path, content)| FindResult {
@@ -205,21 +195,6 @@ impl Source for MemorySource {
         names.sort();
         Ok(names)
     }
-}
-
-pub fn dir_source(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
-    dir(root)
-}
-
-pub fn dir_source_with_config(
-    root: impl AsRef<Path>,
-    config: SourceConfig,
-) -> io::Result<Box<dyn Source>> {
-    dir_with_config(root, config)
-}
-
-pub fn multi_source(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
-    chain(sources)
 }
 
 /// Build a module name -> relative path index by walking a directory tree.

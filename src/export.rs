@@ -425,7 +425,10 @@ fn make_oid_ref(name: &str, module: &str, oid: &str) -> ExportOidRef {
 fn resolve_object_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
     if let Some(obj_id) = mib.object_by_name(name) {
         let obj = mib.raw().object(obj_id);
-        let mod_name = obj.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+        let mod_name = obj
+            .module()
+            .map(|mid| mib.raw().module(mid).name())
+            .unwrap_or("");
         let oid_str = obj
             .node()
             .map(|nid| mib.tree().oid_of(nid).to_string())
@@ -484,7 +487,10 @@ fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> Exp
 
 fn object_id_to_ref(mib: &Mib, obj_id: ObjectId) -> ExportOidRef {
     let obj = mib.raw().object(obj_id);
-    let mod_name = obj.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+    let mod_name = obj
+        .module()
+        .map(|mid| mib.raw().module(mid).name())
+        .unwrap_or("");
     let oid_str = obj
         .node()
         .map(|nid| mib.tree().oid_of(nid).to_string())
@@ -529,7 +535,10 @@ fn make_effective_syntax_from_object(mib: &Mib, obj_id: ObjectId) -> Option<Expo
     let type_ref = if td.name().is_empty() || !is_user_defined_type(mib, td) {
         None
     } else {
-        let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+        let mod_name = td
+            .module()
+            .map(|mid| mib.raw().module(mid).name())
+            .unwrap_or("");
         Some(format!("{mod_name}::{}", td.name()))
     };
 
@@ -560,7 +569,10 @@ fn make_syntax_constraints(mib: &Mib, sc: &SyntaxConstraints) -> ExportEffective
     let (type_ref, base, display_hint) = if let Some(tid) = sc.type_id {
         let td = mib.raw().type_(tid);
         let types = mib.types_slice();
-        let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+        let mod_name = td
+            .module()
+            .map(|mid| mib.raw().module(mid).name())
+            .unwrap_or("");
         let tr = if td.name().is_empty() || !is_user_defined_type(mib, td) {
             None
         } else {
@@ -642,13 +654,19 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
         .types_slice()
         .iter()
         .map(|t| {
-            let mod_name = t.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+            let mod_name = t
+                .module()
+                .map(|mid| mib.raw().module(mid).name())
+                .unwrap_or("");
             let parent = t.parent().and_then(|pid| {
                 let pt = mib.raw().type_(pid);
                 if pt.name().is_empty() || !is_user_defined_type(mib, pt) {
                     return None;
                 }
-                let pm = pt.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+                let pm = pt
+                    .module()
+                    .map(|mid| mib.raw().module(mid).name())
+                    .unwrap_or("");
                 Some(format!("{pm}::{}", pt.name()))
             });
             let all_types = mib.types_slice();
@@ -771,9 +789,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
         };
 
         let row = match kind {
-            Kind::Table => mib
-                .object_row(obj_id)
-                .map(|rid| object_id_to_ref(mib, rid)),
+            Kind::Table => mib.object_row(obj_id).map(|rid| object_id_to_ref(mib, rid)),
             Kind::Column => mib.object_row(obj_id).map(|rid| object_id_to_ref(mib, rid)),
             _ => None,
         };
@@ -1187,7 +1203,10 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
                 let td = mib.raw().type_(tid);
                 let types = mib.types_slice();
                 let base = td.effective_base(types);
-                let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
+                let mod_name = td
+                    .module()
+                    .map(|mid| mib.raw().module(mid).name())
+                    .unwrap_or("");
                 let type_ref = if td.name().is_empty() {
                     None
                 } else {
@@ -1226,7 +1245,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::load::{Loader, load};
-    use crate::source::dir_source;
+    use crate::source::dir as dir_source;
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
     use super::export_v1;

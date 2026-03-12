@@ -4,7 +4,7 @@ mod common;
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Oid;
-use mib_rs::source::dir_source;
+use mib_rs::source::{chain, dir as dir_source};
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
 };
@@ -981,7 +981,7 @@ fn snmp_oid_owned_by_snmpv2_mib() {
 fn load_problems(modules: &[&str]) -> mib_rs::Mib {
     let dir = problems_dir();
     let corpus = corpus_dir();
-    let src = mib_rs::source::multi_source(vec![
+    let src = chain(vec![
         dir_source(&dir).expect("failed to create problems source"),
         dir_source(&corpus).expect("failed to create corpus source"),
     ]);
@@ -1242,7 +1242,9 @@ fn effective_indexes_bare_type() {
         "bare type index should preserve its source name"
     );
     assert_eq!(
-        mib.raw().type_(indexes[0].type_id.expect("base type should resolve")).name(),
+        mib.raw()
+            .type_(indexes[0].type_id.expect("base type should resolve"))
+            .name(),
         "INTEGER"
     );
 }

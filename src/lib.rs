@@ -1,10 +1,19 @@
-//! High-level SNMP MIB parsing, resolution, and query APIs.
+//! SNMP MIB parsing, resolution, query, and tooling APIs.
 //!
-//! The default library surface is handle-oriented. Start with [`Loader`] and
-//! navigate the resolved model with [`Mib`], [`Module`], [`Node`], [`Object`],
-//! and [`Type`]. The lower-level arena/id layer remains available through
-//! [`Mib::raw()`] for tooling-heavy use cases, but most library code should not
-//! need it.
+//! This crate exposes three intentional API tiers:
+//!
+//! - High-level resolved queries: start with [`Loader`] and navigate the
+//!   resolved model with [`Mib`], [`Module`], [`Node`], [`Object`], and [`Type`].
+//! - Low-level resolved data: call [`Mib::raw()`] to work with stable ids,
+//!   arena-backed records, and the OID tree directly. This tier exists for
+//!   tooling such as linters, language servers, exporters, and editor
+//!   integrations.
+//! - Compiler pipeline data: [`ast`], [`parser`], [`lower`], [`ir`], and
+//!   [`token`] expose pre-resolution stages for callers that need syntax-aware
+//!   analysis or diagnostics before full resolution.
+//!
+//! Most library code should stay in the handle-oriented high-level API. Drop to
+//! [`raw`] or the compiler pipeline only when you need that additional control.
 //!
 //! # Examples
 //!
@@ -230,10 +239,23 @@ pub use types::{
     Language, ReportingLevel, ResolverStrictness, Severity, Status,
 };
 
+/// Low-level resolved data access.
+///
+/// This module exposes arena ids, backing records, and the explicit [`RawMib`]
+/// view returned by [`Mib::raw()`].
 pub mod raw {
     pub use crate::mib::{
-        CapabilityData, CapabilityId, ComplianceData, ComplianceId, GroupData, GroupId,
-        ModuleData, ModuleId, NodeData, NodeId, NotificationData, NotificationId, ObjectData,
-        ObjectId, OidTree, RawMib, Symbol, TypeData, TypeId,
+        CapabilityData, CapabilityId, ComplianceData, ComplianceId, GroupData, GroupId, ModuleData,
+        ModuleId, NodeData, NodeId, NotificationData, NotificationId, ObjectData, ObjectId,
+        OidTree, RawMib, Symbol, TypeData, TypeId,
     };
+}
+
+/// Compiler pipeline APIs exposed before final resolution.
+///
+/// These modules are useful when building syntax-aware tooling or diagnostics
+/// that need direct access to tokens, parsed AST, lowered IR, or the parser
+/// entry points themselves.
+pub mod compile {
+    pub use crate::{ast, ir, lower, parser, token};
 }

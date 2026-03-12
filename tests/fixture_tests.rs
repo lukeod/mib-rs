@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
-use mib_rs::source::dir_source;
+use mib_rs::source::dir as dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
 
 use common::{FixtureNode, corpus_dir};
