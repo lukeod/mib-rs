@@ -1,5 +1,7 @@
 pub mod ast;
 pub mod error;
+#[cfg(feature = "serde")]
+pub mod export;
 pub mod graph;
 pub mod ir;
 pub mod lexer;

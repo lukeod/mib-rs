@@ -109,15 +109,25 @@ pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
         ir::TypeSyntax::OctetString => BaseType::OctetString,
         ir::TypeSyntax::ObjectIdentifier => BaseType::ObjectIdentifier,
         ir::TypeSyntax::Constrained { base, .. } => syntax_to_base_type(base),
-        ir::TypeSyntax::SequenceOf { .. } => BaseType::Unknown,
-        ir::TypeSyntax::Sequence { .. } => BaseType::Unknown,
-        ir::TypeSyntax::TypeRef { name, .. } => match name.as_str() {
-            "INTEGER" => BaseType::Integer32,
-            "OCTET STRING" => BaseType::OctetString,
-            "OBJECT IDENTIFIER" => BaseType::ObjectIdentifier,
-            "BITS" => BaseType::Bits,
-            _ => BaseType::Unknown,
-        },
+        ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => BaseType::Unknown,
+        ir::TypeSyntax::TypeRef { name, .. } => base_type_from_name(name),
+    }
+}
+
+fn base_type_from_name(name: &str) -> BaseType {
+    match name {
+        "INTEGER" | "Integer32" => BaseType::Integer32,
+        "OCTET STRING" => BaseType::OctetString,
+        "OBJECT IDENTIFIER" | "ObjectName" | "NotificationName" => BaseType::ObjectIdentifier,
+        "BITS" => BaseType::Bits,
+        "Counter" | "Counter32" => BaseType::Counter32,
+        "Counter64" => BaseType::Counter64,
+        "Gauge" | "Gauge32" => BaseType::Gauge32,
+        "Unsigned32" => BaseType::Unsigned32,
+        "TimeTicks" => BaseType::TimeTicks,
+        "IpAddress" | "NetworkAddress" => BaseType::IpAddress,
+        "Opaque" => BaseType::Opaque,
+        _ => BaseType::Unknown,
     }
 }
 
@@ -308,7 +318,8 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                 continue;
             };
             let mod_name = ctx.modules[ir_id.0 as usize].name.clone();
-            ctx.record_unresolved_type(ref_name, &mod_name, *ir_id, *span);
+            let type_name = ctx.mib.type_(tid).name().to_string();
+            ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
         }
     }
 
@@ -341,9 +352,12 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                     }
                 }
             } else {
+                let type_name = ctx.mib.type_(type_id).name().to_string();
+                let mod_name = ctx.modules[ir_id.0 as usize].name.clone();
                 ctx.record_unresolved_type(
+                    &type_name,
                     ref_name,
-                    &ctx.modules[ir_id.0 as usize].name.clone(),
+                    &mod_name,
                     *ir_id,
                     *span,
                 );
@@ -564,7 +578,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
                 diagnostics.push((
                     ir_id,
                     m.span,
-                    format!("SMIv2 module references {} without importing it", ref_name),
+                    format!("{} used but not imported from SNMPv2-SMI in {}", ref_name, m.name),
                 ));
             }
         }

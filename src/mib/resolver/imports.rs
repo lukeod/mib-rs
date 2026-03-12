@@ -237,9 +237,7 @@ fn count_directly_resolved_symbols(
 ) -> usize {
     symbols
         .iter()
-        .filter(|(name, _)| {
-            resolve_imported_symbol(ctx, candidates, name).is_some()
-        })
+        .filter(|(name, _)| resolve_imported_symbol(ctx, candidates, name).is_some())
         .count()
 }
 

@@ -91,6 +91,17 @@ enum Command {
         #[arg(long)]
         count: bool,
     },
+    /// Export resolved MIB data as schema v1 JSON
+    Dump {
+        /// Module names to load (omit to load all)
+        modules: Vec<String>,
+        /// Use strict resolver mode
+        #[arg(long)]
+        strict: bool,
+        /// Use permissive resolver mode
+        #[arg(long)]
+        permissive: bool,
+    },
 }
 
 fn main() {
@@ -134,6 +145,11 @@ fn main() {
             kind,
             count,
         } => cmd_find(&cli.paths, &pattern, modules, all, kind, count),
+        Command::Dump {
+            modules,
+            strict,
+            permissive,
+        } => cmd_dump(&cli.paths, modules, strict, permissive),
     };
 
     process::exit(exit_code);
@@ -603,6 +619,39 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     }
 
     ni.peek().is_none()
+}
+
+fn cmd_dump(paths: &[String], modules: Vec<String>, strict: bool, permissive: bool) -> i32 {
+    let strictness = if strict {
+        ResolverStrictness::Strict
+    } else if permissive {
+        ResolverStrictness::Permissive
+    } else {
+        ResolverStrictness::Normal
+    };
+    let all = modules.is_empty();
+    let mib = match load_mib(
+        paths,
+        modules,
+        all,
+        strictness,
+        DiagnosticConfig::for_reporting(ReportingLevel::Default),
+    ) {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+
+    let payload = mib_rs::export::export_v1(&mib, strictness);
+    match serde_json::to_string_pretty(&payload) {
+        Ok(json) => {
+            println!("{json}");
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to serialize: {e}");
+            1
+        }
+    }
 }
 
 fn truncate(s: &str, max_len: usize) -> String {

@@ -508,8 +508,8 @@ fn create_base_type_definitions() -> Vec<ir::Definition> {
                 },
             ]),
             None,
-            Status::Obsolete,
-            "An obsolete date-time format. Replaced by DateAndTime from SNMPv2-TC.",
+            Status::Current,
+            "",
             rfc,
         ),
         make_type_def(

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::mib::Oid;
-use crate::types::{Kind, Span};
+use crate::types::{Kind, Span, Status};
 
 use super::types::*;
 
@@ -14,6 +14,7 @@ pub struct NodeData {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) reference: String,
+    pub(crate) status: Option<Status>,
     pub(crate) kind: Kind,
     pub(crate) span: Span,
     pub(crate) parent: Option<NodeId>,
@@ -34,6 +35,7 @@ impl NodeData {
             name: String::new(),
             description: String::new(),
             reference: String::new(),
+            status: None,
             kind: Kind::Internal,
             span: Span::SYNTHETIC,
             parent,
@@ -68,6 +70,10 @@ impl NodeData {
 
     pub fn reference(&self) -> &str {
         &self.reference
+    }
+
+    pub fn status(&self) -> Option<Status> {
+        self.status
     }
 
     pub fn kind(&self) -> Kind {
@@ -172,6 +178,10 @@ impl OidTree {
 
     pub(crate) fn set_kind(&mut self, id: NodeId, kind: Kind) {
         self.nodes[id.0 as usize].kind = kind;
+    }
+
+    pub(crate) fn set_status(&mut self, id: NodeId, status: Status) {
+        self.nodes[id.0 as usize].status = Some(status);
     }
 
     pub(crate) fn set_description(&mut self, id: NodeId, desc: String) {

@@ -104,6 +104,8 @@ pub enum Kind {
     Group = 8,
     Compliance = 9,
     Capability = 10,
+    ModuleIdentity = 11,
+    ObjectIdentity = 12,
 }
 
 impl Kind {
@@ -115,6 +117,14 @@ impl Kind {
     /// Reports whether this is a group/compliance/capabilities node.
     pub fn is_conformance(self) -> bool {
         matches!(self, Kind::Group | Kind::Compliance | Kind::Capability)
+    }
+
+    /// Reports whether this is a plain node-like kind (node, module-identity, object-identity).
+    pub fn is_node_like(self) -> bool {
+        matches!(
+            self,
+            Kind::Node | Kind::ModuleIdentity | Kind::ObjectIdentity
+        )
     }
 }
 
@@ -130,6 +140,8 @@ impl_display!(Kind {
     Group => "group",
     Compliance => "compliance",
     Capability => "capabilities",
+    ModuleIdentity => "module-identity",
+    ObjectIdentity => "object-identity",
 });
 
 /// Access represents the access level for OBJECT-TYPE definitions.
@@ -191,12 +203,14 @@ pub enum Language {
     Unknown = 0,
     SMIv1 = 1,
     SMIv2 = 2,
+    SPPI = 3,
 }
 
 impl_display!(Language {
     Unknown => "unknown",
     SMIv1 => "SMIv1",
     SMIv2 => "SMIv2",
+    SPPI => "SPPI",
 });
 
 /// BaseType identifies the fundamental SMI type.
@@ -217,6 +231,8 @@ pub enum BaseType {
     Bits = 10,
     Opaque = 11,
     Sequence = 12,
+    Integer64 = 13,
+    Unsigned64 = 14,
 }
 
 impl_display!(BaseType {
@@ -233,6 +249,8 @@ impl_display!(BaseType {
     Bits => "BITS",
     Opaque => "Opaque",
     Sequence => "SEQUENCE",
+    Integer64 => "Integer64",
+    Unsigned64 => "Unsigned64",
 });
 
 /// IndexEncoding classifies how an INDEX component maps to instance-identifier

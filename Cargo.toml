@@ -25,7 +25,7 @@ dirs = "6"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [features]
-default = []
+default = ["serde"]
 serde = ["dep:serde", "dep:serde_json", "smallvec/serde"]
 
 [dev-dependencies]

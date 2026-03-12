@@ -87,15 +87,16 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
 
             // Access keyword checks
             if m.language == Language::SMIv1 {
-                if matches!(
-                    ot.access_keyword,
-                    AccessKeyword::MaxAccess | AccessKeyword::MinAccess
-                ) {
+                // MIN-ACCESS is always SMIv2 (MODULE-COMPLIANCE), not applicable here.
+                if ot.access_keyword == AccessKeyword::MaxAccess {
                     diags.push((
                         DiagCode::MaxAccessInSMIv1,
                         Some(ir_id),
-                        ot.access_span,
-                        format!("{}: MAX-ACCESS/MIN-ACCESS in SMIv1 module", ot.name),
+                        ot.span,
+                        format!(
+                            "{:?}: MAX-ACCESS is SMIv2 style, use ACCESS in SMIv1",
+                            ot.name
+                        ),
                     ));
                 }
                 if ot.access == Access::WriteOnly {
@@ -111,16 +112,16 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push((
                         DiagCode::AccessInSMIv2,
                         Some(ir_id),
-                        ot.access_span,
-                        format!("{}: use MAX-ACCESS instead of ACCESS in SMIv2", ot.name),
+                        ot.span,
+                        format!("{:?}: ACCESS is SMIv1 style, use MAX-ACCESS in SMIv2", ot.name),
                     ));
                 }
                 if ot.access == Access::WriteOnly {
                     diags.push((
                         DiagCode::AccessWriteOnlySMIv2,
                         Some(ir_id),
-                        ot.access_span,
-                        format!("{}: write-only access is not valid in SMIv2", ot.name),
+                        ot.span,
+                        format!("{:?}: write-only is no longer allowed in SMIv2", ot.name),
                     ));
                 }
             }
@@ -130,16 +131,16 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                 diags.push((
                     DiagCode::AccessTableIllegal,
                     Some(ir_id),
-                    ot.access_span,
-                    format!("{}: table must be not-accessible", ot.name),
+                    ot.span,
+                    format!("{:?}: table must be not-accessible", ot.name),
                 ));
             }
             if kind == Kind::Row && ot.access != Access::NotAccessible {
                 diags.push((
                     DiagCode::AccessRowIllegal,
                     Some(ir_id),
-                    ot.access_span,
-                    format!("{}: row must be not-accessible", ot.name),
+                    ot.span,
+                    format!("{:?}: row must be not-accessible", ot.name),
                 ));
             }
 
@@ -308,7 +309,7 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                     Some(ir_id),
                     def.span(),
                     format!(
-                        "{}: {}'s parent node must be a simple node",
+                        "{:?}: {}'s parent node must be a simple node",
                         def.name(),
                         label
                     ),
@@ -321,7 +322,10 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
 }
 
 fn is_simple_parent_kind(k: Kind) -> bool {
-    matches!(k, Kind::Node | Kind::Internal | Kind::Unknown)
+    matches!(
+        k,
+        Kind::Node | Kind::Internal | Kind::Unknown | Kind::ModuleIdentity | Kind::ObjectIdentity
+    )
 }
 
 /// Check table/row naming conventions.
@@ -737,9 +741,7 @@ fn diagnostic_base_from_name(name: &str) -> Option<BaseType> {
     match name {
         "INTEGER" | "Integer32" => Some(BaseType::Integer32),
         "OCTET STRING" => Some(BaseType::OctetString),
-        "OBJECT IDENTIFIER" | "ObjectName" | "NotificationName" => {
-            Some(BaseType::ObjectIdentifier)
-        }
+        "OBJECT IDENTIFIER" | "ObjectName" | "NotificationName" => Some(BaseType::ObjectIdentifier),
         "BITS" => Some(BaseType::Bits),
         "Counter" | "Counter32" => Some(BaseType::Counter32),
         "Counter64" => Some(BaseType::Counter64),
@@ -827,7 +829,12 @@ fn collect_range_diags(
                     DiagCode::RangeExchanged,
                     Some(ir_id),
                     span,
-                    format!("{}: range min ({:?}) > max ({:?})", name, r.min, max),
+                    format!(
+                        "{:?}: range {}..{} has exchanged limits",
+                        name,
+                        format_range_value(&r.min),
+                        format_range_value(max)
+                    ),
                 ));
             }
 
@@ -858,7 +865,7 @@ fn collect_range_diags(
                         DiagCode::RangeOverlap,
                         Some(ir_id),
                         span,
-                        format!("{}: ranges overlap or are not ascending", name),
+                        format!("{:?}: range {} overlaps with {}", name, format_ir_range(r), format_ir_range(prev)),
                     ));
                 }
             }
@@ -1243,13 +1250,13 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
 
         for def in &m.definitions {
             let (name, status, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.status_span),
+                ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.span),
                 ir::Definition::ObjectIdentity(oi) => (&oi.name, oi.status, oi.span),
                 ir::Definition::Notification(n) if n.trap_info.is_none() => {
                     (&n.name, n.status, n.span)
                 }
                 ir::Definition::TypeDef(td) if td.is_textual_convention => {
-                    (&td.name, td.status, td.status_span)
+                    (&td.name, td.status, td.span)
                 }
                 ir::Definition::ObjectGroup(g) => (&g.name, g.status, g.span),
                 ir::Definition::NotificationGroup(g) => (&g.name, g.status, g.span),
@@ -1267,7 +1274,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                             DiagCode::StatusInvalidSMIv1,
                             Some(ir_id),
                             span,
-                            format!("{}: 'current' is SMIv2 style status", name),
+                            format!("{:?}: invalid status current in SMIv1", name),
                         ));
                     }
                 }
@@ -1277,7 +1284,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                             DiagCode::StatusInvalidSMIv2,
                             Some(ir_id),
                             span,
-                            format!("{}: invalid SMIv2 status {}", name, status),
+                            format!("{:?}: invalid status {} in SMIv2", name, status),
                         ));
                     }
                 }
@@ -1308,8 +1315,8 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                         diags.push((
                             DiagCode::ScalarNotCreatable,
                             Some(ir_id),
-                            ot.access_span,
-                            format!("{}: scalar must not be read-create", ot.name),
+                            ot.span,
+                            format!("{:?}: scalar must not be read-create", ot.name),
                         ));
                     }
                 }
@@ -1407,8 +1414,8 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                         Some(ir_id),
                         ot.span,
                         format!(
-                            "{}: column {} has no matching SEQUENCE field",
-                            ot.name, child.name
+                            "column {:?} of row {:?} is not in SEQUENCE {:?}",
+                            child.name, ot.name, seq_name
                         ),
                     ));
                 }
@@ -1477,7 +1484,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                         Some(ir_id),
                         field.span,
                         format!(
-                            "{}: SEQUENCE field {} type {:?} does not match column type {:?}",
+                            "SEQUENCE {:?} field {:?} type {:?} does not match column type {:?}",
                             seq_name, field.name, field_type_name, col_type_name
                         ),
                     ));
@@ -3523,6 +3530,31 @@ fn check_ip_address_deprecation(ctx: &mut ResolverContext) {
     }
 
     emit_all(ctx, diags);
+}
+
+/// Format an ir::Range as "min..max" or just "value" if min equals max.
+fn format_ir_range(r: &ir::Range) -> String {
+    let min_s = format_range_value(&r.min);
+    match &r.max {
+        Some(max) => {
+            let max_s = format_range_value(max);
+            if min_s == max_s {
+                min_s
+            } else {
+                format!("{min_s}..{max_s}")
+            }
+        }
+        None => min_s,
+    }
+}
+
+fn format_range_value(v: &ir::RangeValue) -> String {
+    match v {
+        ir::RangeValue::Signed(n) => n.to_string(),
+        ir::RangeValue::Unsigned(n) => n.to_string(),
+        ir::RangeValue::Min => "MIN".to_string(),
+        ir::RangeValue::Max => "MAX".to_string(),
+    }
 }
 
 /// Compare two RangeValue endpoints. Returns true if a > b.

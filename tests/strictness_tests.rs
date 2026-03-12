@@ -459,7 +459,11 @@ fn mixed_import_group_keeps_forwarded_oid_symbol() {
 
     let row = require_object(&mib, "sapBaseInfoEntry");
     assert_eq!(row.index().len(), 3);
-    assert_eq!(mib.object(row.index()[0].object.expect("svcId index")).name(), "svcId");
+    assert_eq!(
+        mib.object(row.index()[0].object.expect("svcId index"))
+            .name(),
+        "svcId"
+    );
     assert_eq!(
         mib.object(row.index()[1].object.expect("sapPortId index"))
             .name(),

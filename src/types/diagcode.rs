@@ -70,48 +70,48 @@ diag_codes! {
     parser,     NumberLeadingZero,          "number-leading-zero",                   Minor;
     parser,     MissingComma,              "missing-comma",                         Minor;
 
-    // Lowering
-    lowering,   MissingModuleIdentity,      "missing-module-identity",               Warning;
-    lowering,   RevisionLastUpdated,        "revision-last-updated",                 Minor;
-    lowering,   RevisionNotDescending,      "revision-not-descending",               Minor;
-    lowering,   RevisionAfterUpdate,        "revision-after-update",                 Minor;
-    lowering,   DateCharacter,              "date-character",                        Error;
-    lowering,   DateLength,                 "date-length",                           Error;
-    lowering,   DateMonth,                  "date-month",                            Error;
-    lowering,   DateDay,                    "date-day",                              Error;
-    lowering,   DateHour,                   "date-hour",                             Error;
-    lowering,   DateMinutes,               "date-minutes",                          Error;
-    lowering,   DateValue,                  "date-value",                            Error;
-    lowering,   DateYear2Digits,            "date-year-2digits",                     Warning;
-    lowering,   DateInFuture,               "date-in-future",                        Style;
-    lowering,   DateInPast,                 "date-in-past",                          Style;
-    lowering,   UnknownDefinitionType,      "unknown-definition-type",               Warning;
-    lowering,   UnknownTypeSyntax,          "unknown-type-syntax",                   Warning;
-    lowering,   UnknownConstraintType,      "unknown-constraint-type",               Warning;
-    lowering,   UnknownRangeValue,          "unknown-range-value",                   Warning;
-    lowering,   UnknownOidComponent,        "unknown-oid-component-type",            Warning;
-    lowering,   UnknownDefvalType,          "unknown-defval-type",                   Warning;
-    lowering,   BitsNumberNegative,         "bits-number-negative",                  Error;
-    lowering,   BitsNumberTooLarge,         "bits-number-too-large",                 Error;
-    lowering,   BitsNumberLarge,            "bits-number-large",                     Style;
-    lowering,   EnumZero,                   "enum-zero",                             Error;
-    lowering,   EnumNameRedefinition,       "enum-name-redefinition",                Error;
-    lowering,   EnumValueRedefinition,      "enum-value-redefinition",               Error;
-    lowering,   BitsNameRedefinition,       "bits-name-redefinition",                Error;
-    lowering,   BitsValueRedefinition,      "bits-value-redefinition",               Error;
-    lowering,   ModuleIdentityNotFirst,     "module-identity-not-first",             Warning;
-    lowering,   ModuleIdentityMultiple,     "module-identity-multiple",              Error;
-    lowering,   MacroNotImported,           "macro-not-imported",                    Minor;
-    lowering,   EmptyDescription,           "empty-description",                     Style;
-    lowering,   EmptyReference,             "empty-reference",                       Style;
-    lowering,   EmptyOrganization,          "empty-organization",                    Style;
-    lowering,   EmptyContact,               "empty-contact",                         Style;
-    lowering,   EmptyUnits,                 "empty-units",                           Style;
-    lowering,   EmptyFormat,                "empty-format",                          Style;
-    lowering,   ModuleNameSuffix,           "module-name-suffix",                    Style;
-    lowering,   MacroNotAllowed,            "macro-not-allowed",                     Warning;
-    lowering,   ChoiceNotAllowed,           "choice-not-allowed",                    Warning;
-    lowering,   TaggedTypeNotAllowed,       "tagged-type-not-allowed",               Warning;
+    // Lower
+    lower,      MissingModuleIdentity,      "missing-module-identity",               Warning;
+    lower,      RevisionLastUpdated,        "revision-last-updated",                 Minor;
+    lower,      RevisionNotDescending,      "revision-not-descending",               Minor;
+    lower,      RevisionAfterUpdate,        "revision-after-update",                 Minor;
+    lower,      DateCharacter,              "date-character",                        Error;
+    lower,      DateLength,                 "date-length",                           Error;
+    lower,      DateMonth,                  "date-month",                            Error;
+    lower,      DateDay,                    "date-day",                              Error;
+    lower,      DateHour,                   "date-hour",                             Error;
+    lower,      DateMinutes,               "date-minutes",                          Error;
+    lower,      DateValue,                  "date-value",                            Error;
+    lower,      DateYear2Digits,            "date-year-2digits",                     Warning;
+    lower,      DateInFuture,               "date-in-future",                        Style;
+    lower,      DateInPast,                 "date-in-past",                          Style;
+    lower,      UnknownDefinitionType,      "unknown-definition-type",               Warning;
+    lower,      UnknownTypeSyntax,          "unknown-type-syntax",                   Warning;
+    lower,      UnknownConstraintType,      "unknown-constraint-type",               Warning;
+    lower,      UnknownRangeValue,          "unknown-range-value",                   Warning;
+    lower,      UnknownOidComponent,        "unknown-oid-component-type",            Warning;
+    lower,      UnknownDefvalType,          "unknown-defval-type",                   Warning;
+    lower,      BitsNumberNegative,         "bits-number-negative",                  Error;
+    lower,      BitsNumberTooLarge,         "bits-number-too-large",                 Error;
+    lower,      BitsNumberLarge,            "bits-number-large",                     Style;
+    lower,      EnumZero,                   "enum-zero",                             Error;
+    lower,      EnumNameRedefinition,       "enum-name-redefinition",                Error;
+    lower,      EnumValueRedefinition,      "enum-value-redefinition",               Error;
+    lower,      BitsNameRedefinition,       "bits-name-redefinition",                Error;
+    lower,      BitsValueRedefinition,      "bits-value-redefinition",               Error;
+    lower,      ModuleIdentityNotFirst,     "module-identity-not-first",             Warning;
+    lower,      ModuleIdentityMultiple,     "module-identity-multiple",              Error;
+    lower,      MacroNotImported,           "macro-not-imported",                    Minor;
+    lower,      EmptyDescription,           "empty-description",                     Style;
+    lower,      EmptyReference,             "empty-reference",                       Style;
+    lower,      EmptyOrganization,          "empty-organization",                    Style;
+    lower,      EmptyContact,               "empty-contact",                         Style;
+    lower,      EmptyUnits,                 "empty-units",                           Style;
+    lower,      EmptyFormat,                "empty-format",                          Style;
+    lower,      ModuleNameSuffix,           "module-name-suffix",                    Style;
+    lower,      MacroNotAllowed,            "macro-not-allowed",                     Warning;
+    lower,      ChoiceNotAllowed,           "choice-not-allowed",                    Warning;
+    lower,      TaggedTypeNotAllowed,       "tagged-type-not-allowed",               Warning;
 
     // Resolver
     resolver,   ImportNotFound,             "import-not-found",                      Error;
@@ -275,7 +275,7 @@ mod tests {
         for &code in ALL_CODES {
             let phase = code.phase();
             assert!(
-                ["lexer", "parser", "lowering", "resolver"].contains(&phase),
+                ["lexer", "parser", "lower", "resolver"].contains(&phase),
                 "unknown phase {phase} for {code}"
             );
         }

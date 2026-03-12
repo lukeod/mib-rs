@@ -356,12 +356,13 @@ impl ResolverContext {
             code,
             Some(ir_mod),
             span,
-            format!("unresolved import: {symbol} from {from_module}"),
+            format!("unresolved import: {:?} from {:?} ({})", symbol, from_module, reason),
         );
     }
 
     pub fn record_unresolved_type(
         &mut self,
+        referrer: &str,
         symbol: &str,
         module: &str,
         ir_mod: IrModuleId,
@@ -377,13 +378,14 @@ impl ResolverContext {
             DiagCode::TypeUnknown,
             Some(ir_mod),
             span,
-            format!("unresolved type: {symbol}"),
+            format!("unresolved type: {:?} references unknown type {:?}", referrer, symbol),
         );
     }
 
     pub fn record_unresolved_oid(
         &mut self,
-        symbol: &str,
+        def_name: &str,
+        component: &str,
         module: &str,
         reason: &str,
         ir_mod: IrModuleId,
@@ -391,7 +393,7 @@ impl ResolverContext {
     ) {
         self.unresolved_oids.push(UnresolvedTracking {
             kind: UnresolvedKind::Oid,
-            symbol: symbol.to_string(),
+            symbol: component.to_string(),
             module: module.to_string(),
             reason: reason.to_string(),
         });
@@ -404,7 +406,7 @@ impl ResolverContext {
             code,
             Some(ir_mod),
             span,
-            format!("unresolved OID: {symbol}"),
+            format!("unresolved OID: {:?} references unknown parent {:?}", def_name, component),
         );
     }
 
@@ -427,7 +429,7 @@ impl ResolverContext {
             DiagCode::IndexUnresolved,
             Some(ir_mod),
             span,
-            format!("unresolved INDEX: {row} references unknown object {index_object}"),
+            format!("unresolved INDEX: {:?} references unknown object {:?}", row, index_object),
         );
     }
 
@@ -450,7 +452,7 @@ impl ResolverContext {
             DiagCode::ObjectsUnresolved,
             Some(ir_mod),
             span,
-            format!("unresolved OBJECTS: {notification} references unknown object {object}"),
+            format!("unresolved OBJECTS: {:?} references unknown object {:?}", notification, object),
         );
     }
 

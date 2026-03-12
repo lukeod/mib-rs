@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use mib_rs::load::{LoadOptions, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
-use mib_rs::types::{DiagnosticConfig, ResolverStrictness, Severity};
+use mib_rs::types::{BaseType, DiagnosticConfig, ResolverStrictness, Severity};
 use serde::Deserialize;
 
 // -- Fixture schema (matches gomib-fixturegen JSON output) --
@@ -62,6 +62,98 @@ struct FixtureNode {
     reference: String,
     #[serde(rename = "ProductRelease")]
     product_release: String,
+    #[serde(rename = "ComplianceModules", default)]
+    compliance_modules: Vec<FixtureComplianceModule>,
+    #[serde(rename = "CapabilitySupports", default)]
+    capability_supports: Vec<FixtureCapabilityModule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureComplianceModule {
+    #[serde(rename = "ModuleName")]
+    module_name: String,
+    #[serde(rename = "MandatoryGroups", default)]
+    mandatory_groups: Vec<String>,
+    #[serde(rename = "Groups", default)]
+    groups: Vec<FixtureComplianceGroup>,
+    #[serde(rename = "Objects", default)]
+    objects: Vec<FixtureComplianceObject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureComplianceGroup {
+    #[serde(rename = "Group")]
+    group: String,
+    #[serde(rename = "Description")]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureComplianceObject {
+    #[serde(rename = "Object")]
+    object: String,
+    #[serde(rename = "Syntax")]
+    syntax: Option<FixtureSyntaxConstraints>,
+    #[serde(rename = "WriteSyntax")]
+    write_syntax: Option<FixtureSyntaxConstraints>,
+    #[serde(rename = "MinAccess")]
+    min_access: String,
+    #[serde(rename = "Description")]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureCapabilityModule {
+    #[serde(rename = "ModuleName")]
+    module_name: String,
+    #[serde(rename = "Includes", default)]
+    includes: Vec<String>,
+    #[serde(rename = "ObjectVariations", default)]
+    object_variations: Vec<FixtureObjectVariation>,
+    #[serde(rename = "NotificationVariations", default)]
+    notification_variations: Vec<FixtureNotificationVariation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureObjectVariation {
+    #[serde(rename = "Object")]
+    object: String,
+    #[serde(rename = "Syntax")]
+    syntax: Option<FixtureSyntaxConstraints>,
+    #[serde(rename = "WriteSyntax")]
+    write_syntax: Option<FixtureSyntaxConstraints>,
+    #[serde(rename = "Access")]
+    access: String,
+    #[serde(rename = "CreationRequires", default)]
+    creation_requires: Vec<String>,
+    #[serde(rename = "DefaultValue")]
+    default_value: String,
+    #[serde(rename = "Description")]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureNotificationVariation {
+    #[serde(rename = "Notification")]
+    notification: String,
+    #[serde(rename = "Access")]
+    access: String,
+    #[serde(rename = "Description")]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureSyntaxConstraints {
+    #[serde(rename = "TypeName")]
+    type_name: String,
+    #[serde(rename = "Sizes", default)]
+    sizes: Vec<RangeInfo>,
+    #[serde(rename = "Ranges", default)]
+    ranges: Vec<RangeInfo>,
+    #[serde(rename = "Enums", default)]
+    enums: HashMap<String, String>,
+    #[serde(rename = "Bits", default)]
+    bits: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +175,36 @@ struct FixtureModule {
 }
 
 #[derive(Debug, Deserialize)]
+struct FixtureType {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Module")]
+    module: String,
+    #[serde(rename = "Parent")]
+    parent: String,
+    #[serde(rename = "Base")]
+    base: String,
+    #[serde(rename = "Status")]
+    status: String,
+    #[serde(rename = "DisplayHint")]
+    display_hint: String,
+    #[serde(rename = "Description")]
+    description: String,
+    #[serde(rename = "Reference")]
+    reference: String,
+    #[serde(rename = "IsTextualConvention")]
+    is_textual_convention: bool,
+    #[serde(rename = "Sizes", default)]
+    sizes: Vec<RangeInfo>,
+    #[serde(rename = "Ranges", default)]
+    ranges: Vec<RangeInfo>,
+    #[serde(rename = "Enums", default)]
+    enums: HashMap<String, String>,
+    #[serde(rename = "Bits", default)]
+    bits: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct FixtureRevision {
     #[serde(rename = "Date")]
     date: String,
@@ -96,6 +218,8 @@ struct FixturePayload {
     nodes: HashMap<String, FixtureNode>,
     #[serde(rename = "Modules")]
     modules: HashMap<String, FixtureModule>,
+    #[serde(rename = "Types", default)]
+    types: HashMap<String, FixtureType>,
     #[serde(rename = "Diagnostics", default)]
     diagnostics: Vec<FixtureDiagnostic>,
 }
@@ -259,6 +383,66 @@ struct ExtractedNode {
     bit_values: HashMap<i64, String>,
     reference: String,
     product_release: String,
+    compliance_modules: Vec<ExtractedComplianceModule>,
+    capability_supports: Vec<ExtractedCapabilityModule>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedComplianceModule {
+    module_name: String,
+    mandatory_groups: Vec<String>,
+    groups: Vec<ExtractedComplianceGroup>,
+    objects: Vec<ExtractedComplianceObject>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedComplianceGroup {
+    group: String,
+    description: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedComplianceObject {
+    object: String,
+    syntax: Option<ExtractedSyntaxConstraints>,
+    write_syntax: Option<ExtractedSyntaxConstraints>,
+    min_access: String,
+    description: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedCapabilityModule {
+    module_name: String,
+    includes: Vec<String>,
+    object_variations: Vec<ExtractedObjectVariation>,
+    notification_variations: Vec<ExtractedNotificationVariation>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedObjectVariation {
+    object: String,
+    syntax: Option<ExtractedSyntaxConstraints>,
+    write_syntax: Option<ExtractedSyntaxConstraints>,
+    access: String,
+    creation_requires: Vec<String>,
+    default_value: String,
+    description: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedNotificationVariation {
+    notification: String,
+    access: String,
+    description: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedSyntaxConstraints {
+    type_name: String,
+    sizes: Vec<(i64, i64)>,
+    ranges: Vec<(i64, i64)>,
+    enums: HashMap<i64, String>,
+    bits: HashMap<i64, String>,
 }
 
 #[derive(Debug)]
@@ -270,6 +454,23 @@ struct ExtractedModule {
     description: String,
     last_updated: String,
     revisions: Vec<(String, String)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExtractedType {
+    name: String,
+    module: String,
+    parent: String,
+    base: String,
+    status: String,
+    display_hint: String,
+    description: String,
+    reference: String,
+    is_textual_convention: bool,
+    sizes: Vec<(i64, i64)>,
+    ranges: Vec<(i64, i64)>,
+    enums: HashMap<i64, String>,
+    bits: HashMap<i64, String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -309,6 +510,8 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         bit_values: HashMap::new(),
         reference: node.reference().to_string(),
         product_release: String::new(),
+        compliance_modules: Vec::new(),
+        capability_supports: Vec::new(),
     };
 
     if let Some(mod_id) = mib.effective_module(node_id) {
@@ -419,6 +622,11 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         e.description = compliance.description().to_string();
         e.reference = compliance.reference().to_string();
         e.node_type = "MODULE-COMPLIANCE".to_string();
+        e.compliance_modules = compliance
+            .modules()
+            .iter()
+            .map(|cm| extract_compliance_module(mib, &e.module, cm))
+            .collect();
     }
 
     if let Some(cap_id) = node.capability() {
@@ -428,9 +636,149 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         e.reference = capability.reference().to_string();
         e.node_type = "AGENT-CAPABILITIES".to_string();
         e.product_release = capability.product_release().to_string();
+        e.capability_supports = capability
+            .supports()
+            .iter()
+            .map(|cm| extract_capability_module(mib, cm))
+            .collect();
     }
 
     e
+}
+
+fn extract_compliance_module(
+    mib: &Mib,
+    owning_module: &str,
+    cm: &mib_rs::mib::ComplianceModule,
+) -> ExtractedComplianceModule {
+    ExtractedComplianceModule {
+        module_name: normalize_current_module_name(owning_module, &cm.module_name),
+        mandatory_groups: cm.mandatory_groups.clone(),
+        groups: cm
+            .groups
+            .iter()
+            .map(|group| ExtractedComplianceGroup {
+                group: group.group.clone(),
+                description: group.description.clone(),
+            })
+            .collect(),
+        objects: cm
+            .objects
+            .iter()
+            .map(|obj| ExtractedComplianceObject {
+                object: obj.object.clone(),
+                syntax: obj
+                    .syntax
+                    .as_ref()
+                    .map(|sc| extract_syntax_constraints(mib, sc)),
+                write_syntax: obj
+                    .write_syntax
+                    .as_ref()
+                    .map(|sc| extract_syntax_constraints(mib, sc)),
+                min_access: obj.min_access.map(|a| a.to_string()).unwrap_or_default(),
+                description: obj.description.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn extract_capability_module(
+    mib: &Mib,
+    cm: &mib_rs::mib::CapabilitiesModule,
+) -> ExtractedCapabilityModule {
+    ExtractedCapabilityModule {
+        module_name: cm.module_name.clone(),
+        includes: cm.includes.clone(),
+        object_variations: cm
+            .object_variations
+            .iter()
+            .map(|variation| ExtractedObjectVariation {
+                object: variation.object.clone(),
+                syntax: variation
+                    .syntax
+                    .as_ref()
+                    .map(|sc| extract_syntax_constraints(mib, sc)),
+                write_syntax: variation
+                    .write_syntax
+                    .as_ref()
+                    .map(|sc| extract_syntax_constraints(mib, sc)),
+                access: variation.access.map(|a| a.to_string()).unwrap_or_default(),
+                creation_requires: variation.creation_requires.clone(),
+                default_value: variation
+                    .def_val
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+                description: variation.description.clone(),
+            })
+            .collect(),
+        notification_variations: cm
+            .notification_variations
+            .iter()
+            .map(|variation| ExtractedNotificationVariation {
+                notification: variation.notification.clone(),
+                access: variation.access.map(|a| a.to_string()).unwrap_or_default(),
+                description: variation.description.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn normalize_current_module_name(owning_module: &str, module_name: &str) -> String {
+    if module_name.is_empty() || module_name == owning_module {
+        String::new()
+    } else {
+        module_name.to_string()
+    }
+}
+
+fn extract_syntax_constraints(
+    mib: &Mib,
+    sc: &mib_rs::mib::SyntaxConstraints,
+) -> ExtractedSyntaxConstraints {
+    ExtractedSyntaxConstraints {
+        type_name: syntax_constraint_type_name(mib, sc),
+        sizes: sc.sizes.iter().map(|r| (r.min, r.max)).collect(),
+        ranges: sc.ranges.iter().map(|r| (r.min, r.max)).collect(),
+        enums: sc
+            .enums
+            .iter()
+            .map(|nv| (nv.value, nv.label.clone()))
+            .collect(),
+        bits: sc
+            .bits
+            .iter()
+            .map(|nv| (nv.value, nv.label.clone()))
+            .collect(),
+    }
+}
+
+fn syntax_constraint_type_name(mib: &Mib, sc: &mib_rs::mib::SyntaxConstraints) -> String {
+    let Some(type_id) = sc.type_id else {
+        return String::new();
+    };
+    let type_ = mib.type_(type_id);
+    if !type_.name().is_empty() {
+        return type_.name().to_string();
+    }
+    base_type_syntax(type_.effective_base(mib.types_slice()))
+}
+
+fn base_type_syntax(base: BaseType) -> String {
+    match base {
+        BaseType::Integer32 => "Integer32".to_string(),
+        BaseType::Unsigned32 => "Unsigned32".to_string(),
+        BaseType::Counter32 => "Counter32".to_string(),
+        BaseType::Counter64 => "Counter64".to_string(),
+        BaseType::Gauge32 => "Gauge32".to_string(),
+        BaseType::TimeTicks => "TimeTicks".to_string(),
+        BaseType::IpAddress => "IpAddress".to_string(),
+        BaseType::OctetString => "OCTET STRING".to_string(),
+        BaseType::ObjectIdentifier => "OBJECT IDENTIFIER".to_string(),
+        BaseType::Bits => "BITS".to_string(),
+        BaseType::Opaque => "Opaque".to_string(),
+        _ => base.to_string(),
+    }
 }
 
 fn extract_module(mib: &Mib, mod_id: mib_rs::mib::ModuleId) -> ExtractedModule {
@@ -452,11 +800,124 @@ fn extract_module(mib: &Mib, mod_id: mib_rs::mib::ModuleId) -> ExtractedModule {
     }
 }
 
+fn extract_type(mib: &Mib, type_id: mib_rs::mib::TypeId) -> ExtractedType {
+    let type_ = mib.type_(type_id);
+
+    ExtractedType {
+        name: type_.name().to_string(),
+        module: type_
+            .module()
+            .map(|mod_id| mib.module(mod_id).name().to_string())
+            .unwrap_or_default(),
+        parent: type_
+            .parent()
+            .map(|parent_id| normalized_parent_type_name(mib, parent_id))
+            .unwrap_or_else(|| fallback_parent_type_name(type_.name()).to_string()),
+        base: type_.effective_base(mib.types_slice()).to_string(),
+        status: type_.status().to_string(),
+        display_hint: type_.effective_display_hint(mib.types_slice()).to_string(),
+        description: type_.description().to_string(),
+        reference: type_.reference().to_string(),
+        is_textual_convention: type_.is_textual_convention(),
+        sizes: type_
+            .effective_sizes(mib.types_slice())
+            .iter()
+            .map(|r| (r.min, r.max))
+            .collect(),
+        ranges: type_
+            .effective_ranges(mib.types_slice())
+            .iter()
+            .map(|r| (r.min, r.max))
+            .collect(),
+        enums: type_
+            .effective_enums(mib.types_slice())
+            .iter()
+            .map(|nv| (nv.value, nv.label.clone()))
+            .collect(),
+        bits: type_
+            .effective_bits(mib.types_slice())
+            .iter()
+            .map(|nv| (nv.value, nv.label.clone()))
+            .collect(),
+    }
+}
+
 // -- Comparison --
 
 fn fixture_int_map(m: &HashMap<String, String>) -> HashMap<i64, String> {
     m.iter()
         .map(|(k, v)| (k.parse::<i64>().unwrap(), v.clone()))
+        .collect()
+}
+
+fn fixture_syntax_constraints(
+    sc: &Option<FixtureSyntaxConstraints>,
+) -> Option<ExtractedSyntaxConstraints> {
+    sc.as_ref().map(|sc| ExtractedSyntaxConstraints {
+        type_name: sc.type_name.clone(),
+        sizes: sc.sizes.iter().map(|r| (r.low, r.high)).collect(),
+        ranges: sc.ranges.iter().map(|r| (r.low, r.high)).collect(),
+        enums: fixture_int_map(&sc.enums),
+        bits: fixture_int_map(&sc.bits),
+    })
+}
+
+fn fixture_compliance_modules(mods: &[FixtureComplianceModule]) -> Vec<ExtractedComplianceModule> {
+    mods.iter()
+        .map(|module| ExtractedComplianceModule {
+            module_name: module.module_name.clone(),
+            mandatory_groups: module.mandatory_groups.clone(),
+            groups: module
+                .groups
+                .iter()
+                .map(|group| ExtractedComplianceGroup {
+                    group: group.group.clone(),
+                    description: group.description.clone(),
+                })
+                .collect(),
+            objects: module
+                .objects
+                .iter()
+                .map(|obj| ExtractedComplianceObject {
+                    object: obj.object.clone(),
+                    syntax: fixture_syntax_constraints(&obj.syntax),
+                    write_syntax: fixture_syntax_constraints(&obj.write_syntax),
+                    min_access: obj.min_access.clone(),
+                    description: obj.description.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn fixture_capability_modules(mods: &[FixtureCapabilityModule]) -> Vec<ExtractedCapabilityModule> {
+    mods.iter()
+        .map(|module| ExtractedCapabilityModule {
+            module_name: module.module_name.clone(),
+            includes: module.includes.clone(),
+            object_variations: module
+                .object_variations
+                .iter()
+                .map(|variation| ExtractedObjectVariation {
+                    object: variation.object.clone(),
+                    syntax: fixture_syntax_constraints(&variation.syntax),
+                    write_syntax: fixture_syntax_constraints(&variation.write_syntax),
+                    access: variation.access.clone(),
+                    creation_requires: variation.creation_requires.clone(),
+                    default_value: variation.default_value.clone(),
+                    description: variation.description.clone(),
+                })
+                .collect(),
+            notification_variations: module
+                .notification_variations
+                .iter()
+                .map(|variation| ExtractedNotificationVariation {
+                    notification: variation.notification.clone(),
+                    access: variation.access.clone(),
+                    description: variation.description.clone(),
+                })
+                .collect(),
+        })
         .collect()
 }
 
@@ -552,6 +1013,22 @@ fn compare_nodes(got: &ExtractedNode, expected: &FixtureNode) -> Vec<String> {
         ));
     }
 
+    let expected_compliance_modules = fixture_compliance_modules(&expected.compliance_modules);
+    if got.compliance_modules != expected_compliance_modules {
+        failures.push(format!(
+            "{}: ComplianceModules: got={:?} expected={:?}",
+            id, got.compliance_modules, expected_compliance_modules
+        ));
+    }
+
+    let expected_capability_supports = fixture_capability_modules(&expected.capability_supports);
+    if got.capability_supports != expected_capability_supports {
+        failures.push(format!(
+            "{}: CapabilitySupports: got={:?} expected={:?}",
+            id, got.capability_supports, expected_capability_supports
+        ));
+    }
+
     failures
 }
 
@@ -593,6 +1070,61 @@ fn compare_modules(got: &ExtractedModule, expected: &FixtureModule) -> Vec<Strin
             id, got.revisions, expected_revisions
         ));
     }
+
+    failures
+}
+
+fn fixture_type(expected: &FixtureType) -> ExtractedType {
+    ExtractedType {
+        name: expected.name.clone(),
+        module: expected.module.clone(),
+        parent: expected.parent.clone(),
+        base: expected.base.clone(),
+        status: expected.status.clone(),
+        display_hint: expected.display_hint.clone(),
+        description: expected.description.clone(),
+        reference: expected.reference.clone(),
+        is_textual_convention: expected.is_textual_convention,
+        sizes: expected.sizes.iter().map(|r| (r.low, r.high)).collect(),
+        ranges: expected.ranges.iter().map(|r| (r.low, r.high)).collect(),
+        enums: fixture_int_map(&expected.enums),
+        bits: fixture_int_map(&expected.bits),
+    }
+}
+
+fn compare_types(got: &ExtractedType, expected: &FixtureType) -> Vec<String> {
+    let mut failures = Vec::new();
+    let id = qualified_type_name(&expected.module, &expected.name);
+    let expected = fixture_type(expected);
+
+    macro_rules! check {
+        ($field:literal, $got:expr, $exp:expr) => {
+            if $got != $exp {
+                failures.push(format!(
+                    "{}: {}: got={:?} expected={:?}",
+                    id, $field, $got, $exp
+                ));
+            }
+        };
+    }
+
+    check!("Name", got.name, expected.name);
+    check!("Module", got.module, expected.module);
+    check!("Parent", got.parent, expected.parent);
+    check!("Base", got.base, expected.base);
+    check!("Status", got.status, expected.status);
+    check!("DisplayHint", got.display_hint, expected.display_hint);
+    check!("Description", got.description, expected.description);
+    check!("Reference", got.reference, expected.reference);
+    check!(
+        "IsTextualConvention",
+        got.is_textual_convention,
+        expected.is_textual_convention
+    );
+    check!("Sizes", got.sizes, expected.sizes);
+    check!("Ranges", got.ranges, expected.ranges);
+    check!("Enums", got.enums, expected.enums);
+    check!("Bits", got.bits, expected.bits);
 
     failures
 }
@@ -686,12 +1218,39 @@ fn diagnostic_counts(diags: &[ExtractedDiagnostic]) -> BTreeMap<DiagnosticCountK
     counts
 }
 
+fn qualified_type_name(module: &str, name: &str) -> String {
+    if module.is_empty() {
+        name.to_string()
+    } else {
+        format!("{module}::{name}")
+    }
+}
+
+fn normalized_parent_type_name(mib: &Mib, type_id: mib_rs::mib::TypeId) -> String {
+    let type_ = mib.type_(type_id);
+    if !type_.name().is_empty() {
+        return type_.name().to_string();
+    }
+    base_type_syntax(type_.effective_base(mib.types_slice()))
+}
+
+fn fallback_parent_type_name(type_name: &str) -> &'static str {
+    match type_name {
+        "Counter" | "Counter32" | "Counter64" | "Gauge" | "Gauge32" | "Unsigned32"
+        | "TimeTicks" => "INTEGER",
+        "IpAddress" | "Opaque" => "OCTET STRING",
+        "NetworkAddress" => "IpAddress",
+        _ => "",
+    }
+}
+
 // -- Core comparison logic --
 
 fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) -> Vec<String> {
     let payload = run_fixturegen(strictness_name, false);
     let gomib_nodes = payload.nodes;
     let gomib_modules = payload.modules;
+    let gomib_types = payload.types;
     let mib = load_mibrs(strictness);
 
     let mut failures = Vec::new();
@@ -772,6 +1331,61 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
         }
     }
 
+    let mib_types_by_key: HashMap<String, mib_rs::mib::TypeId> = mib
+        .modules_slice()
+        .iter()
+        .flat_map(|module| {
+            module.types().iter().filter_map(|&type_id| {
+                let type_ = mib.type_(type_id);
+                if type_.name().is_empty() {
+                    return None;
+                }
+                Some((qualified_type_name(module.name(), type_.name()), type_id))
+            })
+        })
+        .collect();
+
+    for (type_name, expected) in &gomib_types {
+        let Some(&type_id) = mib_types_by_key.get(type_name) else {
+            failures.push(format!(
+                "[{strictness_name}] type {type_name}: present in gomib but not in mib-rs"
+            ));
+            continue;
+        };
+        let got = extract_type(&mib, type_id);
+        for f in compare_types(&got, expected) {
+            failures.push(format!("[{strictness_name}] {f}"));
+        }
+    }
+
+    let gomib_type_modules: std::collections::HashSet<&str> = gomib_types
+        .values()
+        .map(|t| t.module.as_str())
+        .filter(|m| !m.is_empty())
+        .collect();
+    let gomib_type_keys: std::collections::HashSet<&str> =
+        gomib_types.keys().map(|s| s.as_str()).collect();
+
+    for (index, type_) in mib.types_slice().iter().enumerate() {
+        if type_.name().is_empty() {
+            continue;
+        }
+
+        let module_name = type_
+            .module()
+            .map(|mod_id| mib.module(mod_id).name())
+            .unwrap_or_default();
+        if !module_name.is_empty() && gomib_type_modules.contains(module_name) {
+            let key = qualified_type_name(module_name, type_.name());
+            if !gomib_type_keys.contains(key.as_str()) {
+                failures.push(format!(
+                    "[{strictness_name}] type {} (index {}): in mib-rs module {} but not in gomib",
+                    key, index, module_name
+                ));
+            }
+        }
+    }
+
     eprintln!(
         "[{strictness_name}] checked {} gomib nodes, {} divergences",
         total_checked,
@@ -830,19 +1444,16 @@ fn cross_strict() {
 }
 
 #[test]
-#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
 fn diagnostics_cross_permissive() {
     assert_no_diagnostic_divergences("permissive", ResolverStrictness::Permissive);
 }
 
 #[test]
-#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
 fn diagnostics_cross_normal() {
     assert_no_diagnostic_divergences("normal", ResolverStrictness::Normal);
 }
 
 #[test]
-#[ignore = "known diagnostic parity gaps between gomib and mib-rs"]
 fn diagnostics_cross_strict() {
     assert_no_diagnostic_divergences("strict", ResolverStrictness::Strict);
 }

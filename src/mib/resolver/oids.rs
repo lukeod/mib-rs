@@ -36,8 +36,8 @@ impl OidDefKind {
     fn to_node_kind(self) -> Kind {
         match self {
             OidDefKind::ObjectType => Kind::Scalar, // refined later
-            OidDefKind::ModuleIdentity => Kind::Node,
-            OidDefKind::ObjectIdentity => Kind::Node,
+            OidDefKind::ModuleIdentity => Kind::ModuleIdentity,
+            OidDefKind::ObjectIdentity => Kind::ObjectIdentity,
             OidDefKind::Notification => Kind::Notification,
             OidDefKind::ValueAssignment => Kind::Node,
             OidDefKind::ObjectGroup => Kind::Group,
@@ -107,7 +107,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
         );
     }
     for (name, mod_name, ir_mod, span) in cycle_unresolved {
-        ctx.record_unresolved_oid(&name, &mod_name, "dependency_cycle", ir_mod, span);
+        ctx.record_unresolved_oid(&name, &name, &mod_name, "dependency_cycle", ir_mod, span);
     }
 
     // Map graph nodes back to OidDef indices.
@@ -443,8 +443,10 @@ fn resolve_oid_component(
                 Some(node)
             } else {
                 let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
+                let comp_name = format!("{module}.{name}");
                 ctx.record_unresolved_oid(
-                    &format!("{module}.{name}"),
+                    &od.name,
+                    &comp_name,
                     &mod_name,
                     "component_not_found",
                     od.ir_mod,
@@ -551,7 +553,7 @@ fn resolve_name_component(
     }
 
     let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
-    ctx.record_unresolved_oid(name, &mod_name, "component_not_found", od.ir_mod, span);
+    ctx.record_unresolved_oid(&od.name, name, &mod_name, "component_not_found", od.ir_mod, span);
     None
 }
 
@@ -576,20 +578,25 @@ fn lookup_smi_global_oid_root(ctx: &ResolverContext, name: &str) -> Option<NodeI
 }
 
 fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {
-    let (def_span, oid_definition_text) = {
+    let (def_span, oid_definition_text, oid_definition_status) = {
         let m = &ctx.modules[od.ir_mod.0 as usize];
         let def = &m.definitions[od.def_idx];
         let def_span = def.span();
-        let oid_definition_text = match def {
+        let (oid_definition_text, oid_definition_status) = match def {
             ir::Definition::ValueAssignment(va) => {
-                Some((va.description.clone(), va.reference.clone()))
+                (Some((va.description.clone(), va.reference.clone())), None)
             }
-            ir::Definition::ObjectIdentity(oi) => {
-                Some((oi.description.clone(), oi.reference.clone()))
-            }
-            _ => None,
+            ir::Definition::ObjectIdentity(oi) => (
+                Some((oi.description.clone(), oi.reference.clone())),
+                Some(oi.status),
+            ),
+            // MODULE-IDENTITY description is stored on module metadata, not on the
+            // node. Populating it here would break parity with gomib, which also
+            // does not set it on the node. Both repos should be updated together
+            // if this changes.
+            _ => (None, None),
         };
-        (def_span, oid_definition_text)
+        (def_span, oid_definition_text, oid_definition_status)
     };
     let resolved_mod_id = ctx.module_to_resolved[&od.ir_mod];
 
@@ -650,6 +657,10 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
             if !reference.is_empty() {
                 ctx.mib.tree.set_reference(node_id, reference);
             }
+        }
+
+        if let Some(status) = oid_definition_status {
+            ctx.mib.tree.set_status(node_id, status);
         }
 
         ctx.mib.tree.set_module(node_id, resolved_mod_id);
@@ -763,6 +774,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
                 let mod_name = ctx.modules[od.ir_mod.0 as usize].name.clone();
                 ctx.record_unresolved_oid(
                     &od.name,
+                    &enterprise_name,
                     &mod_name,
                     "enterprise_not_found",
                     od.ir_mod,

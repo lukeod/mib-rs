@@ -15,6 +15,7 @@ use super::context::{IrModuleId, ResolverContext};
 pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
     infer_node_kinds(ctx);
     create_resolved_objects(ctx);
+    validate_table_semantics(ctx);
     link_object_indexes(ctx);
     check_augments_nesting(ctx);
     create_resolved_notifications(ctx);
@@ -177,7 +178,8 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         obj.def_val_span = defval_span;
 
         // Resolve type reference.
-        resolve_object_type(ctx, ir_id, &syntax, &mut obj);
+        let obj_name = obj.entity.name.clone();
+        resolve_object_type(ctx, ir_id, &syntax, &obj_name, &mut obj);
 
         // Convert DEFVAL.
         if let Some(dv) = &defval {
@@ -227,10 +229,11 @@ fn resolve_object_type(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
+    referrer: &str,
     obj: &mut ObjectData,
 ) {
     match syntax {
-        ir::TypeSyntax::TypeRef { name, span, .. } => {
+        ir::TypeSyntax::TypeRef { name, .. } => {
             if let Some((type_id, used_import)) = ctx.lookup_type_for_module(ir_mod, name) {
                 obj.typ = Some(type_id);
                 if used_import {
@@ -238,7 +241,7 @@ fn resolve_object_type(
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
                 let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-                ctx.record_unresolved_type(name, &mod_name, ir_mod, *span);
+                ctx.record_unresolved_type(referrer, name, &mod_name, ir_mod, obj.syntax_span);
             }
         }
         ir::TypeSyntax::IntegerEnum {
@@ -255,7 +258,7 @@ fn resolve_object_type(
                     }
                 } else {
                     let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-                    ctx.record_unresolved_type(base, &mod_name, ir_mod, obj.syntax_span);
+                    ctx.record_unresolved_type(referrer, base, &mod_name, ir_mod, obj.syntax_span);
                 }
             } else {
                 // Bare INTEGER { ... } enum with no named base.
@@ -289,7 +292,7 @@ fn resolve_object_type(
         ir::TypeSyntax::Constrained {
             base, constraint, ..
         } => {
-            resolve_object_type(ctx, ir_mod, base, obj);
+            resolve_object_type(ctx, ir_mod, base, referrer, obj);
             extract_object_constraint(constraint, obj);
         }
         ir::TypeSyntax::SequenceOf { entry_type, .. } => {
@@ -353,7 +356,7 @@ fn resolve_syntax_type(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
-    _owner_name: &str,
+    owner_name: &str,
     sc: &mut SyntaxConstraints,
 ) {
     match syntax {
@@ -365,7 +368,7 @@ fn resolve_syntax_type(
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
                 let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-                ctx.record_unresolved_type(name, &mod_name, ir_mod, *span);
+                ctx.record_unresolved_type(owner_name, name, &mod_name, ir_mod, *span);
             }
         }
         ir::TypeSyntax::IntegerEnum {
@@ -381,7 +384,7 @@ fn resolve_syntax_type(
                     }
                 } else {
                     let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-                    ctx.record_unresolved_type(base, &mod_name, ir_mod, Span::SYNTHETIC);
+                    ctx.record_unresolved_type(owner_name, base, &mod_name, ir_mod, Span::SYNTHETIC);
                 }
             } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
                 sc.type_id = Some(type_id);
@@ -411,7 +414,7 @@ fn resolve_syntax_type(
         ir::TypeSyntax::Constrained {
             base, constraint, ..
         } => {
-            resolve_syntax_type(ctx, ir_mod, base, _owner_name, sc);
+            resolve_syntax_type(ctx, ir_mod, base, owner_name, sc);
             match constraint {
                 ir::Constraint::Size { ranges, .. } => {
                     sc.sizes = ranges
@@ -471,6 +474,70 @@ fn compute_effective_values(ctx: &ResolverContext, obj: &mut ObjectData) {
     }
 }
 
+/// Validate INDEX and AUGMENTS references at the IR level for all ObjectType
+/// definitions. This mirrors gomib's resolveTableSemantics: it emits diagnostics
+/// for unresolvable INDEX/AUGMENTS targets regardless of whether the object's
+/// own OID resolved (and thus whether a resolved object was created).
+fn validate_table_semantics(ctx: &mut ResolverContext) {
+    for mod_idx in 0..ctx.modules.len() {
+        let ir_id = IrModuleId(mod_idx as u32);
+
+        let work: Vec<(String, Vec<ir::definition::IndexItem>, String, Span)> = ctx.modules
+            [mod_idx]
+            .definitions
+            .iter()
+            .filter_map(|def| match def {
+                ir::Definition::ObjectType(ot)
+                    if !ot.index.is_empty() || !ot.augments.is_empty() =>
+                {
+                    Some((
+                        ot.name.clone(),
+                        ot.index.clone(),
+                        ot.augments.clone(),
+                        ot.augments_span,
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+
+        for (name, index_items, augments, augments_span) in work {
+            if !index_items.is_empty() {
+                for item in &index_items {
+                    if is_bare_type_index(&item.object) {
+                        continue;
+                    }
+                    if ctx.lookup_node_for_module(ir_id, &item.object).is_none() {
+                        let mod_name = ctx.modules[mod_idx].name.clone();
+                        ctx.record_unresolved_index(
+                            &name,
+                            &item.object,
+                            &mod_name,
+                            "index_object_not_found",
+                            ir_id,
+                            item.span,
+                        );
+                    }
+                }
+            }
+
+            if !augments.is_empty()
+                && ctx.lookup_node_for_module(ir_id, &augments).is_none()
+            {
+                let mod_name = ctx.modules[mod_idx].name.clone();
+                ctx.record_unresolved_oid(
+                    &name,
+                    &augments,
+                    &mod_name,
+                    "augments_target_not_found",
+                    ir_id,
+                    augments_span,
+                );
+            }
+        }
+    }
+}
+
 /// Resolve INDEX and AUGMENTS references after all objects exist.
 fn link_object_indexes(ctx: &mut ResolverContext) {
     let work: Vec<(usize, usize)> = (0..ctx.modules.len())
@@ -519,23 +586,13 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
             ctx.mib.object_mut(obj_id).index = entries;
         }
 
-        // Resolve AUGMENTS.
-        if !augments.is_empty() {
-            let target_node = ctx.lookup_node_for_module(ir_id, &augments);
-            let target = lookup_object_in_module_scope(ctx, ir_id, &augments);
-            if let Some(target_obj_id) = target {
-                ctx.mib.object_mut(obj_id).augments = Some(target_obj_id);
-                ctx.mib.object_mut(target_obj_id).augmented_by.push(obj_id);
-            } else if target_node.is_none() {
-                let mod_name = ctx.modules[mod_idx].name.clone();
-                ctx.record_unresolved_oid(
-                    &name,
-                    &mod_name,
-                    "augments_target_not_found",
-                    ir_id,
-                    ctx.mib.object(obj_id).augments_span,
-                );
-            }
+        // Resolve AUGMENTS. Diagnostic for unresolved targets is emitted
+        // by validate_table_semantics.
+        if !augments.is_empty()
+            && let Some(target_obj_id) = lookup_object_in_module_scope(ctx, ir_id, &augments)
+        {
+            ctx.mib.object_mut(obj_id).augments = Some(target_obj_id);
+            ctx.mib.object_mut(target_obj_id).augmented_by.push(obj_id);
         }
     }
 }
@@ -579,7 +636,7 @@ fn check_augments_nesting(ctx: &mut ResolverContext) {
 fn resolve_index_entry(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
-    row_name: &str,
+    _row_name: &str,
     item: &ir::definition::IndexItem,
 ) -> Option<IndexEntry> {
     if is_bare_type_index(&item.object) {
@@ -592,19 +649,8 @@ fn resolve_index_entry(
         });
     }
 
-    let node = ctx.lookup_node_for_module(ir_mod, &item.object);
+    // Diagnostic for unresolved INDEX is emitted by validate_table_semantics.
     let obj = lookup_object_in_module_scope(ctx, ir_mod, &item.object);
-    if obj.is_none() && node.is_none() {
-        let mod_name = ctx.modules[ir_mod.0 as usize].name.clone();
-        ctx.record_unresolved_index(
-            row_name,
-            &item.object,
-            &mod_name,
-            "index_object_not_found",
-            ir_mod,
-            item.span,
-        );
-    }
 
     let encoding = if let Some(obj_id) = obj {
         let o = ctx.mib.object(obj_id);
@@ -1503,7 +1549,11 @@ fn convert_defval(
             DefVal::enumeration(label.clone(), label.clone())
         }
         ir::syntax::DefVal::Bits { labels } => {
-            let raw = format!("{{ {} }}", labels.join(", "));
+            let raw = if labels.is_empty() {
+                "{ }".to_string()
+            } else {
+                format!("{{ {} }}", labels.join(", "))
+            };
             DefVal::bits(labels.clone(), raw)
         }
         ir::syntax::DefVal::OidRef(name) => {
