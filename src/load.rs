@@ -17,6 +17,13 @@ use crate::source::{FindResult, Source};
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
+///
+/// Typical usage starts with [`Loader::new`], adds one or more [`Source`]s,
+/// optionally restricts the requested modules, and finishes with
+/// [`Loader::load`].
+///
+/// If no module list is provided, all modules visible from the configured
+/// sources are loaded.
 pub struct Loader {
     sources: Vec<Box<dyn Source>>,
     modules: Option<Vec<String>>,
@@ -32,6 +39,8 @@ impl Default for Loader {
 }
 
 impl Loader {
+    /// Create a loader with no sources, normal resolver strictness, and the
+    /// default diagnostic configuration.
     pub fn new() -> Self {
         Loader {
             sources: Vec::new(),
@@ -42,13 +51,18 @@ impl Loader {
         }
     }
 
-    /// Add a MIB source. Sources are searched in the order they are added.
+    /// Add a MIB source.
+    ///
+    /// Sources are searched in the order they are added. When the same module
+    /// is available from multiple sources, the first matching source wins.
     pub fn source(mut self, src: Box<dyn Source>) -> Self {
         self.sources.push(src);
         self
     }
 
     /// Add multiple MIB sources.
+    ///
+    /// Sources are appended in order and searched left-to-right.
     pub fn sources(mut self, srcs: Vec<Box<dyn Source>>) -> Self {
         self.sources.extend(srcs);
         self
@@ -62,13 +76,13 @@ impl Loader {
         self
     }
 
-    /// Set the diagnostic configuration for reporting/failure policy.
+    /// Set the diagnostic reporting and failure policy used during load.
     pub fn diagnostic_config(mut self, config: DiagnosticConfig) -> Self {
         self.diag_config = config;
         self
     }
 
-    /// Set the resolver strictness level.
+    /// Set the semantic resolver strictness level.
     pub fn resolver_strictness(mut self, strictness: ResolverStrictness) -> Self {
         self.resolver_strictness = strictness;
         self
@@ -83,6 +97,8 @@ impl Loader {
 }
 
 /// Load MIB modules from configured sources and resolve them.
+///
+/// This is equivalent to calling [`Loader::load`] on the same builder.
 pub fn load(options: Loader) -> Result<Mib, LoadError> {
     let requested_module_count = options.modules.as_ref().map_or(0, Vec::len);
     let load_mode = if options.modules.is_some() {
@@ -153,6 +169,7 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
 }
 
 impl Loader {
+    /// Execute the configured load pipeline and return the resolved [`Mib`].
     pub fn load(self) -> Result<Mib, LoadError> {
         load(self)
     }

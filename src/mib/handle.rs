@@ -18,6 +18,7 @@ use super::types::*;
 macro_rules! define_handle {
     ($name:ident, $id:ident, $data:ident, $getter:ident) => {
         #[derive(Clone, Copy)]
+        #[doc = concat!("Borrowed handle to a resolved ", stringify!($name), ".")]
         pub struct $name<'a> {
             pub(crate) mib: &'a Mib,
             pub(crate) id: $id,
@@ -66,6 +67,10 @@ define_handle!(Compliance, ComplianceId, ComplianceData, compliance_data);
 define_handle!(Capability, CapabilityId, CapabilityData, capability_data);
 
 #[derive(Clone, Copy)]
+/// Borrowed handle to a resolved node in the OID tree.
+///
+/// A node may represent a plain tree node or an entity-backed node such as an
+/// object or notification.
 pub struct Node<'a> {
     pub(crate) mib: &'a Mib,
     pub(crate) id: NodeId,
@@ -80,10 +85,12 @@ impl<'a> Node<'a> {
         self.mib.node_data(self.id)
     }
 
+    /// Return the node's numeric OID arc relative to its parent.
     pub fn arc(self) -> u32 {
         self.data().arc()
     }
 
+    /// Return the node's local symbolic name.
     pub fn name(self) -> &'a str {
         self.data().name()
     }
@@ -108,14 +115,20 @@ impl<'a> Node<'a> {
         self.data().span()
     }
 
+    /// Return the node's full numeric OID.
     pub fn oid(self) -> &'a super::oid::Oid {
         self.mib.tree().oid_of(self.id)
     }
 
+    /// Return the parent node, or `None` for the synthetic root.
     pub fn parent(self) -> Option<Node<'a>> {
         self.data().parent().map(|id| Node::new(self.mib, id))
     }
 
+    /// Return the effective owning module for this node.
+    ///
+    /// If multiple entity kinds could conceptually own the node, entity-backed
+    /// ownership takes precedence over plain base-module ownership.
     pub fn module(self) -> Option<Module<'a>> {
         self.mib
             .effective_module(self.id)
@@ -126,28 +139,33 @@ impl<'a> Node<'a> {
         self.data().object().map(|id| Object::new(self.mib, id))
     }
 
+    /// Return the notification attached to this node, if any.
     pub fn notification(self) -> Option<Notification<'a>> {
         self.data()
             .notification()
             .map(|id| Notification::new(self.mib, id))
     }
 
+    /// Return the group attached to this node, if any.
     pub fn group(self) -> Option<Group<'a>> {
         self.data().group().map(|id| Group::new(self.mib, id))
     }
 
+    /// Return the compliance statement attached to this node, if any.
     pub fn compliance(self) -> Option<Compliance<'a>> {
         self.data()
             .compliance()
             .map(|id| Compliance::new(self.mib, id))
     }
 
+    /// Return the capabilities statement attached to this node, if any.
     pub fn capability(self) -> Option<Capability<'a>> {
         self.data()
             .capability()
             .map(|id| Capability::new(self.mib, id))
     }
 
+    /// Iterate the node's direct children in arc order.
     pub fn children(self) -> impl Iterator<Item = Node<'a>> + 'a {
         self.data()
             .children()
@@ -156,6 +174,7 @@ impl<'a> Node<'a> {
             .map(|id| Node::new(self.mib, id))
     }
 
+    /// Iterate the full subtree rooted at this node in depth-first order.
     pub fn subtree(self) -> impl Iterator<Item = Node<'a>> + 'a {
         self.mib.subtree(self.id).map(|id| Node::new(self.mib, id))
     }
@@ -180,6 +199,10 @@ impl fmt::Debug for Node<'_> {
 }
 
 #[derive(Clone, Copy)]
+/// A resolved index component for a table row.
+///
+/// Indexes may be object-backed, such as `INDEX { ifIndex }`, or bare-type
+/// indexes, such as `INDEX { INTEGER }`.
 pub struct Index<'a> {
     mib: &'a Mib,
     row_id: ObjectId,
@@ -191,36 +214,53 @@ impl<'a> Index<'a> {
         Self { mib, row_id, entry }
     }
 
+    /// Return the row whose effective index list this entry belongs to.
     pub fn row(self) -> Object<'a> {
         Object::new(self.mib, self.row_id)
     }
 
+    /// Return the referenced index object when the index is object-backed.
     pub fn object(self) -> Option<Object<'a>> {
         self.entry.object.map(|id| Object::new(self.mib, id))
     }
 
-    pub fn type_name(self) -> &'a str {
-        &self.entry.type_name
+    /// Return the source identifier written in the `INDEX` clause.
+    ///
+    /// For object-backed indexes this is the object name. For bare-type indexes
+    /// this is the type name as written in the clause.
+    pub fn name(self) -> &'a str {
+        &self.entry.name
+    }
+
+    /// Return the resolved type for this index component when available.
+    pub fn ty(self) -> Option<Type<'a>> {
+        self.entry.type_id.map(|id| Type::new(self.mib, id))
     }
 
     pub fn implied(self) -> bool {
         self.entry.implied
     }
 
+    /// Return the derived index encoding strategy.
     pub fn encoding(self) -> crate::types::IndexEncoding {
         self.entry.encoding
     }
 
+    /// Return the source span of this index component.
     pub fn span(self) -> Span {
         self.entry.span
     }
 
+    /// Return the underlying raw index entry.
+    ///
+    /// Most callers should prefer the typed accessors on [`Index`] directly.
     pub fn entry(self) -> &'a IndexEntry {
         self.entry
     }
 }
 
 impl<'a> Module<'a> {
+    /// Return the module name.
     pub fn name(self) -> &'a str {
         self.data().name()
     }
@@ -245,18 +285,21 @@ impl<'a> Module<'a> {
         self.data().line_col(offset)
     }
 
+    /// Look up an object defined by this module.
     pub fn object(self, name: &str) -> Option<Object<'a>> {
         self.data()
             .object_by_name(name)
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Look up a type defined by this module.
     pub fn r#type(self, name: &str) -> Option<Type<'a>> {
         self.data()
             .type_by_name(name)
             .map(|id| Type::new(self.mib, id))
     }
 
+    /// Look up any node defined by this module.
     pub fn node(self, name: &str) -> Option<Node<'a>> {
         self.data()
             .node_by_name(name)
@@ -287,6 +330,7 @@ impl<'a> Module<'a> {
             .map(|id| Capability::new(self.mib, id))
     }
 
+    /// Iterate objects defined by this module.
     pub fn objects(self) -> impl Iterator<Item = Object<'a>> + 'a {
         self.data()
             .objects()
@@ -295,6 +339,7 @@ impl<'a> Module<'a> {
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Iterate types defined by this module.
     pub fn types(self) -> impl Iterator<Item = Type<'a>> + 'a {
         self.data()
             .types()
@@ -303,6 +348,7 @@ impl<'a> Module<'a> {
             .map(|id| Type::new(self.mib, id))
     }
 
+    /// Iterate nodes defined by this module.
     pub fn nodes(self) -> impl Iterator<Item = Node<'a>> + 'a {
         self.data()
             .nodes()
@@ -313,6 +359,7 @@ impl<'a> Module<'a> {
 }
 
 impl<'a> Object<'a> {
+    /// Return the object name.
     pub fn name(self) -> &'a str {
         self.data().name()
     }
@@ -344,6 +391,7 @@ impl<'a> Object<'a> {
         self.data().reference()
     }
 
+    /// Return the resolved type of this object, if it has one.
     pub fn ty(self) -> Option<Type<'a>> {
         self.data().type_id().map(|id| Type::new(self.mib, id))
     }
@@ -384,24 +432,28 @@ impl<'a> Object<'a> {
         self.data().effective_bits()
     }
 
+    /// Return the containing table for a table, row, or column.
+    ///
+    /// Scalars return `None`.
     pub fn table(self) -> Option<Object<'a>> {
         self.mib
             .object_table(self.id)
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Return the associated row for a table, row, or column.
+    ///
+    /// For tables this returns the child row entry. For rows it returns the row
+    /// itself. For columns it returns the parent row. Scalars return `None`.
     pub fn row(self) -> Option<Object<'a>> {
         self.mib
             .object_row(self.id)
             .map(|id| Object::new(self.mib, id))
     }
 
-    pub fn entry(self) -> Option<Object<'a>> {
-        self.mib
-            .object_entry(self.id)
-            .map(|id| Object::new(self.mib, id))
-    }
-
+    /// Iterate the columns belonging to this table or row.
+    ///
+    /// Scalars and standalone objects yield an empty iterator.
     pub fn columns(self) -> impl Iterator<Item = Object<'a>> + 'a {
         self.mib
             .object_columns(self.id)
@@ -409,10 +461,12 @@ impl<'a> Object<'a> {
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Return the object this row augments, if any.
     pub fn augments(self) -> Option<Object<'a>> {
         self.data().augments().map(|id| Object::new(self.mib, id))
     }
 
+    /// Iterate rows that augment this row.
     pub fn augmented_by(self) -> impl Iterator<Item = Object<'a>> + 'a {
         self.data()
             .augmented_by()
@@ -421,6 +475,10 @@ impl<'a> Object<'a> {
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Iterate the effective indexes for this row or augmented row.
+    ///
+    /// For rows that use `AUGMENTS`, this follows the augment chain to the
+    /// source row that owns the effective `INDEX` clause.
     pub fn effective_indexes(self) -> impl Iterator<Item = Index<'a>> + 'a {
         self.mib
             .effective_indexes_source(self.id)
@@ -434,28 +492,34 @@ impl<'a> Object<'a> {
             })
     }
 
+    /// Return `true` if this object is a table.
     pub fn is_table(self) -> bool {
         self.mib.is_table(self.id)
     }
 
+    /// Return `true` if this object is a table row.
     pub fn is_row(self) -> bool {
         self.mib.is_row(self.id)
     }
 
+    /// Return `true` if this object is a table column.
     pub fn is_column(self) -> bool {
         self.mib.is_column(self.id)
     }
 
+    /// Return `true` if this object is a scalar.
     pub fn is_scalar(self) -> bool {
         self.mib.is_scalar(self.id)
     }
 
+    /// Return `true` if this object appears in its row's effective index list.
     pub fn is_index(self) -> bool {
         self.mib.is_index(self.id)
     }
 }
 
 impl<'a> Type<'a> {
+    /// Return the type name.
     pub fn name(self) -> &'a str {
         self.data().name()
     }
@@ -476,6 +540,7 @@ impl<'a> Type<'a> {
         self.data().base()
     }
 
+    /// Return the immediate parent type, if this is a derived type.
     pub fn parent(self) -> Option<Type<'a>> {
         self.data().parent().map(|id| Type::new(self.mib, id))
     }
@@ -516,10 +581,12 @@ impl<'a> Type<'a> {
         self.data().is_textual_convention()
     }
 
+    /// Return the effective base type after following parent type chains.
     pub fn effective_base(self) -> BaseType {
         self.data().effective_base(self.mib.types_slice())
     }
 
+    /// Return the effective display hint after following parent type chains.
     pub fn effective_display_hint(self) -> &'a str {
         self.data().effective_display_hint(self.mib.types_slice())
     }

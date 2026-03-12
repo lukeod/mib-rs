@@ -62,8 +62,9 @@ pub struct Revision {
 /// An index component for a table row.
 #[derive(Debug, Clone)]
 pub struct IndexEntry {
+    pub name: String,
     pub object: Option<ObjectId>,
-    pub type_name: String,
+    pub type_id: Option<TypeId>,
     pub implied: bool,
     pub encoding: IndexEncoding,
     pub span: Span,

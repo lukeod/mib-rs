@@ -772,7 +772,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
 
         let row = match kind {
             Kind::Table => mib
-                .object_entry(obj_id)
+                .object_row(obj_id)
                 .map(|rid| object_id_to_ref(mib, rid)),
             Kind::Column => mib.object_row(obj_id).map(|rid| object_id_to_ref(mib, rid)),
             _ => None,
@@ -1183,7 +1183,7 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
         },
         None => {
             // Type-backed index - build effective syntax from type name lookup
-            let syntax = if let Some(tid) = mib.type_by_name(&idx.type_name) {
+            let syntax = if let Some(tid) = idx.type_id {
                 let td = mib.raw().type_(tid);
                 let types = mib.types_slice();
                 let base = td.effective_base(types);

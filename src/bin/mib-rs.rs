@@ -345,7 +345,7 @@ fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
             println!("DefVal:  {dv}");
         }
         if !obj.index().is_empty() {
-            let names: Vec<&str> = obj.index().iter().map(|i| i.type_name.as_str()).collect();
+            let names: Vec<&str> = obj.index().iter().map(|i| i.name.as_str()).collect();
             println!("Index:   {}", names.join(", "));
         }
         let enums = obj.effective_enums();

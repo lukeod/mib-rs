@@ -516,11 +516,22 @@ fn resolve_index_entry(
     item: &ir::definition::IndexItem,
 ) -> Option<IndexEntry> {
     if is_bare_type_index(&item.object) {
+        let type_id = ctx.lookup_type_for_module(ir_mod, &item.object).map(|(id, _)| id);
+        let (base, sizes) = if let Some(type_id) = type_id {
+            let td = ctx.mib.raw().type_(type_id);
+            (
+                td.effective_base(ctx.mib.types_slice()),
+                td.effective_sizes(ctx.mib.types_slice()),
+            )
+        } else {
+            (BaseType::Unknown, &[][..])
+        };
         return Some(IndexEntry {
+            name: item.object.clone(),
             object: None,
-            type_name: item.object.clone(),
+            type_id,
             implied: item.implied,
-            encoding: crate::types::IndexEncoding::Unknown,
+            encoding: classify_index_encoding(base, item.implied, sizes),
             span: item.span,
         });
     }
@@ -528,8 +539,9 @@ fn resolve_index_entry(
     // Diagnostic for unresolved INDEX is emitted by validate_table_semantics.
     let obj = lookup_object_in_module_scope(ctx, ir_mod, &item.object);
 
-    let encoding = if let Some(obj_id) = obj {
+    let (type_id, encoding) = if let Some(obj_id) = obj {
         let o = ctx.mib.raw().object(obj_id);
+        let type_id = o.typ;
         let base = o.typ.map_or(BaseType::Unknown, |tid| {
             ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice())
         });
@@ -540,14 +552,15 @@ fn resolve_index_entry(
         } else {
             &[]
         };
-        classify_index_encoding(base, item.implied, sizes)
+        (type_id, classify_index_encoding(base, item.implied, sizes))
     } else {
         return None;
     };
 
     Some(IndexEntry {
+        name: item.object.clone(),
         object: obj,
-        type_name: item.object.clone(),
+        type_id,
         implied: item.implied,
         encoding,
         span: item.span,

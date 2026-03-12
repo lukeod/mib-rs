@@ -179,8 +179,8 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
             if let Some(idx_obj_id) = idx.object {
                 e.indexes
                     .push((mib.raw().object(idx_obj_id).name().to_string(), idx.implied));
-            } else if !idx.type_name.is_empty() {
-                e.indexes.push((idx.type_name.clone(), idx.implied));
+            } else if !idx.name.is_empty() {
+                e.indexes.push((idx.name.clone(), idx.implied));
             }
         }
 

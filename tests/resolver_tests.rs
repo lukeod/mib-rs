@@ -133,9 +133,19 @@ fn oid_numeric_lookup() {
     let mib = &r;
 
     let oid: Oid = "1.3.6.1.2.1.2.2.1.1".parse().unwrap();
-    let node = mib.node_by_oid(&oid).expect("OID not found");
-    let name = mib.tree().get(node).name();
-    assert_eq!(name, "ifIndex");
+    let node = mib.exact_node_by_oid(&oid).expect("OID not found");
+    assert_eq!(node.name(), "ifIndex");
+}
+
+#[test]
+fn resolve_node_from_instance_oid() {
+    let r = load_corpus(&["IF-MIB"]);
+    let mib = &r;
+
+    let node = mib
+        .resolve_node("1.3.6.1.2.1.2.2.1.1.5")
+        .expect("instance OID should resolve to its base node");
+    assert_eq!(node.name(), "ifIndex");
 }
 
 #[test]
@@ -164,15 +174,14 @@ fn format_oid_with_module() {
 }
 
 #[test]
-fn longest_prefix_lookup() {
+fn lookup_oid_matches_instance_prefix() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r;
 
     // 1.3.6.1.2.1.2.2.1.1.5 - ifIndex instance .5 (doesn't exist in tree)
     let oid: Oid = "1.3.6.1.2.1.2.2.1.1.5".parse().unwrap();
-    let node = mib.longest_prefix_by_oid(&oid);
-    let name = mib.tree().get(node).name();
-    assert_eq!(name, "ifIndex");
+    let node = mib.lookup_oid(&oid);
+    assert_eq!(node.name(), "ifIndex");
 }
 
 #[test]
@@ -1067,14 +1076,22 @@ fn table_navigation_if_table() {
     assert!(!mib.is_column(table_id));
     assert!(!mib.is_scalar(table_id));
 
-    // Entry returns the row
-    let entry_id = mib.object_entry(table_id).expect("ifEntry not found");
+    // row() returns the row for a table
+    let entry_id = mib.object_row(table_id).expect("ifEntry not found");
     assert_eq!(mib.raw().object(entry_id).name(), "ifEntry");
     assert!(mib.is_row(entry_id));
+
+    // table() returns itself for tables
+    let table_again = mib.object_table(table_id).expect("table from table");
+    assert_eq!(table_again, table_id);
 
     // Row's table() returns the table
     let back_to_table = mib.object_table(entry_id).expect("table from row");
     assert_eq!(back_to_table, table_id);
+
+    // row() returns itself for rows
+    let row_again = mib.object_row(entry_id).expect("row from row");
+    assert_eq!(row_again, entry_id);
 
     // Columns of the table
     let cols = mib.object_columns(table_id);
@@ -1114,10 +1131,9 @@ fn table_navigation_scalars() {
     assert!(mib.is_scalar(scalar_id));
     assert!(!mib.is_table(scalar_id));
 
-    // Scalars have no table/row/entry/columns
+    // Scalars have no table/row/columns
     assert!(mib.object_table(scalar_id).is_none());
     assert!(mib.object_row(scalar_id).is_none());
-    assert!(mib.object_entry(scalar_id).is_none());
     assert!(mib.object_columns(scalar_id).is_empty());
     assert!(!mib.is_index(scalar_id));
 }
@@ -1222,8 +1238,12 @@ fn effective_indexes_bare_type() {
         "bare type index should have no object reference"
     );
     assert_eq!(
-        indexes[0].type_name, "INTEGER",
-        "bare type index should preserve type name"
+        indexes[0].name, "INTEGER",
+        "bare type index should preserve its source name"
+    );
+    assert_eq!(
+        mib.raw().type_(indexes[0].type_id.expect("base type should resolve")).name(),
+        "INTEGER"
     );
 }
 

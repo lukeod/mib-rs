@@ -46,6 +46,9 @@ pub struct Mib {
 }
 
 impl Mib {
+    /// Create an empty `Mib`.
+    ///
+    /// Most callers should construct a resolved `Mib` through [`crate::Loader`].
     pub fn new() -> Self {
         Self {
             tree: OidTree::new(),
@@ -67,10 +70,18 @@ impl Mib {
 
     // --- Tree access ---
 
+    /// Return the underlying OID tree.
+    ///
+    /// Prefer the handle-oriented API for normal queries. Direct tree access is
+    /// mainly useful for lower-level traversal and tooling.
     pub fn tree(&self) -> &OidTree {
         &self.tree
     }
 
+    /// Return the explicit low-level raw view of this MIB.
+    ///
+    /// This exposes arena-backed ids and data structures. Most library users
+    /// should prefer the high-level borrowed handles instead.
     pub fn raw(&self) -> RawMib<'_> {
         RawMib::new(self)
     }
@@ -170,6 +181,7 @@ impl Mib {
         self.find_in_nodes(name, |n| n.object)
     }
 
+    /// Look up an object by name and return a borrowed handle.
     #[must_use]
     pub fn object(&self, name: &str) -> Option<Object<'_>> {
         self.object_by_name(name).map(|id| Object::new(self, id))
@@ -181,6 +193,7 @@ impl Mib {
         self.type_by_name.get(name).copied()
     }
 
+    /// Look up a type by name and return a borrowed handle.
     #[must_use]
     pub fn r#type(&self, name: &str) -> Option<Type<'_>> {
         self.type_by_name(name).map(|id| Type::new(self, id))
@@ -239,6 +252,7 @@ impl Mib {
         self.module_by_name.get(name).copied()
     }
 
+    /// Look up a module by name and return a borrowed handle.
     #[must_use]
     pub fn module(&self, name: &str) -> Option<Module<'_>> {
         self.module_by_name(name).map(|id| Module::new(self, id))
@@ -298,13 +312,18 @@ impl Mib {
         if exact { Some(id) } else { None }
     }
 
+    /// Look up a node by name and return a borrowed handle.
     #[must_use]
     pub fn node(&self, name: &str) -> Option<Node<'_>> {
         self.node_by_name(name).map(|id| Node::new(self, id))
     }
 
+    /// Look up a node only when the numeric OID exactly matches a tree node.
+    ///
+    /// For instance OIDs such as `ifIndex.5`, use [`Mib::lookup_oid`] or
+    /// [`Mib::resolve_node`] instead.
     #[must_use]
-    pub fn node_by_oid_handle(&self, oid: &Oid) -> Option<Node<'_>> {
+    pub fn exact_node_by_oid(&self, oid: &Oid) -> Option<Node<'_>> {
         self.node_by_oid(oid).map(|id| Node::new(self, id))
     }
 
@@ -314,8 +333,12 @@ impl Mib {
         self.tree.longest_prefix(oid)
     }
 
+    /// Look up the deepest node matching a numeric OID prefix.
+    ///
+    /// This is the handle-oriented entry point for instance OIDs such as
+    /// `ifIndex.5`.
     #[must_use]
-    pub fn longest_prefix(&self, oid: &Oid) -> Node<'_> {
+    pub fn lookup_oid(&self, oid: &Oid) -> Node<'_> {
         Node::new(self, self.longest_prefix_by_oid(oid))
     }
 
@@ -380,31 +403,41 @@ impl Mib {
         result
     }
 
-    /// Look up a node by name, qualified name (MODULE::name), or numeric OID string.
+    /// Look up a node by name, qualified name (`MODULE::name`), or OID query.
+    ///
+    /// Symbolic and numeric instance OIDs resolve to the deepest matching node
+    /// rather than requiring an exact tree match.
     pub fn resolve_node(&self, query: &str) -> Option<Node<'_>> {
         self.resolve(query).map(|id| Node::new(self, id))
     }
 
-    /// Look up a node by name, qualified name (MODULE::name), or numeric OID string.
+    /// Resolve a query to the matching node id.
+    ///
+    /// Accepted forms include:
+    /// - plain names such as `ifIndex`
+    /// - qualified names such as `IF-MIB::ifIndex`
+    /// - symbolic instance OIDs such as `ifIndex.5`
+    /// - numeric OIDs such as `1.3.6.1.2.1.2.2.1.1.5`
+    ///
+    /// OID-like queries resolve to the deepest matching node, so instance OIDs
+    /// like `ifIndex.5` resolve to the `ifIndex` node.
     pub fn resolve(&self, query: &str) -> Option<NodeId> {
-        // Qualified name: MODULE::name
-        if let Some((mod_name, item_name)) = query.split_once("::") {
-            let mod_id = self.module_by_name.get(mod_name)?;
-            return self.modules[mod_id.0 as usize].node_by_name(item_name);
-        }
-
         // Numeric OID
         let q = query.strip_prefix('.').unwrap_or(query);
         if q.starts_with(|c: char| c.is_ascii_digit()) {
             let oid: Oid = q.parse().ok()?;
-            return self.node_by_oid(&oid);
+            return Some(self.longest_prefix_by_oid(&oid));
         }
 
-        // Plain name
-        self.node_by_name(query)
+        self.resolve_oid(query)
+            .ok()
+            .map(|oid| self.longest_prefix_by_oid(&oid))
     }
 
-    /// Convert a symbolic or numeric OID string to a numeric OID.
+    /// Convert a symbolic or numeric OID query to a numeric OID.
+    ///
+    /// Accepted forms include plain names, qualified names, symbolic suffixes,
+    /// and numeric OIDs.
     pub fn resolve_oid(&self, query: &str) -> Result<Oid, ResolveOidError> {
         if query.is_empty() {
             return Err(ResolveOidError::EmptyQuery);
@@ -631,11 +664,15 @@ impl Mib {
 
     // --- Object table navigation ---
 
-    /// Returns the table object containing a row or column, or None.
+    /// Returns the containing table object for a table, row, or column.
+    /// Return the containing table object for a table, row, or column.
+    ///
+    /// Tables return themselves. Scalars and non-tabular objects return `None`.
     pub fn object_table(&self, id: ObjectId) -> Option<ObjectId> {
         let node_id = self.object_data(id).node()?;
         let node = self.tree.get(node_id);
         match node.kind {
+            Kind::Table => Some(id),
             Kind::Row => {
                 let parent = self.tree.get(node.parent?);
                 parent.object
@@ -649,34 +686,35 @@ impl Mib {
         }
     }
 
-    /// Returns the parent row object for a column, or None.
+    /// Return the associated row object for a table, row, or column.
+    ///
+    /// Tables return their child row entry. Rows return themselves. Columns
+    /// return their parent row. Scalars and non-tabular objects return `None`.
     pub fn object_row(&self, id: ObjectId) -> Option<ObjectId> {
         let node_id = self.object_data(id).node()?;
         let node = self.tree.get(node_id);
-        if node.kind != Kind::Column {
-            return None;
-        }
-        let parent = self.tree.get(node.parent?);
-        parent.object
-    }
-
-    /// Returns the row entry for a table, or None.
-    pub fn object_entry(&self, id: ObjectId) -> Option<ObjectId> {
-        let node_id = self.object_data(id).node()?;
-        let node = self.tree.get(node_id);
-        if node.kind != Kind::Table {
-            return None;
-        }
-        for &child_id in node.children.values() {
-            let child = self.tree.get(child_id);
-            if child.kind == Kind::Row {
-                return child.object;
+        match node.kind {
+            Kind::Table => {
+                for &child_id in node.children.values() {
+                    let child = self.tree.get(child_id);
+                    if child.kind == Kind::Row {
+                        return child.object;
+                    }
+                }
+                None
             }
+            Kind::Row => Some(id),
+            Kind::Column => {
+                let parent = self.tree.get(node.parent?);
+                parent.object
+            }
+            _ => None,
         }
-        None
     }
 
-    /// Returns column objects for a table or row in arc order, or empty.
+    /// Return column objects for a table or row in arc order.
+    ///
+    /// Non-tabular objects return an empty vector.
     pub fn object_columns(&self, id: ObjectId) -> Vec<ObjectId> {
         let Some(node_id) = self.object_data(id).node() else {
             return Vec::new();

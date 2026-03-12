@@ -478,8 +478,8 @@ fn fixture_tables() {
                     .filter_map(|e| {
                         let name = if let Some(oid) = e.object {
                             mib.raw().object(oid).name().to_string()
-                        } else if !e.type_name.is_empty() {
-                            e.type_name.clone()
+                        } else if !e.name.is_empty() {
+                            e.name.clone()
                         } else {
                             return None;
                         };

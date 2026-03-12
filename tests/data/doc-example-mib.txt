@@ -1,0 +1,65 @@
+DOC-EXAMPLE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC;
+
+docExampleMib MODULE-IDENTITY
+    LAST-UPDATED "202603120000Z"
+    ORGANIZATION "Example"
+    CONTACT-INFO "Example"
+    DESCRIPTION "Example module used in crate docs."
+    ::= { enterprises 99999 }
+
+DocName ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS current
+    DESCRIPTION "Example display string type."
+    SYNTAX DisplayString (SIZE (0..255))
+
+docScalars OBJECT IDENTIFIER ::= { docExampleMib 1 }
+docTables OBJECT IDENTIFIER ::= { docExampleMib 2 }
+
+docDeviceName OBJECT-TYPE
+    SYNTAX DocName
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "A scalar object."
+    ::= { docScalars 1 }
+
+docTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF DocEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Example table."
+    ::= { docTables 1 }
+
+docEntry OBJECT-TYPE
+    SYNTAX DocEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Example row."
+    INDEX { docIndex }
+    ::= { docTable 1 }
+
+DocEntry ::= SEQUENCE {
+    docIndex Integer32,
+    docDescr DisplayString
+}
+
+docIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Example index."
+    ::= { docEntry 1 }
+
+docDescr OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Example column."
+    ::= { docEntry 2 }
+
+END
