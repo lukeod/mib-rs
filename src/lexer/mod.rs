@@ -15,17 +15,17 @@ enum LexerState {
 }
 
 /// Tokenizes SMIv1/SMIv2 MIB source text.
-pub struct Lexer<'src> {
+pub struct Lexer<'src, 'cfg> {
     source: &'src [u8],
     pos: usize,
     state: LexerState,
     comment_start: usize,
     diagnostics: Vec<SpanDiagnostic>,
-    diag_config: DiagnosticConfig,
+    diag_config: &'cfg DiagnosticConfig,
 }
 
-impl<'src> Lexer<'src> {
-    pub fn new(source: &'src [u8], diag_config: DiagnosticConfig) -> Self {
+impl<'src, 'cfg> Lexer<'src, 'cfg> {
+    pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
         Lexer {
             source,
             pos: 0,
@@ -554,7 +554,7 @@ impl<'src> Lexer<'src> {
     }
 }
 
-impl<'src> Iterator for Lexer<'src> {
+impl<'src, 'cfg> Iterator for Lexer<'src, 'cfg> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
@@ -587,13 +587,15 @@ mod tests {
     use super::*;
 
     fn tokenize(input: &str) -> Vec<Token> {
-        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::default());
+        let cfg = DiagnosticConfig::default();
+        let lexer = Lexer::new(input.as_bytes(), &cfg);
         let (tokens, _) = lexer.tokenize();
         tokens
     }
 
     fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<SpanDiagnostic>) {
-        let lexer = Lexer::new(input.as_bytes(), DiagnosticConfig::verbose());
+        let cfg = DiagnosticConfig::verbose();
+        let lexer = Lexer::new(input.as_bytes(), &cfg);
         lexer.tokenize()
     }
 

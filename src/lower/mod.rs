@@ -9,16 +9,16 @@ use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Span, Statu
 use tracing::{debug, debug_span, info_span};
 
 /// LoweringContext tracks state accumulated during the lowering pass.
-pub(crate) struct LoweringContext {
+pub(crate) struct LoweringContext<'cfg> {
     pub diagnostics: Vec<Diagnostic>,
     pub language: Language,
-    pub diag_config: DiagnosticConfig,
+    pub diag_config: &'cfg DiagnosticConfig,
     line_table: Vec<usize>,
     module_name: String,
 }
 
-impl LoweringContext {
-    fn new(source: &[u8], diag_config: DiagnosticConfig) -> Self {
+impl<'cfg> LoweringContext<'cfg> {
+    fn new(source: &[u8], diag_config: &'cfg DiagnosticConfig) -> Self {
         LoweringContext {
             diagnostics: Vec::new(),
             language: Language::Unknown,
@@ -67,7 +67,7 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
     );
     let _guard = span.enter();
 
-    let mut ctx = LoweringContext::new(source, diag_config.clone());
+    let mut ctx = LoweringContext::new(source, diag_config);
 
     let mut module = ir::Module::new(module_name, ast_module.span);
     module.line_table = ctx.line_table.clone();
@@ -244,7 +244,7 @@ fn is_smiv2_import(name: &str) -> bool {
 
 fn lower_imports(
     import_clauses: &[ast::ImportClause],
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> Vec<ir::Import> {
     let mut imports = Vec::new();
 
@@ -271,7 +271,7 @@ fn lower_imports(
     imports
 }
 
-fn lower_definition(def: &ast::Definition, ctx: &mut LoweringContext) -> Option<ir::Definition> {
+fn lower_definition(def: &ast::Definition, ctx: &mut LoweringContext<'_>) -> Option<ir::Definition> {
     match def {
         ast::Definition::ObjectType(d) => {
             Some(ir::Definition::ObjectType(lower_object_type(d, ctx)))
@@ -352,7 +352,7 @@ fn optional_status_span(s: &Option<ast::StatusClause>) -> Span {
 }
 
 fn check_empty_optional(
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
     qs: &Option<ast::QuotedString>,
     span: Span,
     def_name: &str,
@@ -371,7 +371,7 @@ fn check_empty_optional(
 }
 
 fn check_empty_required(
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
     value: &str,
     span: Span,
     def_name: &str,
@@ -390,7 +390,7 @@ fn check_empty_required(
 /// Check required DESCRIPTION and optional REFERENCE for emptiness.
 /// Used by most SMIv2 definition types.
 fn check_description_reference(
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
     description: &str,
     reference: &Option<ast::QuotedString>,
     span: Span,
@@ -417,7 +417,7 @@ fn check_description_reference(
 /// Check optional DESCRIPTION and optional REFERENCE for emptiness.
 /// Used by definition types where DESCRIPTION is optional (e.g. OBJECT-TYPE, TRAP-TYPE).
 fn check_optional_description_reference(
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
     description: &Option<ast::QuotedString>,
     reference: &Option<ast::QuotedString>,
     span: Span,
@@ -441,7 +441,7 @@ fn check_optional_description_reference(
     );
 }
 
-fn check_module_name_suffix(ctx: &mut LoweringContext, module: &ir::Module) {
+fn check_module_name_suffix(ctx: &mut LoweringContext<'_>, module: &ir::Module) {
     if module.language != Language::SMIv2 || base_modules::is_base_module(&module.name) {
         return;
     }
@@ -454,7 +454,7 @@ fn check_module_name_suffix(ctx: &mut LoweringContext, module: &ir::Module) {
     }
 }
 
-fn check_module_identity(ctx: &mut LoweringContext, ast_module: &ast::Module, module: &ir::Module) {
+fn check_module_identity(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module, module: &ir::Module) {
     let mut module_identities: Vec<(usize, &ir::ModuleIdentity)> = Vec::new();
     for (i, def) in module.definitions.iter().enumerate() {
         if let ir::Definition::ModuleIdentity(mi) = def {
@@ -518,7 +518,7 @@ fn check_module_identity(ctx: &mut LoweringContext, ast_module: &ast::Module, mo
     }
 }
 
-fn check_revision_last_updated(ctx: &mut LoweringContext, mi: &ir::ModuleIdentity) {
+fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ir::ModuleIdentity) {
     if mi.last_updated.is_empty() {
         return;
     }
@@ -534,7 +534,7 @@ fn check_revision_last_updated(ctx: &mut LoweringContext, mi: &ir::ModuleIdentit
     );
 }
 
-fn check_macro_imports(ctx: &mut LoweringContext, ast_module: &ast::Module, module: &ir::Module) {
+fn check_macro_imports(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module, module: &ir::Module) {
     let mut imported_macros = HashSet::new();
     for clause in &ast_module.imports {
         for sym in &clause.symbols {
@@ -600,7 +600,7 @@ fn check_macro_imports(ctx: &mut LoweringContext, ast_module: &ast::Module, modu
 
 // --- Definition lowering ---
 
-fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext) -> ir::ObjectType {
+fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext<'_>) -> ir::ObjectType {
     let name = &def.name.name;
     check_optional_description_reference(ctx, &def.description, &def.reference, def.span, name);
     check_empty_optional(ctx, &def.units, def.span, name, "UNITS", DiagCode::EmptyUnits);
@@ -659,7 +659,7 @@ fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext) -> ir:
 
 fn lower_module_identity(
     def: &ast::ModuleIdentityDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::ModuleIdentity {
     let name = &def.name.name;
     check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
@@ -690,7 +690,7 @@ fn lower_module_identity(
 
 fn lower_object_identity(
     def: &ast::ObjectIdentityDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::ObjectIdentity {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -707,7 +707,7 @@ fn lower_object_identity(
 
 fn lower_notification_type(
     def: &ast::NotificationTypeDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::Notification {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -726,7 +726,7 @@ fn lower_notification_type(
     }
 }
 
-fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext) -> ir::Notification {
+fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext<'_>) -> ir::Notification {
     let name = &def.name.name;
     check_optional_description_reference(ctx, &def.description, &def.reference, def.span, name);
 
@@ -748,7 +748,7 @@ fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext) -> ir::Not
 
 fn lower_textual_convention(
     def: &ast::TextualConventionDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::TypeDef {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -772,7 +772,7 @@ fn lower_textual_convention(
     }
 }
 
-fn lower_type_assignment(def: &ast::TypeAssignmentDef, ctx: &mut LoweringContext) -> ir::TypeDef {
+fn lower_type_assignment(def: &ast::TypeAssignmentDef, ctx: &mut LoweringContext<'_>) -> ir::TypeDef {
     ir::TypeDef {
         name: def.name.name.clone(),
         span: def.span,
@@ -793,7 +793,7 @@ fn lower_type_assignment(def: &ast::TypeAssignmentDef, ctx: &mut LoweringContext
 
 fn lower_value_assignment(
     def: &ast::ValueAssignmentDef,
-    _ctx: &mut LoweringContext,
+    _ctx: &mut LoweringContext<'_>,
 ) -> ir::ValueAssignment {
     ir::ValueAssignment {
         name: def.name.name.clone(),
@@ -804,7 +804,7 @@ fn lower_value_assignment(
     }
 }
 
-fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext) -> ir::ObjectGroup {
+fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext<'_>) -> ir::ObjectGroup {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
@@ -821,7 +821,7 @@ fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext) -> i
 
 fn lower_notification_group(
     def: &ast::NotificationGroupDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::NotificationGroup {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -839,7 +839,7 @@ fn lower_notification_group(
 
 fn lower_module_compliance(
     def: &ast::ModuleComplianceDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::ModuleCompliance {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -863,7 +863,7 @@ fn lower_module_compliance(
 
 fn lower_compliance_module(
     m: &ast::ComplianceModule,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::ComplianceModule {
     let mut groups = Vec::new();
     let mut objects = Vec::new();
@@ -900,7 +900,7 @@ fn lower_compliance_module(
 
 fn lower_compliance_object(
     o: &ast::ComplianceObject,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::ComplianceObject {
     ir::ComplianceObject {
         object: o.object.name.clone(),
@@ -917,7 +917,7 @@ fn lower_compliance_object(
 
 fn lower_agent_capabilities(
     def: &ast::AgentCapabilitiesDef,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> ir::AgentCapabilities {
     let name = &def.name.name;
     check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
@@ -940,7 +940,7 @@ fn lower_agent_capabilities(
     }
 }
 
-fn lower_supports_module(s: &ast::SupportsModule, ctx: &mut LoweringContext) -> ir::SupportsModule {
+fn lower_supports_module(s: &ast::SupportsModule, ctx: &mut LoweringContext<'_>) -> ir::SupportsModule {
     let variations = s
         .variations
         .iter()
@@ -955,7 +955,7 @@ fn lower_supports_module(s: &ast::SupportsModule, ctx: &mut LoweringContext) -> 
     }
 }
 
-fn lower_variation(v: &ast::Variation, ctx: &mut LoweringContext) -> ir::Variation {
+fn lower_variation(v: &ast::Variation, ctx: &mut LoweringContext<'_>) -> ir::Variation {
     ir::Variation {
         name: v.name.name.clone(),
         syntax: v.syntax.as_ref().map(|s| lower_type_syntax(&s.syntax, ctx)),
@@ -973,7 +973,7 @@ fn lower_variation(v: &ast::Variation, ctx: &mut LoweringContext) -> ir::Variati
 
 // --- Type syntax lowering ---
 
-fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext) -> ir::TypeSyntax {
+fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) -> ir::TypeSyntax {
     match syntax {
         ast::TypeSyntax::TypeRef(ident) => ir::TypeSyntax::TypeRef {
             name: ident.name.clone(),
@@ -1167,7 +1167,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext) -> ir:
     }
 }
 
-fn lower_constraint(constraint: &ast::Constraint, ctx: &mut LoweringContext) -> ir::Constraint {
+fn lower_constraint(constraint: &ast::Constraint, ctx: &mut LoweringContext<'_>) -> ir::Constraint {
     match constraint {
         ast::Constraint::Size { ranges, span } => ir::Constraint::Size {
             ranges: lower_ranges(ranges, ctx),
@@ -1180,11 +1180,11 @@ fn lower_constraint(constraint: &ast::Constraint, ctx: &mut LoweringContext) -> 
     }
 }
 
-fn lower_ranges(ranges: &[ast::Range], ctx: &mut LoweringContext) -> Vec<ir::Range> {
+fn lower_ranges(ranges: &[ast::Range], ctx: &mut LoweringContext<'_>) -> Vec<ir::Range> {
     ranges.iter().map(|r| lower_range(r, ctx)).collect()
 }
 
-fn lower_range(r: &ast::Range, ctx: &mut LoweringContext) -> ir::Range {
+fn lower_range(r: &ast::Range, ctx: &mut LoweringContext<'_>) -> ir::Range {
     ir::Range {
         min: lower_range_value(&r.min, ctx),
         max: r.max.as_ref().map(|v| lower_range_value(v, ctx)),
@@ -1192,7 +1192,7 @@ fn lower_range(r: &ast::Range, ctx: &mut LoweringContext) -> ir::Range {
     }
 }
 
-fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext) -> ir::RangeValue {
+fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> ir::RangeValue {
     match value {
         ast::RangeValue::Signed(v) => ir::RangeValue::Signed(*v),
         ast::RangeValue::Unsigned(v) => ir::RangeValue::Unsigned(*v),
@@ -1277,12 +1277,12 @@ fn lower_index_clause(clause: &Option<ast::IndexClause>) -> Vec<ir::IndexItem> {
 
 fn lower_optional_defval(
     clause: &Option<ast::DefValClause>,
-    ctx: &mut LoweringContext,
+    ctx: &mut LoweringContext<'_>,
 ) -> Option<ir::DefVal> {
     clause.as_ref().map(|c| lower_defval(&c.value, ctx))
 }
 
-fn lower_defval(content: &ast::DefVal, _ctx: &mut LoweringContext) -> ir::DefVal {
+fn lower_defval(content: &ast::DefVal, _ctx: &mut LoweringContext<'_>) -> ir::DefVal {
     match content {
         ast::DefVal::Integer(v) => ir::DefVal::Integer(*v),
         ast::DefVal::Unsigned(v) => ir::DefVal::Unsigned(*v),

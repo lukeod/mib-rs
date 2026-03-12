@@ -381,7 +381,7 @@ fn decode_modules(
         return Vec::new();
     }
 
-    let ast_modules = parser::parse(content, diag_config.clone());
+    let ast_modules = parser::parse(content, diag_config);
     let path_str = source_path.to_string_lossy();
     debug!(
         target: "mib_rs::load",

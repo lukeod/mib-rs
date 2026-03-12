@@ -10,7 +10,7 @@ use common::{collect_mib_files, corpus_dir};
 fn parse_and_lower(path: &Path) -> Vec<mib_rs::ir::Module> {
     let content = std::fs::read(path).unwrap();
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(&content, config.clone());
+    let ast_modules = mib_rs::parser::parse(&content, &config);
     ast_modules
         .into_iter()
         .map(|m| mib_rs::lower::lower(m, &content, &config))
@@ -142,7 +142,7 @@ testMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, config.clone());
+    let ast_modules = mib_rs::parser::parse(source, &config);
     assert_eq!(ast_modules.len(), 1);
     let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
     assert_eq!(module.language, mib_rs::types::Language::SMIv2);
@@ -170,7 +170,7 @@ testObject OBJECT-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, config.clone());
+    let ast_modules = mib_rs::parser::parse(source, &config);
     assert_eq!(ast_modules.len(), 1);
     let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
@@ -193,7 +193,7 @@ testTrap TRAP-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, config.clone());
+    let ast_modules = mib_rs::parser::parse(source, &config);
     let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
 
     assert_eq!(module.definitions.len(), 1);

@@ -19,6 +19,6 @@ pub fn tokenize_with_config(
     source: &[u8],
     diag_config: &DiagnosticConfig,
 ) -> (Vec<Token>, Vec<SpanDiagnostic>) {
-    let lexer = crate::lexer::Lexer::new(source, diag_config.clone());
+    let lexer = crate::lexer::Lexer::new(source, diag_config);
     lexer.tokenize()
 }

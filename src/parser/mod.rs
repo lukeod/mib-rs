@@ -19,17 +19,17 @@ type TcBody = (
 ///
 /// Consumes tokens from a lexer and produces AST modules with collected
 /// diagnostics. Handles both SMIv1 and SMIv2, plus common vendor deviations.
-pub struct Parser<'src> {
+pub struct Parser<'src, 'cfg> {
     source: &'src [u8],
-    lexer: Lexer<'src>,
+    lexer: Lexer<'src, 'cfg>,
     buf: [Token; 3],
     last_end: ByteOffset,
     diagnostics: Vec<SpanDiagnostic>,
-    diag_config: DiagnosticConfig,
+    diag_config: &'cfg DiagnosticConfig,
     eof_token: Token,
 }
 
-fn next_non_comment(lexer: &mut Lexer<'_>) -> Token {
+fn next_non_comment(lexer: &mut Lexer<'_, '_>) -> Token {
     loop {
         let tok = lexer.next_token();
         if tok.kind != TokenKind::Comment {
@@ -38,9 +38,9 @@ fn next_non_comment(lexer: &mut Lexer<'_>) -> Token {
     }
 }
 
-impl<'src> Parser<'src> {
-    pub fn new(source: &'src [u8], diag_config: DiagnosticConfig) -> Self {
-        let mut lexer = Lexer::new(source, diag_config.clone());
+impl<'src, 'cfg> Parser<'src, 'cfg> {
+    pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
+        let mut lexer = Lexer::new(source, diag_config);
         let eof_span = Span::from_usize_offsets(source.len(), source.len());
         let eof_token = Token {
             kind: TokenKind::Eof,
@@ -2302,7 +2302,7 @@ fn strip_string_literal(s: &str) -> &str {
 }
 
 /// Parse source bytes into AST modules.
-pub fn parse(source: &[u8], diag_config: DiagnosticConfig) -> Vec<Module> {
+pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
     let span = info_span!(
         target: "mib_rs::parser",
         "parse",
@@ -2328,11 +2328,11 @@ mod tests {
     use super::*;
 
     fn parse_str(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), DiagnosticConfig::default())
+        parse(input.as_bytes(), &DiagnosticConfig::default())
     }
 
     fn parse_strict(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), DiagnosticConfig::verbose())
+        parse(input.as_bytes(), &DiagnosticConfig::verbose())
     }
 
     #[test]
