@@ -13,7 +13,7 @@ use crate::types::{Severity, Span, SpanDiagnostic};
 /// Top-level AST node for a parsed MIB module.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Module {
-    pub name: Ident,
+    pub name: Option<Ident>,
     pub imports: Vec<ImportClause>,
     pub body: Vec<Definition>,
     pub span: Span,
@@ -23,7 +23,7 @@ pub struct Module {
 impl Module {
     pub fn new(name: Ident, span: Span) -> Self {
         Module {
-            name,
+            name: Some(name),
             imports: Vec::new(),
             body: Vec::new(),
             span,

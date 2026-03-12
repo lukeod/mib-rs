@@ -50,7 +50,11 @@ impl LoweringContext {
 /// needed after lowering. Source is the original source text used to compute
 /// diagnostic line/column from byte offset spans.
 pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticConfig) -> ir::Module {
-    let module_name = ast_module.name.name.clone();
+    let module_name = ast_module
+        .name
+        .as_ref()
+        .map(|id| id.name.clone())
+        .unwrap_or_default();
     let span = info_span!(
         target: "mib_rs::lower",
         "lower",

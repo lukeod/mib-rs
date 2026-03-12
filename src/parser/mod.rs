@@ -388,9 +388,9 @@ impl<'src> Parser<'src> {
 
         while !self.is_eof() {
             let module = self.parse_one_module();
-            let is_unknown = module.name.name == "UNKNOWN";
+            let failed = module.name.is_none();
             modules.push(module);
-            if is_unknown {
+            if failed {
                 break;
             }
         }
@@ -421,10 +421,7 @@ impl<'src> Parser<'src> {
                 );
                 let span = Span::new(start, self.current_span().end);
                 return Module {
-                    name: Ident {
-                        name: "UNKNOWN".to_string(),
-                        span,
-                    },
+                    name: None,
                     imports: Vec::new(),
                     body: Vec::new(),
                     span,
@@ -518,7 +515,7 @@ impl<'src> Parser<'src> {
         );
 
         Module {
-            name,
+            name: Some(name),
             imports,
             body,
             span,
@@ -2342,7 +2339,7 @@ mod tests {
     fn empty_input() {
         let modules = parse_str("");
         assert_eq!(modules.len(), 1);
-        assert_eq!(modules[0].name.name, "UNKNOWN");
+        assert!(modules[0].name.is_none());
     }
 
     #[test]
@@ -2350,7 +2347,7 @@ mod tests {
         let input = "TEST-MIB DEFINITIONS ::= BEGIN\nEND\n";
         let modules = parse_str(input);
         assert_eq!(modules.len(), 1);
-        assert_eq!(modules[0].name.name, "TEST-MIB");
+        assert_eq!(modules[0].name.as_ref().unwrap().name, "TEST-MIB");
         assert!(modules[0].imports.is_empty());
         assert!(modules[0].body.is_empty());
     }
@@ -2892,8 +2889,8 @@ END
 "#;
         let modules = parse_str(input);
         assert_eq!(modules.len(), 2);
-        assert_eq!(modules[0].name.name, "MOD-A");
-        assert_eq!(modules[1].name.name, "MOD-B");
+        assert_eq!(modules[0].name.as_ref().unwrap().name, "MOD-A");
+        assert_eq!(modules[1].name.as_ref().unwrap().name, "MOD-B");
     }
 
     #[test]
@@ -3323,7 +3320,7 @@ END
 END
 "#;
         let modules = parse_str(input);
-        assert_eq!(modules[0].name.name, "TEST-MIB");
+        assert_eq!(modules[0].name.as_ref().unwrap().name, "TEST-MIB");
         assert!(
             modules[0]
                 .diagnostics

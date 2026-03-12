@@ -113,7 +113,7 @@ fn parse_snmpv2_smi() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "SNMPv2-SMI");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "SNMPv2-SMI");
     assert!(
         parse_errors(&modules).is_empty(),
         "SNMPv2-SMI had parse errors"
@@ -163,7 +163,7 @@ fn parse_if_mib() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "IF-MIB");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "IF-MIB");
     assert!(parse_errors(&modules).is_empty());
 
     // IF-MIB has MODULE-IDENTITY, many OBJECT-TYPEs, OBJECT-GROUPs, MODULE-COMPLIANCE
@@ -192,7 +192,7 @@ fn parse_snmpv2_tc() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "SNMPv2-TC");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "SNMPv2-TC");
     assert!(parse_errors(&modules).is_empty());
 
     // SNMPv2-TC defines many TEXTUAL-CONVENTIONs
@@ -212,7 +212,7 @@ fn parse_snmpv2_conf() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "SNMPv2-CONF");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "SNMPv2-CONF");
     assert!(parse_errors(&modules).is_empty());
 
     // SNMPv2-CONF defines MACRO definitions
@@ -235,7 +235,7 @@ fn parse_rfc1155_smi() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "RFC1155-SMI");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "RFC1155-SMI");
     assert!(parse_errors(&modules).is_empty());
 }
 
@@ -247,7 +247,7 @@ fn parse_entity_mib() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "ENTITY-MIB");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "ENTITY-MIB");
     assert!(parse_errors(&modules).is_empty());
 
     // ENTITY-MIB has AGENT-CAPABILITIES
@@ -266,7 +266,7 @@ fn parse_cisco_smi() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "CISCO-SMI");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "CISCO-SMI");
     assert!(parse_errors(&modules).is_empty());
 }
 
@@ -302,8 +302,8 @@ fn parse_multimodule_file() {
         modules.len()
     );
     for m in &modules {
-        assert_ne!(
-            m.name.name, "UNKNOWN",
+        assert!(
+            m.name.is_some(),
             "all modules should parse successfully"
         );
     }
@@ -317,7 +317,7 @@ fn parse_fs_mib_tolerates_missing_commas() {
     }
     let modules = parse_file(&path);
     assert_eq!(modules.len(), 1);
-    assert_eq!(modules[0].name.name, "FS-MIB");
+    assert_eq!(modules[0].name.as_ref().unwrap().name, "FS-MIB");
     assert!(
         parse_errors(&modules).is_empty(),
         "FS-MIB should parse without errors (missing commas tolerated)"
