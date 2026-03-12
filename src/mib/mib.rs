@@ -7,10 +7,14 @@ use crate::types::{BaseType, Diagnostic, Kind, Severity};
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
 use super::group::GroupData;
+use super::handle::{
+    Capability, Compliance, Group, HandleIter, Module, Node, Notification, Object, Type,
+};
 use super::module::ModuleData;
 use super::node::{NodeData, OidTree};
 use super::notification::NotificationData;
 use super::object::ObjectData;
+use super::raw::RawMib;
 use super::symbol::Symbol;
 use super::typedef::TypeData;
 use super::types::*;
@@ -67,39 +71,52 @@ impl Mib {
         &self.tree
     }
 
+    pub fn raw(&self) -> RawMib<'_> {
+        RawMib::new(self)
+    }
+
+    pub fn node_data(&self, id: NodeId) -> &NodeData {
+        self.tree.get(id)
+    }
+
     #[must_use]
     pub fn root(&self) -> NodeId {
         self.tree.root()
     }
 
+    #[must_use]
+    pub fn root_node(&self) -> Node<'_> {
+        Node::new(self, self.root())
+    }
+
     // --- Entity accessors ---
 
-    pub fn object(&self, id: ObjectId) -> &ObjectData {
+    pub fn object_data(&self, id: ObjectId) -> &ObjectData {
         &self.objects[id.0 as usize]
     }
 
     #[must_use]
-    pub fn type_(&self, id: TypeId) -> &TypeData {
+    pub fn type_data(&self, id: TypeId) -> &TypeData {
         &self.types[id.0 as usize]
     }
 
-    pub fn notification(&self, id: NotificationId) -> &NotificationData {
+    pub fn notification_data(&self, id: NotificationId) -> &NotificationData {
         &self.notifications[id.0 as usize]
     }
 
-    pub fn group(&self, id: GroupId) -> &GroupData {
+    pub fn group_data(&self, id: GroupId) -> &GroupData {
         &self.groups[id.0 as usize]
     }
 
-    pub fn compliance(&self, id: ComplianceId) -> &ComplianceData {
+    pub fn compliance_data(&self, id: ComplianceId) -> &ComplianceData {
         &self.compliances[id.0 as usize]
     }
 
-    pub fn capability(&self, id: CapabilityId) -> &CapabilityData {
+    pub fn capability_data(&self, id: CapabilityId) -> &CapabilityData {
         &self.capabilities[id.0 as usize]
     }
 
-    pub fn module(&self, id: ModuleId) -> &ModuleData {
+    pub fn module_data(&self, id: ModuleId) -> &ModuleData {
         &self.modules[id.0 as usize]
     }
 
@@ -153,10 +170,20 @@ impl Mib {
         self.find_in_nodes(name, |n| n.object)
     }
 
+    #[must_use]
+    pub fn object(&self, name: &str) -> Option<Object<'_>> {
+        self.object_by_name(name).map(|id| Object::new(self, id))
+    }
+
     /// Look up a type by name.
     #[must_use]
     pub fn type_by_name(&self, name: &str) -> Option<TypeId> {
         self.type_by_name.get(name).copied()
+    }
+
+    #[must_use]
+    pub fn r#type(&self, name: &str) -> Option<Type<'_>> {
+        self.type_by_name(name).map(|id| Type::new(self, id))
     }
 
     /// Look up a notification by name.
@@ -165,10 +192,21 @@ impl Mib {
         self.find_in_nodes(name, |n| n.notification)
     }
 
+    #[must_use]
+    pub fn notification(&self, name: &str) -> Option<Notification<'_>> {
+        self.notification_by_name(name)
+            .map(|id| Notification::new(self, id))
+    }
+
     /// Look up a group by name.
     #[must_use]
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
         self.find_in_nodes(name, |n| n.group)
+    }
+
+    #[must_use]
+    pub fn group(&self, name: &str) -> Option<Group<'_>> {
+        self.group_by_name(name).map(|id| Group::new(self, id))
     }
 
     /// Look up a compliance by name.
@@ -177,16 +215,33 @@ impl Mib {
         self.find_in_nodes(name, |n| n.compliance)
     }
 
+    #[must_use]
+    pub fn compliance(&self, name: &str) -> Option<Compliance<'_>> {
+        self.compliance_by_name(name)
+            .map(|id| Compliance::new(self, id))
+    }
+
     /// Look up a capability by name.
     #[must_use]
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
         self.find_in_nodes(name, |n| n.capability)
     }
 
+    #[must_use]
+    pub fn capability(&self, name: &str) -> Option<Capability<'_>> {
+        self.capability_by_name(name)
+            .map(|id| Capability::new(self, id))
+    }
+
     /// Look up a module by name.
     #[must_use]
     pub fn module_by_name(&self, name: &str) -> Option<ModuleId> {
         self.module_by_name.get(name).copied()
+    }
+
+    #[must_use]
+    pub fn module(&self, name: &str) -> Option<Module<'_>> {
+        self.module_by_name(name).map(|id| Module::new(self, id))
     }
 
     /// Look up a symbol by name. Priority: objects, notifications, groups,
@@ -243,10 +298,25 @@ impl Mib {
         if exact { Some(id) } else { None }
     }
 
+    #[must_use]
+    pub fn node(&self, name: &str) -> Option<Node<'_>> {
+        self.node_by_name(name).map(|id| Node::new(self, id))
+    }
+
+    #[must_use]
+    pub fn node_by_oid_handle(&self, oid: &Oid) -> Option<Node<'_>> {
+        self.node_by_oid(oid).map(|id| Node::new(self, id))
+    }
+
     /// Find the deepest node matching a prefix of the OID, starting from root.
     #[must_use]
     pub fn longest_prefix_by_oid(&self, oid: &Oid) -> NodeId {
         self.tree.longest_prefix(oid)
+    }
+
+    #[must_use]
+    pub fn longest_prefix(&self, oid: &Oid) -> Node<'_> {
+        Node::new(self, self.longest_prefix_by_oid(oid))
     }
 
     /// Depth-first iterator over a subtree rooted at `id`.
@@ -308,6 +378,11 @@ impl Mib {
             result.push_str(&arc.to_string());
         }
         result
+    }
+
+    /// Look up a node by name, qualified name (MODULE::name), or numeric OID string.
+    pub fn resolve_node(&self, query: &str) -> Option<Node<'_>> {
+        self.resolve(query).map(|id| Node::new(self, id))
     }
 
     /// Look up a node by name, qualified name (MODULE::name), or numeric OID string.
@@ -380,7 +455,7 @@ impl Mib {
     /// first, then imported symbols resolved from their source modules.
     /// Names that are also own definitions are yielded only once.
     pub fn available_symbols(&self, mod_id: ModuleId) -> Vec<Symbol> {
-        let module = self.module(mod_id);
+        let module = self.module_data(mod_id);
         let mut result = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
@@ -400,7 +475,7 @@ impl Mib {
                 let Some(&source_mod_id) = module.resolved_imports.get(&is.name) else {
                     continue;
                 };
-                let source = self.module(source_mod_id);
+                let source = self.module_data(source_mod_id);
                 if let Some(sym) = source.symbol(&is.name) {
                     result.push(sym);
                 }
@@ -411,6 +486,28 @@ impl Mib {
     }
 
     // --- Collection accessors ---
+
+    pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
+        HandleIter::new(
+            self,
+            (0..self.modules.len()).map(|i| ModuleId::new(i as u32)),
+        )
+    }
+
+    pub fn objects(&self) -> HandleIter<'_, Object<'_>, impl Iterator<Item = ObjectId>> {
+        HandleIter::new(
+            self,
+            (0..self.objects.len()).map(|i| ObjectId::new(i as u32)),
+        )
+    }
+
+    pub fn types(&self) -> HandleIter<'_, Type<'_>, impl Iterator<Item = TypeId>> {
+        HandleIter::new(self, (0..self.types.len()).map(|i| TypeId::new(i as u32)))
+    }
+
+    pub fn nodes(&self) -> HandleIter<'_, Node<'_>, impl Iterator<Item = NodeId>> {
+        HandleIter::new(self, self.tree.all_nodes())
+    }
 
     pub fn modules_slice(&self) -> &[ModuleData] {
         &self.modules
@@ -478,16 +575,32 @@ impl Mib {
         self.objects_by_kind(Kind::Table)
     }
 
+    pub fn table_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.tables().into_iter().map(|id| Object::new(self, id))
+    }
+
     pub fn scalars(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Scalar)
+    }
+
+    pub fn scalar_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.scalars().into_iter().map(|id| Object::new(self, id))
     }
 
     pub fn columns(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Column)
     }
 
+    pub fn column_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.columns().into_iter().map(|id| Object::new(self, id))
+    }
+
     pub fn rows(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Row)
+    }
+
+    pub fn row_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.rows().into_iter().map(|id| Object::new(self, id))
     }
 
     /// Returns all objects whose resolved type has the given name.
@@ -520,7 +633,7 @@ impl Mib {
 
     /// Returns the table object containing a row or column, or None.
     pub fn object_table(&self, id: ObjectId) -> Option<ObjectId> {
-        let node_id = self.object(id).node()?;
+        let node_id = self.object_data(id).node()?;
         let node = self.tree.get(node_id);
         match node.kind {
             Kind::Row => {
@@ -538,7 +651,7 @@ impl Mib {
 
     /// Returns the parent row object for a column, or None.
     pub fn object_row(&self, id: ObjectId) -> Option<ObjectId> {
-        let node_id = self.object(id).node()?;
+        let node_id = self.object_data(id).node()?;
         let node = self.tree.get(node_id);
         if node.kind != Kind::Column {
             return None;
@@ -549,7 +662,7 @@ impl Mib {
 
     /// Returns the row entry for a table, or None.
     pub fn object_entry(&self, id: ObjectId) -> Option<ObjectId> {
-        let node_id = self.object(id).node()?;
+        let node_id = self.object_data(id).node()?;
         let node = self.tree.get(node_id);
         if node.kind != Kind::Table {
             return None;
@@ -565,7 +678,7 @@ impl Mib {
 
     /// Returns column objects for a table or row in arc order, or empty.
     pub fn object_columns(&self, id: ObjectId) -> Vec<ObjectId> {
-        let Some(node_id) = self.object(id).node() else {
+        let Some(node_id) = self.object_data(id).node() else {
             return Vec::new();
         };
         let node = self.tree.get(node_id);
@@ -602,12 +715,17 @@ impl Mib {
         self.effective_indexes_inner(id, &mut visited)
     }
 
+    pub(crate) fn effective_indexes_source(&self, id: ObjectId) -> Option<ObjectId> {
+        let mut visited = Vec::new();
+        self.effective_indexes_source_inner(id, &mut visited)
+    }
+
     fn effective_indexes_inner(
         &self,
         id: ObjectId,
         visited: &mut Vec<ObjectId>,
     ) -> Vec<IndexEntry> {
-        let obj = self.object(id);
+        let obj = self.object_data(id);
         let Some(node_id) = obj.node() else {
             return Vec::new();
         };
@@ -625,6 +743,27 @@ impl Mib {
             return self.effective_indexes_inner(aug_id, visited);
         }
         Vec::new()
+    }
+
+    fn effective_indexes_source_inner(
+        &self,
+        id: ObjectId,
+        visited: &mut Vec<ObjectId>,
+    ) -> Option<ObjectId> {
+        let obj = self.object_data(id);
+        let node_id = obj.node()?;
+        if self.tree.get(node_id).kind != Kind::Row {
+            return None;
+        }
+        if !obj.index.is_empty() {
+            return Some(id);
+        }
+        let aug_id = obj.augments?;
+        if visited.contains(&id) {
+            return None;
+        }
+        visited.push(id);
+        self.effective_indexes_source_inner(aug_id, visited)
     }
 
     // --- Object kind predicates ---
@@ -663,7 +802,7 @@ impl Mib {
     }
 
     fn object_kind(&self, id: ObjectId) -> Kind {
-        match self.object(id).node() {
+        match self.object_data(id).node() {
             Some(node_id) => self.tree.get(node_id).kind,
             None => Kind::Unknown,
         }

@@ -69,12 +69,12 @@ struct DirSource {
 /// Create a Source that recursively indexes a directory tree.
 /// Module names are derived from file content (scanning for DEFINITIONS headers),
 /// not from filenames. First match wins for duplicate names.
-pub fn dir_source(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
-    dir_source_with_config(root, SourceConfig::default())
+pub fn dir(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
+    dir_with_config(root, SourceConfig::default())
 }
 
 /// Create a Source with custom configuration.
-pub fn dir_source_with_config(
+pub fn dir_with_config(
     root: impl AsRef<Path>,
     config: SourceConfig,
 ) -> io::Result<Box<dyn Source>> {
@@ -91,6 +91,14 @@ pub fn dir_source_with_config(
         root: root.to_path_buf(),
         index,
     }))
+}
+
+pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
+    let mut sources = Vec::new();
+    for root in roots {
+        sources.push(dir(root)?);
+    }
+    Ok(chain(sources))
 }
 
 impl Source for DirSource {
@@ -123,7 +131,7 @@ struct MultiSource {
 /// Combine multiple sources into one.
 /// Find() tries each source in order, returning the first match.
 /// ListModules() aggregates from all sources, deduplicating.
-pub fn multi_source(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
+pub fn chain(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
     Box::new(MultiSource { sources })
 }
 
@@ -150,6 +158,68 @@ impl Source for MultiSource {
         }
         Ok(names)
     }
+}
+
+struct MemorySource {
+    modules: HashMap<String, (PathBuf, Vec<u8>)>,
+}
+
+pub fn memory(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Box<dyn Source> {
+    memory_modules([(name.into(), bytes.into())])
+}
+
+pub fn memory_modules(
+    modules: impl IntoIterator<Item = (impl Into<String>, impl Into<Vec<u8>>)>,
+) -> Box<dyn Source> {
+    let mut map = HashMap::new();
+    for (name, bytes) in modules {
+        let name = name.into();
+        map.insert(
+            name.clone(),
+            (PathBuf::from(format!("<memory:{name}>")), bytes.into()),
+        );
+    }
+    Box::new(MemorySource { modules: map })
+}
+
+pub fn embedded(name: impl Into<String>, bytes: &'static [u8]) -> Box<dyn Source> {
+    memory(name, bytes)
+}
+
+pub fn embedded_modules(
+    modules: impl IntoIterator<Item = (impl Into<String>, &'static [u8])>,
+) -> Box<dyn Source> {
+    memory_modules(modules)
+}
+
+impl Source for MemorySource {
+    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+        Ok(self.modules.get(name).map(|(path, content)| FindResult {
+            content: content.clone(),
+            path: path.clone(),
+        }))
+    }
+
+    fn list_modules(&self) -> io::Result<Vec<String>> {
+        let mut names: Vec<String> = self.modules.keys().cloned().collect();
+        names.sort();
+        Ok(names)
+    }
+}
+
+pub fn dir_source(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
+    dir(root)
+}
+
+pub fn dir_source_with_config(
+    root: impl AsRef<Path>,
+    config: SourceConfig,
+) -> io::Result<Box<dyn Source>> {
+    dir_with_config(root, config)
+}
+
+pub fn multi_source(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
+    chain(sources)
 }
 
 /// Build a module name -> relative path index by walking a directory tree.

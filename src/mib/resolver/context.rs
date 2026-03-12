@@ -242,7 +242,7 @@ impl ResolverContext {
         name: &str,
     ) -> Option<(ObjectId, bool)> {
         if let Some(&resolved_mod) = self.module_to_resolved.get(&mod_id)
-            && let Some(obj_id) = self.mib.module(resolved_mod).object_by_name(name)
+            && let Some(obj_id) = self.mib.raw().module(resolved_mod).object_by_name(name)
         {
             return Some((obj_id, false));
         }
@@ -252,7 +252,7 @@ impl ResolverContext {
             .get(&mod_id)
             .and_then(|imps| imps.get(name))
             && let Some(&source_resolved) = self.module_to_resolved.get(&source_ir)
-            && let Some(obj_id) = self.mib.module(source_resolved).object_by_name(name)
+            && let Some(obj_id) = self.mib.raw().module(source_resolved).object_by_name(name)
         {
             return Some((obj_id, true));
         }

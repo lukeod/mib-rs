@@ -2,7 +2,7 @@
 
 mod common;
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::Oid;
 use mib_rs::source::dir_source;
 use mib_rs::types::{
@@ -11,13 +11,13 @@ use mib_rs::types::{
 
 use common::{corpus_dir, problems_dir};
 
-fn load_corpus(modules: &[&str]) -> mib_rs::load::LoadResult {
+fn load_corpus(modules: &[&str]) -> mib_rs::Mib {
     let dir = corpus_dir();
     if !dir.exists() {
         panic!("corpus dir not found: {}", dir.display());
     }
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Permissive)
         .diagnostic_config(DiagnosticConfig::silent())
@@ -25,29 +25,26 @@ fn load_corpus(modules: &[&str]) -> mib_rs::load::LoadResult {
     load(opts).expect("load failed")
 }
 
-fn load_all_corpus() -> mib_rs::load::LoadResult {
+fn load_all_corpus() -> mib_rs::Mib {
     let dir = corpus_dir();
     if !dir.exists() {
         panic!("corpus dir not found: {}", dir.display());
     }
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Permissive)
         .diagnostic_config(DiagnosticConfig::silent());
     load(opts).expect("load failed")
 }
 
-fn load_corpus_with_diags(
-    modules: &[&str],
-    strictness: ResolverStrictness,
-) -> mib_rs::load::LoadResult {
+fn load_corpus_with_diags(modules: &[&str], strictness: ResolverStrictness) -> mib_rs::Mib {
     let dir = corpus_dir();
     if !dir.exists() {
         panic!("corpus dir not found: {}", dir.display());
     }
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(strictness)
         .diagnostic_config(DiagnosticConfig::verbose())
@@ -60,11 +57,11 @@ fn load_corpus_with_diags(
 #[test]
 fn load_single_module() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // IF-MIB should be present
     let mod_id = mib.module_by_name("IF-MIB").expect("IF-MIB not found");
-    let module = mib.module(mod_id);
+    let module = mib.raw().module(mod_id);
     assert_eq!(module.name(), "IF-MIB");
     assert_eq!(module.language(), Language::SMIv2);
 
@@ -82,8 +79,8 @@ fn load_single_module() {
 #[test]
 fn load_multiple_modules() {
     let r = load_corpus(&["IF-MIB", "SNMPv2-MIB"]);
-    assert!(r.mib.module_by_name("IF-MIB").is_some());
-    assert!(r.mib.module_by_name("SNMPv2-MIB").is_some());
+    assert!(r.module_by_name("IF-MIB").is_some());
+    assert!(r.module_by_name("SNMPv2-MIB").is_some());
 }
 
 // --- OID resolution tests ---
@@ -91,7 +88,7 @@ fn load_multiple_modules() {
 #[test]
 fn well_known_oids() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // iso = 1
     let iso = mib.resolve("iso").expect("iso not found");
@@ -112,7 +109,7 @@ fn well_known_oids() {
 #[test]
 fn if_mib_oids() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifIndex = 1.3.6.1.2.1.2.2.1.1
     let if_index = mib.resolve("ifIndex").expect("ifIndex not found");
@@ -133,7 +130,7 @@ fn if_mib_oids() {
 #[test]
 fn oid_numeric_lookup() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let oid: Oid = "1.3.6.1.2.1.2.2.1.1".parse().unwrap();
     let node = mib.node_by_oid(&oid).expect("OID not found");
@@ -144,7 +141,7 @@ fn oid_numeric_lookup() {
 #[test]
 fn resolve_qualified_name() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let node = mib
         .resolve("IF-MIB::ifIndex")
@@ -156,7 +153,7 @@ fn resolve_qualified_name() {
 #[test]
 fn format_oid_with_module() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let oid: Oid = "1.3.6.1.2.1.2.2.1.1".parse().unwrap();
     let formatted = mib.format_oid(&oid);
@@ -169,7 +166,7 @@ fn format_oid_with_module() {
 #[test]
 fn longest_prefix_lookup() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // 1.3.6.1.2.1.2.2.1.1.5 - ifIndex instance .5 (doesn't exist in tree)
     let oid: Oid = "1.3.6.1.2.1.2.2.1.1.5".parse().unwrap();
@@ -181,7 +178,7 @@ fn longest_prefix_lookup() {
 #[test]
 fn node_subtree() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifEntry subtree should include ifEntry itself plus all its columns.
     let entry_id = mib.node_by_name("ifEntry").expect("ifEntry not found");
@@ -200,7 +197,7 @@ fn node_subtree() {
 #[test]
 fn node_longest_prefix() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // Start from ifTable (1.3.6.1.2.1.2.2) and look up relative OID 1.1.5
     // which should match ifIndex (ifEntry.1 = arc 1 under ifTable child 1).
@@ -214,7 +211,7 @@ fn node_longest_prefix() {
 #[test]
 fn resolve_oid_from_name() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let oid = mib.resolve_oid("ifIndex").expect("resolve_oid failed");
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1");
@@ -231,36 +228,36 @@ fn resolve_oid_from_name() {
 #[test]
 fn object_types_resolved() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifIndex should be a column with InterfaceIndex type
     let obj_id = mib
         .object_by_name("ifIndex")
         .expect("ifIndex object not found");
-    let obj = mib.object(obj_id);
+    let obj = mib.raw().object(obj_id);
     assert_eq!(obj.name(), "ifIndex");
     assert_eq!(obj.kind(mib.tree()), Kind::Column);
     assert_eq!(obj.access(), Access::ReadOnly);
 
     // Should have a resolved type
     let type_id = obj.type_id().expect("ifIndex should have a type");
-    let type_data = mib.type_(type_id);
+    let type_data = mib.raw().type_(type_id);
     assert_eq!(type_data.name(), "InterfaceIndex");
 }
 
 #[test]
 fn table_structure() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifTable should be a table
     let table_id = mib.object_by_name("ifTable").expect("ifTable not found");
-    let table = mib.object(table_id);
+    let table = mib.raw().object(table_id);
     assert_eq!(table.kind(mib.tree()), Kind::Table);
 
     // ifEntry should be a row
     let entry_id = mib.object_by_name("ifEntry").expect("ifEntry not found");
-    let entry = mib.object(entry_id);
+    let entry = mib.raw().object(entry_id);
     assert_eq!(entry.kind(mib.tree()), Kind::Row);
 
     // ifEntry should have indexes
@@ -273,11 +270,11 @@ fn table_structure() {
 #[test]
 fn scalar_objects() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifNumber should be a scalar
     let obj_id = mib.object_by_name("ifNumber").expect("ifNumber not found");
-    let obj = mib.object(obj_id);
+    let obj = mib.raw().object(obj_id);
     assert_eq!(obj.kind(mib.tree()), Kind::Scalar);
 }
 
@@ -286,13 +283,13 @@ fn scalar_objects() {
 #[test]
 fn type_parent_chain() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // DisplayString should ultimately be OCTET STRING
     let ds_id = mib
         .type_by_name("DisplayString")
         .expect("DisplayString not found");
-    let ds = mib.type_(ds_id);
+    let ds = mib.raw().type_(ds_id);
     let effective = ds.effective_base(mib.types_slice());
     assert_eq!(effective, BaseType::OctetString);
 }
@@ -300,13 +297,13 @@ fn type_parent_chain() {
 #[test]
 fn textual_convention_display_hint() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // DisplayString is a TC with display hint "255a"
     let ds_id = mib
         .type_by_name("DisplayString")
         .expect("DisplayString not found");
-    let ds = mib.type_(ds_id);
+    let ds = mib.raw().type_(ds_id);
     assert!(ds.is_textual_convention());
     assert_eq!(ds.effective_display_hint(mib.types_slice()), "255a");
 }
@@ -314,13 +311,13 @@ fn textual_convention_display_hint() {
 #[test]
 fn integer_enum_type() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifAdminStatus should have enum values (up/down/testing)
     let obj_id = mib
         .object_by_name("ifAdminStatus")
         .expect("ifAdminStatus not found");
-    let obj = mib.object(obj_id);
+    let obj = mib.raw().object(obj_id);
     let enums = obj.effective_enums();
     assert!(
         enums.len() >= 3,
@@ -342,13 +339,13 @@ fn integer_enum_type() {
 #[test]
 fn notification_resolved() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // linkDown should be a notification
     let notif_id = mib
         .notification_by_name("linkDown")
         .expect("linkDown not found");
-    let notif = mib.notification(notif_id);
+    let notif = mib.raw().notification(notif_id);
     assert_eq!(notif.name(), "linkDown");
 }
 
@@ -357,7 +354,7 @@ fn notification_resolved() {
 #[test]
 fn groups_resolved() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     assert!(
         !mib.groups_slice().is_empty(),
@@ -368,7 +365,7 @@ fn groups_resolved() {
 #[test]
 fn compliances_resolved() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     assert!(
         !mib.compliances_slice().is_empty(),
@@ -381,19 +378,19 @@ fn compliances_resolved() {
 #[test]
 fn filter_tables() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let tables = mib.tables();
     assert!(!tables.is_empty(), "IF-MIB should have at least one table");
     for t in &tables {
-        assert_eq!(mib.object(*t).kind(mib.tree()), Kind::Table);
+        assert_eq!(mib.raw().object(*t).kind(mib.tree()), Kind::Table);
     }
 }
 
 #[test]
 fn filter_by_base_type() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let counters = mib.objects_by_base_type(BaseType::Counter32);
     assert!(!counters.is_empty(), "IF-MIB should have counter objects");
@@ -404,10 +401,10 @@ fn filter_by_base_type() {
 #[test]
 fn module_metadata() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let mod_id = mib.module_by_name("IF-MIB").unwrap();
-    let module = mib.module(mod_id);
+    let module = mib.raw().module(mod_id);
     assert!(!module.description().is_empty(), "should have description");
     assert!(
         !module.organization().is_empty(),
@@ -420,7 +417,7 @@ fn module_metadata() {
 #[test]
 fn base_modules_always_present() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     for name in &[
         "SNMPv2-SMI",
@@ -441,7 +438,7 @@ fn base_modules_always_present() {
 #[test]
 fn base_types_available() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     for name in &["DisplayString", "TruthValue", "RowStatus", "MacAddress"] {
         assert!(
@@ -456,7 +453,7 @@ fn base_types_available() {
 #[test]
 fn no_fatal_diagnostics() {
     let r = load_corpus(&["IF-MIB"]);
-    assert!(!r.mib.has_errors(), "IF-MIB should load without errors");
+    assert!(!r.has_errors(), "IF-MIB should load without errors");
 }
 
 // --- Multi-module tests ---
@@ -464,7 +461,7 @@ fn no_fatal_diagnostics() {
 #[test]
 fn snmpv2_mib_objects() {
     let r = load_corpus(&["SNMPv2-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // sysDescr = 1.3.6.1.2.1.1.1
     let node = mib.resolve("sysDescr").expect("sysDescr not found");
@@ -480,7 +477,7 @@ fn snmpv2_mib_objects() {
 #[test]
 fn host_resources_mib() {
     let r = load_corpus(&["HOST-RESOURCES-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     assert!(mib.module_by_name("HOST-RESOURCES-MIB").is_some());
     // hrSystem is an object group root
@@ -499,7 +496,7 @@ fn full_corpus_no_panics() {
     }
 
     let r = load_all_corpus();
-    let mib = &r.mib;
+    let mib = &r;
 
     eprintln!(
         "resolved: {} modules, {} objects, {} types, {} notifications, {} nodes",
@@ -543,7 +540,7 @@ fn problems_corpus_no_panics() {
     // Also add the primary corpus for dependencies
     let primary = corpus_dir();
     let primary_src = dir_source(&primary).expect("failed to create primary source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .source(primary_src)
         .resolver_strictness(ResolverStrictness::Permissive)
@@ -551,8 +548,8 @@ fn problems_corpus_no_panics() {
     let r = load(opts).expect("load failed");
     eprintln!(
         "problems corpus: {} modules, {} objects",
-        r.mib.modules_slice().len(),
-        r.mib.objects_slice().len()
+        r.modules_slice().len(),
+        r.objects_slice().len()
     );
 }
 
@@ -563,12 +560,12 @@ fn compliance_object_syntax_and_write_syntax() {
     // DIFFSERV-MIB diffServMIBFullCompliance has OBJECT clauses with both
     // SYNTAX and WRITE-SYNTAX refinements (e.g. diffServDataPathStatus).
     let r = load_corpus(&["DIFFSERV-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let comp_id = mib
         .compliance_by_name("diffServMIBFullCompliance")
         .expect("compliance not found");
-    let comp = mib.compliance(comp_id);
+    let comp = mib.raw().compliance(comp_id);
 
     // Find the self-module (DIFFSERV-MIB) compliance module.
     let self_mod = comp
@@ -627,12 +624,12 @@ fn compliance_object_syntax_with_size_constraint() {
     //   OBJECT diffServMultiFieldClfrDstAddr
     //   SYNTAX InetAddress (SIZE(0|4|16))
     let r = load_corpus(&["DIFFSERV-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let comp_id = mib
         .compliance_by_name("diffServMIBFullCompliance")
         .expect("compliance not found");
-    let comp = mib.compliance(comp_id);
+    let comp = mib.raw().compliance(comp_id);
 
     let self_mod = comp
         .modules()
@@ -683,12 +680,12 @@ fn compliance_object_syntax_only_enum() {
     //   SYNTAX INTEGER { unknown(0), ipv4(1), ipv6(2) }
     // (no WRITE-SYNTAX)
     let r = load_corpus(&["DIFFSERV-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let comp_id = mib
         .compliance_by_name("diffServMIBFullCompliance")
         .expect("compliance not found");
-    let comp = mib.compliance(comp_id);
+    let comp = mib.raw().compliance(comp_id);
 
     let self_mod = comp
         .modules()
@@ -737,12 +734,12 @@ fn variation_syntax_and_write_syntax() {
     //   SYNTAX INTEGER { active(1), notInService(2) }
     //   WRITE-SYNTAX INTEGER { createAndGo(4), destroy(6) }
     let r = load_problems(&["PROBLEM-VARIATION-SYNTAX-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let cap_id = mib
         .capability_by_name("problemVarCapability")
         .expect("capability not found");
-    let cap = mib.capability(cap_id);
+    let cap = mib.raw().capability(cap_id);
     assert_eq!(cap.supports().len(), 1);
 
     let support = &cap.supports()[0];
@@ -795,12 +792,12 @@ fn variation_syntax_with_range_and_defval() {
     //   WRITE-SYNTAX Integer32 (1..25)
     //   DEFVAL { 10 }
     let r = load_problems(&["PROBLEM-VARIATION-SYNTAX-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let cap_id = mib
         .capability_by_name("problemVarCapability")
         .expect("capability not found");
-    let cap = mib.capability(cap_id);
+    let cap = mib.raw().capability(cap_id);
     let support = &cap.supports()[0];
 
     let var = support
@@ -845,7 +842,7 @@ fn smiv1_module() {
         return;
     }
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Permissive)
         .diagnostic_config(DiagnosticConfig::silent())
@@ -857,10 +854,10 @@ fn smiv1_module() {
             return;
         }
     };
-    let mib = &r.mib;
+    let mib = &r;
 
     if let Some(mod_id) = mib.module_by_name("RFC1213-MIB") {
-        let module = mib.module(mod_id);
+        let module = mib.raw().module(mod_id);
         assert_eq!(module.language(), Language::SMIv1);
     }
 }
@@ -870,7 +867,7 @@ fn smiv1_module() {
 #[test]
 fn modules_defining_symbol() {
     let r = load_corpus(&["IF-MIB", "SNMPv2-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let definers = mib.modules_defining("ifIndex");
     assert!(
@@ -882,7 +879,7 @@ fn modules_defining_symbol() {
 #[test]
 fn modules_importing_symbol() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let importers = mib.modules_importing("DisplayString");
     assert!(
@@ -899,7 +896,7 @@ fn base_module_ownership() {
     //   IEEE8023-LAG-MIB: { iso(1) member-body(2) us(840) ... }
     //   RAPID-CITY: { iso org(3) dod(6) ... }
     let r = load_corpus(&["IEEE8023-LAG-MIB", "RAPID-CITY"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // These OIDs are defined by multiple base modules (SNMPv2-SMI and
     // RFC1155-SMI both define org, dod, internet, etc.). Either base module
@@ -915,7 +912,7 @@ fn base_module_ownership() {
             .get(node_id)
             .module()
             .unwrap_or_else(|| panic!("module not set for {name}"));
-        let module = mib.module(mod_id);
+        let module = mib.raw().module(mod_id);
         assert!(
             module.is_base(),
             "{name}: expected base module, got {}",
@@ -929,7 +926,7 @@ fn base_module_beats_vendor_with_newer_timestamp() {
     // RAPID-CITY is SMIv2 with a recent LAST-UPDATED. Base modules (SMIv1,
     // no timestamp) should still win for well-known OIDs.
     let r = load_corpus(&["RAPID-CITY"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     for name in &["org", "dod"] {
         let node_id = mib
@@ -940,7 +937,7 @@ fn base_module_beats_vendor_with_newer_timestamp() {
             .get(node_id)
             .module()
             .unwrap_or_else(|| panic!("module not set for {name}"));
-        let module = mib.module(mod_id);
+        let module = mib.raw().module(mod_id);
         assert!(
             module.is_base(),
             "{name}: expected base module, got {}",
@@ -954,7 +951,7 @@ fn snmp_oid_owned_by_snmpv2_mib() {
     // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the synthetic
     // SNMPv2-SMI. Verify the synthetic base doesn't claim it.
     let r = load_corpus(&["SNMPv2-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let node_id = mib.node_by_name("snmp").expect("snmp node not found");
     let mod_id = mib
@@ -962,7 +959,7 @@ fn snmp_oid_owned_by_snmpv2_mib() {
         .get(node_id)
         .module()
         .expect("module not set for snmp");
-    let module = mib.module(mod_id);
+    let module = mib.raw().module(mod_id);
     assert_eq!(
         module.name(),
         "SNMPv2-MIB",
@@ -972,14 +969,14 @@ fn snmp_oid_owned_by_snmpv2_mib() {
 
 // --- Duplicate import diagnostic tests ---
 
-fn load_problems(modules: &[&str]) -> mib_rs::load::LoadResult {
+fn load_problems(modules: &[&str]) -> mib_rs::Mib {
     let dir = problems_dir();
     let corpus = corpus_dir();
     let src = mib_rs::source::multi_source(vec![
         dir_source(&dir).expect("failed to create problems source"),
         dir_source(&corpus).expect("failed to create corpus source"),
     ]);
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Normal)
         .diagnostic_config(DiagnosticConfig::verbose())
@@ -990,7 +987,7 @@ fn load_problems(modules: &[&str]) -> mib_rs::load::LoadResult {
 #[test]
 fn duplicate_import_from_different_modules_emits_diagnostic() {
     let r = load_problems(&["PROBLEM-DUPLICATE-IMPORT-MIB"]);
-    let diags = r.mib.diagnostics();
+    let diags = r.diagnostics();
     let dup = diags
         .iter()
         .find(|d| d.code == DiagCode::ImportDuplicate)
@@ -1012,12 +1009,12 @@ fn duplicate_import_first_wins() {
     // DisplayString imported from RFC1213-MIB first, then SNMPv2-TC.
     // The resolved import should point to RFC1213-MIB's version.
     let r = load_problems(&["PROBLEM-DUPLICATE-IMPORT-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let mod_id = mib
         .module_by_name("PROBLEM-DUPLICATE-IMPORT-MIB")
         .expect("module not found");
-    let module = mib.module(mod_id);
+    let module = mib.raw().module(mod_id);
     let imports = module.imports();
     // Find the import group that contains DisplayString.
     let ds_import = imports
@@ -1035,7 +1032,7 @@ fn timestamp_normalization_in_module_preference() {
     // should win after normalizing the timestamps. Without normalization, raw string
     // comparison picks IEEE8023-LAG-MIB (wrong: "0" < "2" in ASCII).
     let r = load_corpus(&["IEEE802dot11-MIB", "IEEE8023-LAG-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     for name in &["member-body", "us"] {
         let node_id = mib
@@ -1046,7 +1043,7 @@ fn timestamp_normalization_in_module_preference() {
             .get(node_id)
             .module()
             .unwrap_or_else(|| panic!("module not set for {name}"));
-        let module = mib.module(mod_id);
+        let module = mib.raw().module(mod_id);
         assert_eq!(
             module.name(),
             "IEEE802dot11-MIB",
@@ -1061,7 +1058,7 @@ fn timestamp_normalization_in_module_preference() {
 #[test]
 fn table_navigation_if_table() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifTable is a table
     let table_id = mib.object_by_name("ifTable").expect("ifTable not found");
@@ -1072,7 +1069,7 @@ fn table_navigation_if_table() {
 
     // Entry returns the row
     let entry_id = mib.object_entry(table_id).expect("ifEntry not found");
-    assert_eq!(mib.object(entry_id).name(), "ifEntry");
+    assert_eq!(mib.raw().object(entry_id).name(), "ifEntry");
     assert!(mib.is_row(entry_id));
 
     // Row's table() returns the table
@@ -1088,7 +1085,7 @@ fn table_navigation_if_table() {
     assert_eq!(cols, cols_from_row);
 
     // First column should be ifIndex
-    let first_col = mib.object(cols[0]);
+    let first_col = mib.raw().object(cols[0]);
     assert_eq!(first_col.name(), "ifIndex");
     assert!(mib.is_column(cols[0]));
 
@@ -1104,13 +1101,13 @@ fn table_navigation_if_table() {
     assert!(mib.is_index(cols[0]), "ifIndex should be an index");
 
     // Sequence type name on the table (stored on table in mib-rs)
-    assert_eq!(mib.object(table_id).sequence_type_name(), "IfEntry");
+    assert_eq!(mib.raw().object(table_id).sequence_type_name(), "IfEntry");
 }
 
 #[test]
 fn table_navigation_scalars() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifNumber is a scalar
     let scalar_id = mib.object_by_name("ifNumber").expect("ifNumber not found");
@@ -1128,27 +1125,27 @@ fn table_navigation_scalars() {
 #[test]
 fn effective_indexes_basic() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let entry_id = mib.object_by_name("ifEntry").expect("ifEntry not found");
     let indexes = mib.effective_indexes(entry_id);
     assert_eq!(indexes.len(), 1, "ifEntry should have 1 index");
     let idx_obj = indexes[0].object.expect("index should reference an object");
-    assert_eq!(mib.object(idx_obj).name(), "ifIndex");
+    assert_eq!(mib.raw().object(idx_obj).name(), "ifIndex");
 }
 
 #[test]
 fn effective_indexes_augments() {
     // ifXEntry AUGMENTS ifEntry, so effective indexes should come from ifEntry
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let ifx_entry = mib.object_by_name("ifXEntry").expect("ifXEntry not found");
     assert!(mib.is_row(ifx_entry));
 
     // ifXEntry has no INDEX of its own
     assert!(
-        mib.object(ifx_entry).index().is_empty(),
+        mib.raw().object(ifx_entry).index().is_empty(),
         "ifXEntry should have no direct INDEX"
     );
 
@@ -1160,13 +1157,13 @@ fn effective_indexes_augments() {
         "ifXEntry effective indexes should have 1 entry"
     );
     let idx_obj = indexes[0].object.expect("index should reference an object");
-    assert_eq!(mib.object(idx_obj).name(), "ifIndex");
+    assert_eq!(mib.raw().object(idx_obj).name(), "ifIndex");
 }
 
 #[test]
 fn non_index_column() {
     let r = load_corpus(&["IF-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // ifDescr is a column but not an index
     let descr_id = mib.object_by_name("ifDescr").expect("ifDescr not found");
@@ -1177,7 +1174,7 @@ fn non_index_column() {
 #[test]
 fn effective_indexes_augments_cycle() {
     let r = load_problems(&["PROBLEM-SEMANTICS-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     // Two rows that AUGMENT each other, neither has INDEX.
     let entry_a = mib
@@ -1207,7 +1204,7 @@ fn effective_indexes_augments_cycle() {
 #[test]
 fn effective_indexes_bare_type() {
     let r = load_problems(&["PROBLEM-SEMANTICS-MIB"]);
-    let mib = &r.mib;
+    let mib = &r;
 
     let entry = mib
         .object_by_name("problemBareEntry")
@@ -1234,7 +1231,6 @@ fn effective_indexes_bare_type() {
 fn juniper_integer64_size_is_accepted() {
     let r = load_corpus_with_diags(&["JUNIPER-SMI"], ResolverStrictness::Strict);
     let count = r
-        .mib
         .diagnostics()
         .iter()
         .filter(|d| {
@@ -1250,7 +1246,6 @@ fn juniper_integer64_size_is_accepted() {
 fn cm_common_decimal32_requires_display_hint() {
     let r = load_corpus_with_diags(&["CM-COMMON-MIB"], ResolverStrictness::Strict);
     let count = r
-        .mib
         .diagnostics()
         .iter()
         .filter(|d| {
@@ -1266,7 +1261,6 @@ fn cm_common_decimal32_requires_display_hint() {
 fn fs_alarm_input_bits_index_is_accepted() {
     let r = load_corpus_with_diags(&["FS-MIB"], ResolverStrictness::Strict);
     let count = r
-        .mib
         .diagnostics()
         .iter()
         .filter(|d| {

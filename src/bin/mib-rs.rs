@@ -2,7 +2,7 @@ use std::process;
 
 use clap::Parser;
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
 use mib_rs::source::dir_source;
 use mib_rs::types::{DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness};
@@ -195,7 +195,7 @@ fn load_mib(
     let sources = build_sources(paths);
     let use_system = sources.is_empty();
 
-    let mut opts = LoadOptions::new()
+    let mut opts = Loader::new()
         .sources(sources)
         .resolver_strictness(strictness)
         .diagnostic_config(diag_config);
@@ -209,7 +209,7 @@ fn load_mib(
     }
 
     match load(opts) {
-        Ok(r) => Ok(r.mib),
+        Ok(mib) => Ok(mib),
         Err(e) => {
             eprintln!("error: {e}");
             Err(1)
@@ -323,13 +323,13 @@ fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
     println!("Kind:    {}", node.kind());
 
     if let Some(mod_id) = mib.effective_module(node_id) {
-        println!("Module:  {}", mib.module(mod_id).name());
+        println!("Module:  {}", mib.raw().module(mod_id).name());
     }
 
     if let Some(obj_id) = node.object() {
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
         if let Some(tid) = obj.type_id() {
-            let t = mib.type_(tid);
+            let t = mib.raw().type_(tid);
             println!(
                 "Type:    {} ({})",
                 t.name(),
@@ -375,7 +375,7 @@ fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
             }
         }
     } else if let Some(notif_id) = node.notification() {
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
         println!("Status:  {}", notif.status());
         let desc = notif.description();
         if !desc.is_empty() {
@@ -552,7 +552,7 @@ fn cmd_find(
             let oid = mib.tree().oid_of(node_id);
             let mod_name = obj
                 .module()
-                .map(|mid| mib.module(mid).name())
+                .map(|mid| mib.raw().module(mid).name())
                 .unwrap_or("?");
             matches.push((
                 mod_name.to_string(),

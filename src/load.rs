@@ -16,8 +16,8 @@ use crate::searchpath;
 use crate::source::{FindResult, Source};
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 
-/// Options for loading MIB modules.
-pub struct LoadOptions {
+/// Builder for loading and resolving MIB modules.
+pub struct Loader {
     sources: Vec<Box<dyn Source>>,
     modules: Option<Vec<String>>,
     resolver_strictness: ResolverStrictness,
@@ -25,15 +25,15 @@ pub struct LoadOptions {
     system_paths: bool,
 }
 
-impl Default for LoadOptions {
+impl Default for Loader {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl LoadOptions {
+impl Loader {
     pub fn new() -> Self {
-        LoadOptions {
+        Loader {
             sources: Vec::new(),
             modules: None,
             resolver_strictness: ResolverStrictness::Normal,
@@ -82,14 +82,8 @@ impl LoadOptions {
     }
 }
 
-/// Result of loading MIB modules.
-pub struct LoadResult {
-    /// The resolved MIB.
-    pub mib: Mib,
-}
-
 /// Load MIB modules from configured sources and resolve them.
-pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
+pub fn load(options: Loader) -> Result<Mib, LoadError> {
     let requested_module_count = options.modules.as_ref().map_or(0, Vec::len);
     let load_mode = if options.modules.is_some() {
         "modules"
@@ -155,7 +149,13 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
         diagnostic_count = mib.diagnostics().len(),
         "load complete",
     );
-    Ok(LoadResult { mib })
+    Ok(mib)
+}
+
+impl Loader {
+    pub fn load(self) -> Result<Mib, LoadError> {
+        load(self)
+    }
 }
 
 /// Load all modules from all sources in parallel.

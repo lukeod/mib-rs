@@ -316,7 +316,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                 continue;
             };
             let mod_name = ctx.modules[ir_id.index()].name.clone();
-            let type_name = ctx.mib.type_(tid).name().to_string();
+            let type_name = ctx.mib.raw().type_(tid).name().to_string();
             ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
         }
     }
@@ -350,7 +350,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
                     }
                 }
             } else {
-                let type_name = ctx.mib.type_(type_id).name().to_string();
+                let type_name = ctx.mib.raw().type_(type_id).name().to_string();
                 let mod_name = ctx.modules[ir_id.index()].name.clone();
                 ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
             }
@@ -417,7 +417,7 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
             .get(&smi_id)
             .and_then(|m| m.get(*name))
         {
-            let base = ctx.mib.type_(tid).base;
+            let base = ctx.mib.raw().type_(tid).base;
             prim_types.insert(base, tid);
         }
     }
@@ -425,7 +425,7 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
     let type_count = ctx.mib.types_slice().len();
     for i in 0..type_count {
         let tid = TypeId::new(i as u32);
-        let t = ctx.mib.type_(tid);
+        let t = ctx.mib.raw().type_(tid);
         if t.parent.is_some() {
             continue;
         }
@@ -481,7 +481,7 @@ fn inherit_base_types(ctx: &mut ResolverContext) {
     let type_count = ctx.mib.types_slice().len();
     for i in 0..type_count {
         let tid = TypeId::new(i as u32);
-        let t = ctx.mib.type_(tid);
+        let t = ctx.mib.raw().type_(tid);
         if t.base != BaseType::Unknown {
             continue;
         }

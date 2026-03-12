@@ -371,7 +371,7 @@ fn is_user_defined_type(mib: &Mib, td: &TypeData) -> bool {
     if td.is_textual_convention() {
         return true;
     }
-    !matches!(td.module(), Some(mid) if mib.module(mid).is_base())
+    !matches!(td.module(), Some(mid) if mib.raw().module(mid).is_base())
 }
 
 // --- Export building ---
@@ -424,8 +424,8 @@ fn make_oid_ref(name: &str, module: &str, oid: &str) -> ExportOidRef {
 
 fn resolve_object_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
     if let Some(obj_id) = mib.object_by_name(name) {
-        let obj = mib.object(obj_id);
-        let mod_name = obj.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+        let obj = mib.raw().object(obj_id);
+        let mod_name = obj.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid_str = obj
             .node()
             .map(|nid| mib.tree().oid_of(nid).to_string())
@@ -445,7 +445,7 @@ fn resolve_node_ref_with_fallback(mib: &Mib, name: &str, fallback_module: &str) 
         let node = mib.tree().get(node_id);
         let mod_name = mib
             .effective_module(node_id)
-            .map(|mid| mib.module(mid).name())
+            .map(|mid| mib.raw().module(mid).name())
             .unwrap_or("");
         let oid_str = mib.tree().oid_of(node_id).to_string();
         make_oid_ref(
@@ -464,10 +464,10 @@ fn resolve_node_ref_with_fallback(mib: &Mib, name: &str, fallback_module: &str) 
 
 fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
     if let Some(notif_id) = mib.notification_by_name(name) {
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
         let mod_name = notif
             .module()
-            .map(|mid| mib.module(mid).name())
+            .map(|mid| mib.raw().module(mid).name())
             .unwrap_or("");
         let oid_str = notif
             .node()
@@ -483,8 +483,8 @@ fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> Exp
 }
 
 fn object_id_to_ref(mib: &Mib, obj_id: ObjectId) -> ExportOidRef {
-    let obj = mib.object(obj_id);
-    let mod_name = obj.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+    let obj = mib.raw().object(obj_id);
+    let mod_name = obj.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
     let oid_str = obj
         .node()
         .map(|nid| mib.tree().oid_of(nid).to_string())
@@ -520,16 +520,16 @@ fn make_defval(dv: &DefVal) -> Option<ExportDefVal> {
 }
 
 fn make_effective_syntax_from_object(mib: &Mib, obj_id: ObjectId) -> Option<ExportEffectiveSyntax> {
-    let obj = mib.object(obj_id);
+    let obj = mib.raw().object(obj_id);
     let type_id = obj.type_id()?;
-    let td = mib.type_(type_id);
+    let td = mib.raw().type_(type_id);
     let types = mib.types_slice();
     let base = td.effective_base(types);
 
     let type_ref = if td.name().is_empty() || !is_user_defined_type(mib, td) {
         None
     } else {
-        let mod_name = td.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         Some(format!("{mod_name}::{}", td.name()))
     };
 
@@ -558,9 +558,9 @@ fn make_effective_syntax_from_object(mib: &Mib, obj_id: ObjectId) -> Option<Expo
 
 fn make_syntax_constraints(mib: &Mib, sc: &SyntaxConstraints) -> ExportEffectiveSyntax {
     let (type_ref, base, display_hint) = if let Some(tid) = sc.type_id {
-        let td = mib.type_(tid);
+        let td = mib.raw().type_(tid);
         let types = mib.types_slice();
-        let mod_name = td.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let tr = if td.name().is_empty() || !is_user_defined_type(mib, td) {
             None
         } else {
@@ -642,13 +642,13 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
         .types_slice()
         .iter()
         .map(|t| {
-            let mod_name = t.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+            let mod_name = t.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
             let parent = t.parent().and_then(|pid| {
-                let pt = mib.type_(pid);
+                let pt = mib.raw().type_(pid);
                 if pt.name().is_empty() || !is_user_defined_type(mib, pt) {
                     return None;
                 }
-                let pm = pt.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+                let pm = pt.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
                 Some(format!("{pm}::{}", pt.name()))
             });
             let all_types = mib.types_slice();
@@ -694,7 +694,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             continue;
         }
         let mod_id = mib.effective_module(node_id);
-        let mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid_str = tree.oid_of(node_id).to_string();
 
         let kind = match nd.kind() {
@@ -732,7 +732,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             None => continue,
         };
         let mod_id = obj.module();
-        let mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid = tree.oid_of(node_id).clone();
         let oid_str = oid.to_string();
         let kind = obj.kind(tree);
@@ -785,6 +785,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                     .into_iter()
                     .map(|cid| {
                         let col_oid = mib
+                            .raw()
                             .object(cid)
                             .node()
                             .map(|nid| tree.oid_of(nid).clone())
@@ -844,7 +845,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let mut notifications: Vec<(Oid, ExportNotification)> = Vec::new();
     for notif in mib.notifications_slice() {
         let mod_id = notif.module();
-        let mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid = notif
             .node()
             .map(|nid| tree.oid_of(nid).clone())
@@ -899,7 +900,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let mut groups: Vec<(Oid, ExportGroup)> = Vec::new();
     for group in mib.groups_slice() {
         let mod_id = group.module();
-        let mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid = group
             .node()
             .map(|nid| tree.oid_of(nid).clone())
@@ -919,7 +920,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 let nd = tree.get(nid);
                 let m = mib
                     .effective_module(nid)
-                    .map(|mid| mib.module(mid).name())
+                    .map(|mid| mib.raw().module(mid).name())
                     .unwrap_or("");
                 make_oid_ref(nd.name(), m, &tree.oid_of(nid).to_string())
             })
@@ -952,7 +953,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let mut compliances: Vec<(Oid, ExportCompliance)> = Vec::new();
     for comp in mib.compliances_slice() {
         let mod_id = comp.module();
-        let comp_mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let comp_mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid = comp
             .node()
             .map(|nid| tree.oid_of(nid).clone())
@@ -1035,7 +1036,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let mut capabilities: Vec<(Oid, ExportCapability)> = Vec::new();
     for cap in mib.capabilities_slice() {
         let mod_id = cap.module();
-        let mod_name = mod_id.map(|mid| mib.module(mid).name()).unwrap_or("");
+        let mod_name = mod_id.map(|mid| mib.raw().module(mid).name()).unwrap_or("");
         let oid = cap
             .node()
             .map(|nid| tree.oid_of(nid).clone())
@@ -1183,10 +1184,10 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
         None => {
             // Type-backed index - build effective syntax from type name lookup
             let syntax = if let Some(tid) = mib.type_by_name(&idx.type_name) {
-                let td = mib.type_(tid);
+                let td = mib.raw().type_(tid);
                 let types = mib.types_slice();
                 let base = td.effective_base(types);
-                let mod_name = td.module().map(|mid| mib.module(mid).name()).unwrap_or("");
+                let mod_name = td.module().map(|mid| mib.raw().module(mid).name()).unwrap_or("");
                 let type_ref = if td.name().is_empty() {
                     None
                 } else {
@@ -1224,7 +1225,7 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use crate::load::{LoadOptions, load};
+    use crate::load::{Loader, load};
     use crate::source::dir_source;
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
@@ -1236,12 +1237,12 @@ mod tests {
 
     fn load_corpus(modules: &[&str]) -> crate::mib::Mib {
         let src = dir_source(corpus_dir()).expect("failed to create corpus source");
-        let opts = LoadOptions::new()
+        let opts = Loader::new()
             .source(src)
             .resolver_strictness(ResolverStrictness::Permissive)
             .diagnostic_config(DiagnosticConfig::silent())
             .modules(modules.iter().copied());
-        load(opts).expect("load failed").mib
+        load(opts).expect("load failed")
     }
 
     #[test]

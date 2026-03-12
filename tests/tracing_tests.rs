@@ -3,7 +3,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
-use mib_rs::{FindResult, LoadOptions, Source, load};
+use mib_rs::{FindResult, Loader, Source, load};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
@@ -144,13 +144,13 @@ END
     let subscriber = Registry::default().with(CaptureLayer::new(capture.clone()));
 
     tracing::subscriber::with_default(subscriber, || {
-        let options = LoadOptions::new()
+        let options = Loader::new()
             .source(Box::new(source))
             .modules(["TEST-MIB"])
             .resolver_strictness(ResolverStrictness::Permissive)
             .diagnostic_config(DiagnosticConfig::silent());
         let result = load(options).expect("load should succeed");
-        assert!(result.mib.module_by_name("TEST-MIB").is_some());
+        assert!(result.module_by_name("TEST-MIB").is_some());
     });
 
     let spans = capture.spans();
@@ -215,13 +215,13 @@ END
     let subscriber = Registry::default().with(CaptureLayer::new(capture.clone()));
 
     tracing::subscriber::with_default(subscriber, || {
-        let options = LoadOptions::new()
+        let options = Loader::new()
             .source(Box::new(source))
             .modules(["TEST-MIB"])
             .resolver_strictness(ResolverStrictness::Permissive)
             .diagnostic_config(DiagnosticConfig::silent());
         let result = load(options).expect("load should succeed");
-        assert!(result.mib.module_by_name("TEST-MIB").is_some());
+        assert!(result.module_by_name("TEST-MIB").is_some());
     });
 
     let spans = capture.spans();
@@ -318,13 +318,13 @@ END
     let subscriber = Registry::default().with(CaptureLayer::new(capture.clone()));
 
     tracing::subscriber::with_default(subscriber, || {
-        let options = LoadOptions::new()
+        let options = Loader::new()
             .source(Box::new(source))
             .modules(["TRACE-TEST-MIB"])
             .resolver_strictness(ResolverStrictness::Permissive)
             .diagnostic_config(DiagnosticConfig::silent());
         let result = load(options).expect("load should succeed");
-        assert!(result.mib.module_by_name("TRACE-TEST-MIB").is_some());
+        assert!(result.module_by_name("TRACE-TEST-MIB").is_some());
     });
 
     let events = capture.events();

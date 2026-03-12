@@ -6,7 +6,7 @@ mod common;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
 use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
@@ -34,12 +34,12 @@ fn load_fixture(module: &str) -> HashMap<String, FixtureNode> {
 fn load_fixture_mib() -> Mib {
     let dir = corpus_dir();
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Permissive)
         .diagnostic_config(DiagnosticConfig::silent())
         .modules(FIXTURE_MODULES.iter().copied());
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 // -- Normalization --
@@ -64,10 +64,10 @@ fn normalize_base_type(base: BaseType) -> &'static str {
 
 fn normalize_node_type(mib: &Mib, name: &str) -> String {
     if let Some(obj_id) = mib.object_by_name(name) {
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
         match obj.type_id() {
             Some(tid) => {
-                let base = mib.type_(tid).effective_base(mib.types_slice());
+                let base = mib.raw().type_(tid).effective_base(mib.types_slice());
                 normalize_base_type(base).to_string()
             }
             None => "OTHER".to_string(),
@@ -75,7 +75,7 @@ fn normalize_node_type(mib: &Mib, name: &str) -> String {
     } else if mib.notification_by_name(name).is_some() {
         "NOTIFICATION-TYPE".to_string()
     } else if let Some(gid) = mib.group_by_name(name) {
-        if mib.group(gid).is_notification_group() {
+        if mib.raw().group(gid).is_notification_group() {
             "NOTIFICATION-GROUP".to_string()
         } else {
             "OBJECT-GROUP".to_string()
@@ -87,7 +87,7 @@ fn normalize_node_type(mib: &Mib, name: &str) -> String {
     } else if let Some(node_id) = mib.node_by_name(name) {
         // Check for MODULE-IDENTITY: module OID matches node OID.
         if let Some(mod_id) = mib.effective_module(node_id) {
-            let module = mib.module(mod_id);
+            let module = mib.raw().module(mod_id);
             if let Some(mod_oid) = module.oid() {
                 let node_oid = mib.tree().oid_of(node_id);
                 if mod_oid == node_oid {
@@ -335,12 +335,12 @@ fn fixture_types() {
             failures.push(format!("{}: object not found", fn_.name));
             return;
         };
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
 
         // Base type
         let got_type = match obj.type_id() {
             Some(tid) => {
-                let base = mib.type_(tid).effective_base(mib.types_slice());
+                let base = mib.raw().type_(tid).effective_base(mib.types_slice());
                 normalize_base_type(base).to_string()
             }
             None => String::new(),
@@ -355,7 +355,7 @@ fn fixture_types() {
         // TC name
         let got_tc = match obj.type_id() {
             Some(tid) => {
-                let t = mib.type_(tid);
+                let t = mib.raw().type_(tid);
                 if t.is_textual_convention() {
                     t.name().to_string()
                 } else {
@@ -399,7 +399,7 @@ fn fixture_enums() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let obj = mib.object(obj_id);
+            let obj = mib.raw().object(obj_id);
             let got = normalize_enums(obj.effective_enums());
             let expected = fixture_enum_map(&fn_.enum_values);
             if got != expected {
@@ -428,7 +428,7 @@ fn fixture_bits() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let obj = mib.object(obj_id);
+            let obj = mib.raw().object(obj_id);
             let got = normalize_enums(obj.effective_bits());
             let expected = fixture_enum_map(&fn_.bit_values);
             if got != expected {
@@ -457,7 +457,7 @@ fn fixture_tables() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let obj = mib.object(obj_id);
+            let obj = mib.raw().object(obj_id);
 
             // Kind
             if !fn_.kind.is_empty() {
@@ -477,7 +477,7 @@ fn fixture_tables() {
                     .iter()
                     .filter_map(|e| {
                         let name = if let Some(oid) = e.object {
-                            mib.object(oid).name().to_string()
+                            mib.raw().object(oid).name().to_string()
                         } else if !e.type_name.is_empty() {
                             e.type_name.clone()
                         } else {
@@ -501,7 +501,7 @@ fn fixture_tables() {
             // Augments
             if !fn_.augments.is_empty() {
                 let got_aug = match obj.augments() {
-                    Some(aug_id) => mib.object(aug_id).name().to_string(),
+                    Some(aug_id) => mib.raw().object(aug_id).name().to_string(),
                     None => String::new(),
                 };
                 if got_aug != fn_.augments {
@@ -531,11 +531,11 @@ fn fixture_access() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let obj = mib.object(obj_id);
+            let obj = mib.raw().object(obj_id);
             let got = obj.access().to_string();
             let is_smiv1 = obj
                 .module()
-                .map(|mid| mib.module(mid).language() == Language::SMIv1)
+                .map(|mid| mib.raw().module(mid).language() == Language::SMIv1)
                 .unwrap_or(false);
             if !access_equivalent(&got, &fn_.access, is_smiv1) {
                 failures.push(format!(
@@ -560,9 +560,9 @@ fn fixture_status() {
         |fn_| !fn_.status.is_empty(),
         |mib, _, fn_, failures| {
             let got = if let Some(obj_id) = mib.object_by_name(&fn_.name) {
-                mib.object(obj_id).status().to_string()
+                mib.raw().object(obj_id).status().to_string()
             } else if let Some(notif_id) = mib.notification_by_name(&fn_.name) {
-                mib.notification(notif_id).status().to_string()
+                mib.raw().notification(notif_id).status().to_string()
             } else {
                 failures.push(format!("{}: not found", fn_.name));
                 return;
@@ -593,7 +593,7 @@ fn fixture_ranges() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let obj = mib.object(obj_id);
+            let obj = mib.raw().object(obj_id);
             let mut got: Vec<(i64, i64)> = Vec::new();
             for r in obj.effective_ranges() {
                 got.push((r.min, r.max));
@@ -628,7 +628,7 @@ fn fixture_notifications() {
             failures.push(format!("{}: notification not found", fn_.name));
             return;
         };
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
 
         // OID
         if let Some(node_id) = notif.node() {
@@ -646,7 +646,7 @@ fn fixture_notifications() {
             let got: Vec<String> = notif
                 .objects()
                 .iter()
-                .map(|&oid| mib.object(oid).name().to_string())
+                .map(|&oid| mib.raw().object(oid).name().to_string())
                 .collect();
             if got != *fix_varbinds {
                 failures.push(format!(
@@ -685,7 +685,7 @@ fn fixture_units() {
                 failures.push(format!("{}: object not found", fn_.name));
                 return;
             };
-            let got = mib.object(obj_id).units();
+            let got = mib.raw().object(obj_id).units();
             if got != fn_.units {
                 failures.push(format!(
                     "{}: units: got={got:?} fixture={:?}",
@@ -709,7 +709,7 @@ fn fixture_defval() {
             failures.push(format!("{}: object not found", fn_.name));
             return;
         };
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
         let got = match obj.default_value() {
             Some(dv) if !dv.is_unset() => dv.to_string(),
             _ => String::new(),
@@ -753,9 +753,9 @@ fn fixture_reference() {
         |fn_| !fn_.reference.is_empty(),
         |mib, _, fn_, failures| {
             let got = if let Some(obj_id) = mib.object_by_name(&fn_.name) {
-                mib.object(obj_id).reference().to_string()
+                mib.raw().object(obj_id).reference().to_string()
             } else if let Some(notif_id) = mib.notification_by_name(&fn_.name) {
-                mib.notification(notif_id).reference().to_string()
+                mib.raw().notification(notif_id).reference().to_string()
             } else {
                 failures.push(format!("{}: not found", fn_.name));
                 return;
@@ -787,7 +787,7 @@ fn fixture_module() {
                 return;
             };
             let got = match mib.effective_module(node_id) {
-                Some(mid) => mib.module(mid).name().to_string(),
+                Some(mid) => mib.raw().module(mid).name().to_string(),
                 None => String::new(),
             };
             if got != fn_.module {

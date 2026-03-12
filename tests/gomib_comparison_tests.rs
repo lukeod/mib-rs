@@ -10,7 +10,7 @@ mod common;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
@@ -49,12 +49,12 @@ fn load_fixture(module: &str) -> HashMap<String, FixtureNode> {
 fn load_gomib_mib() -> Mib {
     let dir = corpus_dir();
     let src = dir_source(&dir).expect("failed to create corpus source");
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(ResolverStrictness::Permissive)
         .diagnostic_config(DiagnosticConfig::silent())
         .modules(GOMIB_MODULES.iter().copied());
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 // -- Extraction: mirrors gomib-fixturegen/main.go extractNodes exactly --
@@ -111,17 +111,17 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
 
     // Module: Go does `if mod := node.Module(); mod != nil { n.Module = mod.Name() }`
     if let Some(mod_id) = mib.effective_module(node_id) {
-        e.module = mib.module(mod_id).name().to_string();
+        e.module = mib.raw().module(mod_id).name().to_string();
     }
 
     // Object fields: Go does `if obj := node.Object(); obj != nil { ... }`
     if let Some(obj_id) = node.object() {
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
 
         // Type: Go does `normalizeType(obj.Type())` which returns "" for nil,
         // else `t.EffectiveBase().String()`
         e.typ = match obj.type_id() {
-            Some(tid) => mib.type_(tid).effective_base(mib.types_slice()).to_string(),
+            Some(tid) => mib.raw().type_(tid).effective_base(mib.types_slice()).to_string(),
             None => String::new(),
         };
 
@@ -143,7 +143,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
 
         // TC name: Go does `if t := obj.Type(); t != nil && t.IsTextualConvention() { n.TCName = t.Name() }`
         if let Some(tid) = obj.type_id() {
-            let t = mib.type_(tid);
+            let t = mib.raw().type_(tid);
             if t.is_textual_convention() {
                 e.tc_name = t.name().to_string();
             }
@@ -178,7 +178,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         for idx in obj.index() {
             if let Some(idx_obj_id) = idx.object {
                 e.indexes
-                    .push((mib.object(idx_obj_id).name().to_string(), idx.implied));
+                    .push((mib.raw().object(idx_obj_id).name().to_string(), idx.implied));
             } else if !idx.type_name.is_empty() {
                 e.indexes.push((idx.type_name.clone(), idx.implied));
             }
@@ -186,18 +186,18 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
 
         // Augments
         if let Some(aug_id) = obj.augments() {
-            e.augments = mib.object(aug_id).name().to_string();
+            e.augments = mib.raw().object(aug_id).name().to_string();
         }
     }
 
     // Notification fields: Go does `if notif := node.Notification(); notif != nil { ... }`
     if let Some(notif_id) = node.notification() {
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
         e.status = notif.status().to_string();
         e.reference = notif.reference().to_string();
         e.node_type = "NOTIFICATION-TYPE".to_string();
         for &obj_id in notif.objects() {
-            e.varbinds.push(mib.object(obj_id).name().to_string());
+            e.varbinds.push(mib.raw().object(obj_id).name().to_string());
         }
     }
 
@@ -336,7 +336,7 @@ fn gomib_exhaustive_comparison() {
 
         for node_id in mib.tree().all_nodes() {
             if let Some(mod_id) = mib.effective_module(node_id)
-                && mib.module(mod_id).name() == module
+                && mib.raw().module(mod_id).name() == module
             {
                 let oid = mib.tree().oid_of(node_id).to_string();
                 if !fixture_oids.contains(oid.as_str()) {

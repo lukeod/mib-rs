@@ -2,7 +2,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::object::ObjectData;
 use mib_rs::mib::{Mib, NodeId, UnresolvedKind};
 use mib_rs::source::{dir_source, multi_source};
@@ -21,12 +21,12 @@ fn load_at_strictness(module: &str, strictness: ResolverStrictness) -> Mib {
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(strictness)
         .diagnostic_config(diag)
         .modules([module]);
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 fn load_violation_mib(module: &str, strictness: ResolverStrictness) -> Mib {
@@ -36,12 +36,12 @@ fn load_violation_mib(module: &str, strictness: ResolverStrictness) -> Mib {
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(strictness)
         .diagnostic_config(diag)
         .modules([module]);
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 fn unresolved_symbols<'a>(mib: &'a Mib, module: &str, kind: UnresolvedKind) -> Vec<&'a str> {
@@ -71,7 +71,7 @@ fn require_object<'a>(mib: &'a Mib, name: &str) -> &'a ObjectData {
     let id = mib
         .object_by_name(name)
         .unwrap_or_else(|| panic!("object {name} not found"));
-    mib.object(id)
+    mib.raw().object(id)
 }
 
 fn require_node(mib: &Mib, name: &str) -> NodeId {
@@ -126,7 +126,7 @@ fn oid_global_root_strictness() {
             "unexpected object state at {strictness}"
         );
         if let Some(obj_id) = obj {
-            let node = mib.object(obj_id).node().expect("node missing");
+            let node = mib.raw().object(obj_id).node().expect("node missing");
             assert_eq!(mib.tree().oid_of(node).to_string(), "1.3.6.1.4.1.99999.1");
         }
     }
@@ -162,7 +162,7 @@ fn type_fallback_strictness() {
             );
             if let Some(type_id) = obj.type_id() {
                 assert_eq!(
-                    mib.type_(type_id).effective_base(mib.types_slice()),
+                    mib.raw().type_(type_id).effective_base(mib.types_slice()),
                     want_base
                 );
             }
@@ -189,7 +189,7 @@ fn tc_fallback_strictness() {
                 "{object} at {strictness}"
             );
             if let Some(type_id) = obj.type_id() {
-                let base = mib.type_(type_id).effective_base(mib.types_slice());
+                let base = mib.raw().type_(type_id).effective_base(mib.types_slice());
                 assert_eq!(normalize_base_type(base), want_type);
             }
         }
@@ -231,7 +231,7 @@ fn import_forwarding_type_resolution() {
     let obj = require_object(&mib, "problemForwardedTypeObject");
     let type_id = obj.type_id().expect("type missing");
     assert_eq!(
-        mib.type_(type_id).effective_base(mib.types_slice()),
+        mib.raw().type_(type_id).effective_base(mib.types_slice()),
         BaseType::OctetString
     );
 }
@@ -303,7 +303,7 @@ fn strict_partial_import_resolution_per_symbol() {
     ));
 
     let str_obj = require_object(&mib, "problemPartialString");
-    let str_type = mib.type_(str_obj.type_id().expect("type missing"));
+    let str_type = mib.raw().type_(str_obj.type_id().expect("type missing"));
     assert_eq!(
         str_type.effective_base(mib.types_slice()),
         BaseType::OctetString
@@ -323,7 +323,7 @@ fn strict_imported_metadata_preserved() {
 
     let display = require_object(&mib, "problemStrictDisplayString");
     assert_eq!(
-        mib.type_(display.type_id().expect("type missing"))
+        mib.raw().type_(display.type_id().expect("type missing"))
             .effective_base(mib.types_slice()),
         BaseType::OctetString
     );
@@ -374,7 +374,7 @@ fn semantic_global_lookup_strictness_boundaries() {
         let notif_id = mib
             .notification_by_name("problemGlobalNotification")
             .expect("notification not found");
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
         assert_eq!(notif.objects().len(), want_notif_objects);
         assert_eq!(
             count_diagnostics(&mib, DiagCode::ObjectsUnresolved),
@@ -411,7 +411,7 @@ fn capability_variation_global_lookup_strictness_boundaries() {
         let cap_id = mib
             .capability_by_name("problemGlobalCapability")
             .expect("capability not found");
-        let cap = mib.capability(cap_id);
+        let cap = mib.raw().capability(cap_id);
         assert_eq!(cap.supports().len(), 1);
         let support = &cap.supports()[0];
         assert_eq!(support.object_variations.len(), want_object_variations);
@@ -456,17 +456,17 @@ fn mixed_import_group_keeps_forwarded_oid_symbol() {
     let row = require_object(&mib, "sapBaseInfoEntry");
     assert_eq!(row.index().len(), 3);
     assert_eq!(
-        mib.object(row.index()[0].object.expect("svcId index"))
+        mib.raw().object(row.index()[0].object.expect("svcId index"))
             .name(),
         "svcId"
     );
     assert_eq!(
-        mib.object(row.index()[1].object.expect("sapPortId index"))
+        mib.raw().object(row.index()[1].object.expect("sapPortId index"))
             .name(),
         "sapPortId"
     );
     assert_eq!(
-        mib.object(row.index()[2].object.expect("sapEncapValue index"))
+        mib.raw().object(row.index()[2].object.expect("sapEncapValue index"))
             .name(),
         "sapEncapValue"
     );
@@ -487,7 +487,7 @@ fn strict_mode_index_resolution() {
                 "{entry} should keep index at {strictness}"
             );
             let first = obj.index()[0].object.expect("index object missing");
-            assert_eq!(mib.object(first).name(), "dot1dBasePort");
+            assert_eq!(mib.raw().object(first).name(), "dot1dBasePort");
         }
     }
 }
@@ -497,18 +497,19 @@ fn real_corpus_strict_semantic_resolution() {
     let mib = load_at_strictness("HUAWEI-DISMAN-PING-MIB", ResolverStrictness::Strict);
     let obj = require_object(&mib, "hwPingCtlEntry");
     let augment = obj.augments().expect("augment missing");
-    assert_eq!(mib.object(augment).name(), "pingCtlEntry");
+    assert_eq!(mib.raw().object(augment).name(), "pingCtlEntry");
     let augment_module = mib
+        .raw()
         .object(augment)
         .module()
         .expect("augment module missing");
-    assert_eq!(mib.module(augment_module).name(), "DISMAN-PING-MIB");
+    assert_eq!(mib.raw().module(augment_module).name(), "DISMAN-PING-MIB");
 
     let mib = load_at_strictness("TIMETRA-MPLS-MIB", ResolverStrictness::Strict);
     let comp_id = mib
         .compliance_by_name("tmnxMplsV22v0Compliance")
         .expect("compliance missing");
-    let comp = mib.compliance(comp_id);
+    let comp = mib.raw().compliance(comp_id);
     assert_eq!(comp.modules().len(), 1);
     assert_eq!(comp.modules()[0].mandatory_groups.len(), 4);
     assert_eq!(

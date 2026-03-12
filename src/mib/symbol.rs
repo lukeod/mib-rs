@@ -19,12 +19,12 @@ impl Symbol {
     #[must_use]
     pub fn name<'a>(&self, mib: &'a super::mib::Mib) -> &'a str {
         match self {
-            Symbol::Object(id) => mib.object(*id).name(),
-            Symbol::Notification(id) => mib.notification(*id).name(),
-            Symbol::Group(id) => mib.group(*id).name(),
-            Symbol::Compliance(id) => mib.compliance(*id).name(),
-            Symbol::Capability(id) => mib.capability(*id).name(),
-            Symbol::Type(id) => mib.type_(*id).name(),
+            Symbol::Object(id) => mib.raw().object(*id).name(),
+            Symbol::Notification(id) => mib.raw().notification(*id).name(),
+            Symbol::Group(id) => mib.raw().group(*id).name(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).name(),
+            Symbol::Capability(id) => mib.raw().capability(*id).name(),
+            Symbol::Type(id) => mib.raw().type_(*id).name(),
             Symbol::Node(id) => &mib.tree.get(*id).name,
         }
     }
@@ -33,12 +33,12 @@ impl Symbol {
     #[must_use]
     pub fn span(&self, mib: &super::mib::Mib) -> Span {
         match self {
-            Symbol::Object(id) => mib.object(*id).span(),
-            Symbol::Notification(id) => mib.notification(*id).span(),
-            Symbol::Group(id) => mib.group(*id).span(),
-            Symbol::Compliance(id) => mib.compliance(*id).span(),
-            Symbol::Capability(id) => mib.capability(*id).span(),
-            Symbol::Type(id) => mib.type_(*id).span(),
+            Symbol::Object(id) => mib.raw().object(*id).span(),
+            Symbol::Notification(id) => mib.raw().notification(*id).span(),
+            Symbol::Group(id) => mib.raw().group(*id).span(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).span(),
+            Symbol::Capability(id) => mib.raw().capability(*id).span(),
+            Symbol::Type(id) => mib.raw().type_(*id).span(),
             Symbol::Node(id) => mib.tree.get(*id).span,
         }
     }
@@ -47,12 +47,12 @@ impl Symbol {
     #[must_use]
     pub fn module(&self, mib: &super::mib::Mib) -> Option<ModuleId> {
         match self {
-            Symbol::Object(id) => mib.object(*id).module(),
-            Symbol::Notification(id) => mib.notification(*id).module(),
-            Symbol::Group(id) => mib.group(*id).module(),
-            Symbol::Compliance(id) => mib.compliance(*id).module(),
-            Symbol::Capability(id) => mib.capability(*id).module(),
-            Symbol::Type(id) => mib.type_(*id).module(),
+            Symbol::Object(id) => mib.raw().object(*id).module(),
+            Symbol::Notification(id) => mib.raw().notification(*id).module(),
+            Symbol::Group(id) => mib.raw().group(*id).module(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).module(),
+            Symbol::Capability(id) => mib.raw().capability(*id).module(),
+            Symbol::Type(id) => mib.raw().type_(*id).module(),
             Symbol::Node(id) => mib.effective_module(*id),
         }
     }
@@ -61,11 +61,11 @@ impl Symbol {
     #[must_use]
     pub fn node(&self, mib: &super::mib::Mib) -> Option<NodeId> {
         match self {
-            Symbol::Object(id) => mib.object(*id).node(),
-            Symbol::Notification(id) => mib.notification(*id).node(),
-            Symbol::Group(id) => mib.group(*id).node(),
-            Symbol::Compliance(id) => mib.compliance(*id).node(),
-            Symbol::Capability(id) => mib.capability(*id).node(),
+            Symbol::Object(id) => mib.raw().object(*id).node(),
+            Symbol::Notification(id) => mib.raw().notification(*id).node(),
+            Symbol::Group(id) => mib.raw().group(*id).node(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).node(),
+            Symbol::Capability(id) => mib.raw().capability(*id).node(),
             Symbol::Type(_) => None,
             Symbol::Node(id) => Some(*id),
         }
@@ -75,12 +75,12 @@ impl Symbol {
     #[must_use]
     pub fn status(&self, mib: &super::mib::Mib) -> Status {
         match self {
-            Symbol::Object(id) => mib.object(*id).status(),
-            Symbol::Notification(id) => mib.notification(*id).status(),
-            Symbol::Group(id) => mib.group(*id).status(),
-            Symbol::Compliance(id) => mib.compliance(*id).status(),
-            Symbol::Capability(id) => mib.capability(*id).status(),
-            Symbol::Type(id) => mib.type_(*id).status(),
+            Symbol::Object(id) => mib.raw().object(*id).status(),
+            Symbol::Notification(id) => mib.raw().notification(*id).status(),
+            Symbol::Group(id) => mib.raw().group(*id).status(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).status(),
+            Symbol::Capability(id) => mib.raw().capability(*id).status(),
+            Symbol::Type(id) => mib.raw().type_(*id).status(),
             Symbol::Node(_) => Status::default(),
         }
     }

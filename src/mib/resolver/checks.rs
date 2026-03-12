@@ -151,9 +151,9 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                 .tree()
                 .get(node_id)
                 .object
-                .and_then(|oid| ctx.mib.object(oid).typ)
+                .and_then(|oid| ctx.mib.raw().object(oid).typ)
             {
-                let t = ctx.mib.type_(type_id);
+                let t = ctx.mib.raw().type_(type_id);
                 let base = t.effective_base(ctx.mib.types_slice());
                 if (base == BaseType::Counter32 || base == BaseType::Counter64)
                     && !matches!(ot.access, Access::ReadOnly | Access::AccessibleForNotify)
@@ -647,7 +647,7 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         .get(&ir_id)
                         .and_then(|syms| syms.get(&td.name))
                         .copied()
-                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))
+                        .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))
                         .and_then(|base| {
                             if base == BaseType::Unknown {
                                 diagnostic_base_from_syntax(&td.syntax)
@@ -665,8 +665,8 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         .and_then(|syms| syms.get(&ot.name))
                         .copied()
                         .and_then(|nid| ctx.mib.tree().get(nid).object)
-                        .and_then(|oid| ctx.mib.object(oid).typ)
-                        .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()));
+                        .and_then(|oid| ctx.mib.raw().object(oid).typ)
+                        .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()));
                     collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.span, base);
                 }
                 _ => {}
@@ -935,9 +935,9 @@ fn check_tc_nested(ctx: &mut ResolverContext) {
                 None => continue,
             };
 
-            let t = ctx.mib.type_(type_id);
+            let t = ctx.mib.raw().type_(type_id);
             if let Some(parent_id) = t.parent() {
-                let parent = ctx.mib.type_(parent_id);
+                let parent = ctx.mib.raw().type_(parent_id);
                 if parent.is_textual_convention() {
                     diags.push(Diag {
                         code: DiagCode::TCNested,
@@ -982,12 +982,12 @@ fn check_opaque_smiv2(ctx: &mut ResolverContext) {
                 Some(id) => id,
                 None => continue,
             };
-            let type_id = match ctx.mib.object(obj_id).typ {
+            let type_id = match ctx.mib.raw().object(obj_id).typ {
                 Some(id) => id,
                 None => continue,
             };
 
-            let t = ctx.mib.type_(type_id);
+            let t = ctx.mib.raw().type_(type_id);
             if t.effective_base(ctx.mib.types_slice()) == BaseType::Opaque {
                 diags.push(Diag {
                     code: DiagCode::OpaqueSMIv2,
@@ -1390,7 +1390,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                     Some(id) => id,
                     None => continue,
                 };
-                let col_type_id = match ctx.mib.object(col_obj_id).typ {
+                let col_type_id = match ctx.mib.raw().object(col_obj_id).typ {
                     Some(id) => id,
                     None => continue,
                 };
@@ -1398,7 +1398,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                 if field_type_name.is_empty() {
                     continue;
                 }
-                let col_type = ctx.mib.type_(col_type_id);
+                let col_type = ctx.mib.raw().type_(col_type_id);
                 let col_type_name = col_type.name();
                 let col_base = col_type.effective_base(ctx.mib.types_slice());
                 if !sequence_types_compatible(&field_type_name, col_type_name, col_base) {
@@ -1434,7 +1434,7 @@ fn check_group_membership(ctx: &mut ResolverContext) {
         }
         let mid = ModuleId::new(mid_idx as u32);
         for &gid in module.groups() {
-            let grp = ctx.mib.group(gid);
+            let grp = ctx.mib.raw().group(gid);
             let info = module_groups.entry(mid).or_default();
             if grp.is_notification_group() {
                 info.has_notification_group = true;
@@ -1450,7 +1450,7 @@ fn check_group_membership(ctx: &mut ResolverContext) {
         .map(|i| ObjectId::new(i as u32))
         .collect();
     for obj_id in object_ids {
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let Some(module_id) = obj.module() else {
             continue;
         };
@@ -1482,7 +1482,7 @@ fn check_group_membership(ctx: &mut ResolverContext) {
         .map(|i| crate::mib::NotificationId::new(i as u32))
         .collect();
     for notif_id in notif_ids {
-        let notif = ctx.mib.notification(notif_id);
+        let notif = ctx.mib.raw().notification(notif_id);
         let Some(module_id) = notif.module() else {
             continue;
         };
@@ -1643,7 +1643,7 @@ fn collect_compliance_group_member_names(
     let Some(group_id) = ctx.mib.tree().get(node_id).group else {
         return;
     };
-    for &member_node in ctx.mib.group(group_id).members() {
+    for &member_node in ctx.mib.raw().group(group_id).members() {
         let name = ctx.mib.tree().get(member_node).name().to_string();
         if !name.is_empty() {
             out.insert(name);
@@ -1715,7 +1715,7 @@ fn check_row_status_defaults(ctx: &mut ResolverContext) {
         .map(|i| ObjectId::new(i as u32))
         .collect();
     for obj_id in object_ids {
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let Some(type_id) = obj.type_id() else {
             continue;
         };
@@ -1729,7 +1729,7 @@ fn check_row_status_defaults(ctx: &mut ResolverContext) {
         let Some(ir_mod) = ctx.resolved_to_module.get(&module_id).copied() else {
             continue;
         };
-        let lang = ctx.mib.module(module_id).language();
+        let lang = ctx.mib.raw().module(module_id).language();
         let access = obj.access();
         if lang == Language::SMIv2 && access != Access::ReadCreate {
             diags.push(Diag {
@@ -1788,7 +1788,7 @@ fn check_storage_type_defaults(ctx: &mut ResolverContext) {
         .map(|i| ObjectId::new(i as u32))
         .collect();
     for obj_id in object_ids {
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let Some(type_id) = obj.type_id() else {
             continue;
         };
@@ -1856,7 +1856,7 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
         .collect();
 
     for oid in object_ids {
-        let obj = ctx.mib.object(oid);
+        let obj = ctx.mib.raw().object(oid);
         let Some(type_id) = obj.type_id() else {
             continue;
         };
@@ -1874,6 +1874,7 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
         };
         let has_sibling = row_column_objects(ctx, row_id).iter().any(|&col| {
             ctx.mib
+                .raw()
                 .object(col)
                 .type_id()
                 .is_some_and(|ct| is_derived_from_type(ctx, ct, t_domain))
@@ -2007,7 +2008,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
         .collect();
 
     for oid in &object_ids {
-        let obj = ctx.mib.object(*oid);
+        let obj = ctx.mib.raw().object(*oid);
         let Some(type_id) = obj.type_id() else {
             continue;
         };
@@ -2028,6 +2029,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
             if let Some(row_id) = row_object_for_column(ctx, node_id) {
                 let has_sibling = row_column_objects(ctx, row_id).iter().any(|&col| {
                     ctx.mib
+                        .raw()
                         .object(col)
                         .type_id()
                         .is_some_and(|ct| is_derived_from_type(ctx, ct, addr_type_type_id))
@@ -2054,7 +2056,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
             });
             if has_enum_syntax && let Some(row_id) = row_object_for_column(ctx, node_id) {
                 for col in row_column_objects(ctx, row_id) {
-                    let col_obj = ctx.mib.object(col);
+                    let col_obj = ctx.mib.raw().object(col);
                     let Some(col_type) = col_obj.type_id() else {
                         continue;
                     };
@@ -2095,7 +2097,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
         // Check 3: specific variant used instead of generic address type.
         for &specific_id in &specific_type_ids {
             if is_derived_from_type(ctx, type_id, specific_id) {
-                let variant_name = ctx.mib.type_(specific_id).name().to_string();
+                let variant_name = ctx.mib.raw().type_(specific_id).name().to_string();
                 checks.push(PairingCheck {
                     ir_mod,
                     span: obj_span,
@@ -2174,7 +2176,7 @@ fn row_object_for_column(ctx: &ResolverContext, column_node: NodeId) -> Option<O
 }
 
 fn row_column_objects(ctx: &ResolverContext, row_obj: ObjectId) -> Vec<ObjectId> {
-    let Some(row_node) = ctx.mib.object(row_obj).node() else {
+    let Some(row_node) = ctx.mib.raw().object(row_obj).node() else {
         return Vec::new();
     };
     ctx.mib
@@ -2199,7 +2201,7 @@ fn is_derived_from_type(ctx: &ResolverContext, type_id: TypeId, target: TypeId) 
         if tid == target {
             return true;
         }
-        current = ctx.mib.type_(tid).parent();
+        current = ctx.mib.raw().type_(tid).parent();
         depth += 1;
     }
     false
@@ -2269,7 +2271,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
 
     for i in 0..ctx.mib.objects_slice().len() {
         let obj_id = ObjectId::new(i as u32);
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let dv = match obj.default_value() {
             Some(dv) => dv,
             None => continue,
@@ -2278,7 +2280,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
             Some(t) => t,
             None => continue,
         };
-        let t = ctx.mib.type_(type_id);
+        let t = ctx.mib.raw().type_(type_id);
         let base = t.effective_base(ctx.mib.types_slice());
         let module_id = obj.module();
         let ir_mod = module_id.and_then(|m| ctx.resolved_to_module.get(&m).copied());
@@ -2497,7 +2499,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
 
     for i in 0..ctx.mib.objects_slice().len() {
         let obj_id = ObjectId::new(i as u32);
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let index = obj.index();
         if index.is_empty() {
             continue;
@@ -2506,7 +2508,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
         let module_id = obj.module();
         let ir_mod = module_id.and_then(|m| ctx.resolved_to_module.get(&m).copied());
         let lang = module_id
-            .map(|m| ctx.mib.module(m).language())
+            .map(|m| ctx.mib.raw().module(m).language())
             .unwrap_or(Language::Unknown);
         let span = obj.span();
         let obj_name = obj.name().to_string();
@@ -2517,7 +2519,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                 None => continue,
             };
 
-            let idx_obj = ctx.mib.object(idx_obj_id);
+            let idx_obj = ctx.mib.raw().object(idx_obj_id);
             let idx_name = idx_obj.name().to_string();
 
             // INDEX column access checks.
@@ -2565,7 +2567,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                 Some(t) => t,
                 None => continue,
             };
-            let t = ctx.mib.type_(type_id);
+            let t = ctx.mib.raw().type_(type_id);
             let base = t.effective_base(ctx.mib.types_slice());
 
             if base == BaseType::Counter32 {
@@ -2693,7 +2695,7 @@ fn is_legal_index_basetype(base: BaseType) -> bool {
 }
 
 fn check_index_oid_length(ctx: &mut ResolverContext, obj_id: ObjectId) {
-    let obj = ctx.mib.object(obj_id);
+    let obj = ctx.mib.raw().object(obj_id);
     let node_id = match obj.node() {
         Some(n) => n,
         None => return,
@@ -2733,7 +2735,7 @@ fn index_element_sub_ids(
 ) -> Option<usize> {
     use crate::types::IndexEncoding;
     let obj_id = entry.object?;
-    let obj = ctx.mib.object(obj_id);
+    let obj = ctx.mib.raw().object(obj_id);
     match entry.encoding {
         IndexEncoding::Integer => Some(1),
         IndexEncoding::IpAddress => Some(4),
@@ -2747,7 +2749,7 @@ fn index_element_sub_ids(
         IndexEncoding::LengthPrefixed => {
             let base = obj
                 .typ
-                .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))?;
+                .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))?;
             if base == BaseType::ObjectIdentifier {
                 return Some(129);
             }
@@ -2757,7 +2759,7 @@ fn index_element_sub_ids(
         IndexEncoding::Implied => {
             let base = obj
                 .typ
-                .map(|tid| ctx.mib.type_(tid).effective_base(ctx.mib.types_slice()))?;
+                .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))?;
             if base == BaseType::ObjectIdentifier {
                 return Some(128);
             }
@@ -2810,7 +2812,7 @@ fn check_enum_subtyping_syntax(
         None => return,
     };
 
-    let parent_type = ctx.mib.type_(parent_type_id);
+    let parent_type = ctx.mib.raw().type_(parent_type_id);
     let parent_bits = parent_type.effective_bits(ctx.mib.types_slice());
     let parent_enums = parent_type.effective_enums(ctx.mib.types_slice());
 
@@ -2953,7 +2955,7 @@ fn check_format_hints(ctx: &mut ResolverContext) {
                 None => continue,
             };
 
-            let t = ctx.mib.type_(type_id);
+            let t = ctx.mib.raw().type_(type_id);
             let base = {
                 let effective = t.effective_base(ctx.mib.types_slice());
                 if effective == BaseType::Unknown {
@@ -3115,19 +3117,19 @@ fn check_type_status_usage(ctx: &mut ResolverContext) {
 
     for i in 0..ctx.mib.objects_slice().len() {
         let obj_id = ObjectId::new(i as u32);
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let module_id = match obj.module() {
             Some(m) => m,
             None => continue,
         };
-        if ctx.mib.module(module_id).is_base() {
+        if ctx.mib.raw().module(module_id).is_base() {
             continue;
         }
         let type_id = match obj.type_id() {
             Some(t) => t,
             None => continue,
         };
-        let t = ctx.mib.type_(type_id);
+        let t = ctx.mib.raw().type_(type_id);
         let ir_mod = ctx.resolved_to_module.get(&module_id).copied();
 
         match t.status() {
@@ -3227,7 +3229,7 @@ fn check_compliance_group_status_inner(
         Some(g) => g,
         None => return,
     };
-    let gs = ctx.mib.group(group_id).status();
+    let gs = ctx.mib.raw().group(group_id).status();
     if gs.is_smiv1() {
         return;
     }
@@ -3259,9 +3261,9 @@ fn check_compliance_object_status_inner(
     };
     let node = ctx.mib.tree().get(node_id);
     let ms = match node.object {
-        Some(obj_id) => ctx.mib.object(obj_id).status(),
+        Some(obj_id) => ctx.mib.raw().object(obj_id).status(),
         None => match node.notification {
-            Some(nid) => ctx.mib.notification(nid).status(),
+            Some(nid) => ctx.mib.raw().notification(nid).status(),
             None => return,
         },
     };
@@ -3387,12 +3389,12 @@ fn check_ip_address_deprecation(ctx: &mut ResolverContext) {
 
     for i in 0..ctx.mib.objects_slice().len() {
         let obj_id = ObjectId::new(i as u32);
-        let obj = ctx.mib.object(obj_id);
+        let obj = ctx.mib.raw().object(obj_id);
         let module_id = match obj.module() {
             Some(m) => m,
             None => continue,
         };
-        let module = ctx.mib.module(module_id);
+        let module = ctx.mib.raw().module(module_id);
         if module.language() != Language::SMIv2 || module.is_base() {
             continue;
         }
@@ -3400,7 +3402,7 @@ fn check_ip_address_deprecation(ctx: &mut ResolverContext) {
             Some(t) => t,
             None => continue,
         };
-        let t = ctx.mib.type_(type_id);
+        let t = ctx.mib.raw().type_(type_id);
         if t.effective_base(ctx.mib.types_slice()) == BaseType::IpAddress {
             let ir_mod = ctx.resolved_to_module.get(&module_id).copied();
             diags.push(Diag {

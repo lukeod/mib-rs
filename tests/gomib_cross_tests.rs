@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use mib_rs::load::{LoadOptions, load};
+use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, ResolverStrictness, Severity};
@@ -273,11 +273,11 @@ fn load_mibrs(strictness: ResolverStrictness) -> Mib {
         fail_at: Severity::Fatal,
         ..Default::default()
     };
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(strictness)
         .diagnostic_config(diag);
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 fn load_mibrs_with_diagnostics(strictness: ResolverStrictness) -> Mib {
@@ -285,11 +285,11 @@ fn load_mibrs_with_diagnostics(strictness: ResolverStrictness) -> Mib {
     let src = dir_source(&dir).expect("failed to create corpus source");
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
-    let opts = LoadOptions::new()
+    let opts = Loader::new()
         .source(src)
         .resolver_strictness(strictness)
         .diagnostic_config(diag);
-    load(opts).expect("load failed").mib
+    load(opts).expect("load failed")
 }
 
 // -- Extraction (mirrors gomib-fixturegen extractNodes) --
@@ -450,7 +450,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     };
 
     if let Some(mod_id) = mib.effective_module(node_id) {
-        let module = mib.module(mod_id);
+        let module = mib.raw().module(mod_id);
         e.module = module.name().to_string();
         if module
             .oid()
@@ -461,10 +461,10 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     }
 
     if let Some(obj_id) = node.object() {
-        let obj = mib.object(obj_id);
+        let obj = mib.raw().object(obj_id);
 
         e.typ = match obj.type_id() {
-            Some(tid) => mib.type_(tid).effective_base(mib.types_slice()).to_string(),
+            Some(tid) => mib.raw().type_(tid).effective_base(mib.types_slice()).to_string(),
             None => String::new(),
         };
 
@@ -484,7 +484,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         };
 
         if let Some(tid) = obj.type_id() {
-            let t = mib.type_(tid);
+            let t = mib.raw().type_(tid);
             if t.is_textual_convention() {
                 e.tc_name = t.name().to_string();
             }
@@ -513,30 +513,30 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         for idx in obj.index() {
             if let Some(idx_obj_id) = idx.object {
                 e.indexes
-                    .push((mib.object(idx_obj_id).name().to_string(), idx.implied));
+                    .push((mib.raw().object(idx_obj_id).name().to_string(), idx.implied));
             } else if !idx.type_name.is_empty() {
                 e.indexes.push((idx.type_name.clone(), idx.implied));
             }
         }
 
         if let Some(aug_id) = obj.augments() {
-            e.augments = mib.object(aug_id).name().to_string();
+            e.augments = mib.raw().object(aug_id).name().to_string();
         }
     }
 
     if let Some(notif_id) = node.notification() {
-        let notif = mib.notification(notif_id);
+        let notif = mib.raw().notification(notif_id);
         e.status = notif.status().to_string();
         e.description = notif.description().to_string();
         e.reference = notif.reference().to_string();
         e.node_type = "NOTIFICATION-TYPE".to_string();
         for &obj_id in notif.objects() {
-            e.varbinds.push(mib.object(obj_id).name().to_string());
+            e.varbinds.push(mib.raw().object(obj_id).name().to_string());
         }
     }
 
     if let Some(group_id) = node.group() {
-        let group = mib.group(group_id);
+        let group = mib.raw().group(group_id);
         e.status = group.status().to_string();
         e.description = group.description().to_string();
         e.reference = group.reference().to_string();
@@ -552,7 +552,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     }
 
     if let Some(comp_id) = node.compliance() {
-        let compliance = mib.compliance(comp_id);
+        let compliance = mib.raw().compliance(comp_id);
         e.status = compliance.status().to_string();
         e.description = compliance.description().to_string();
         e.reference = compliance.reference().to_string();
@@ -565,7 +565,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     }
 
     if let Some(cap_id) = node.capability() {
-        let capability = mib.capability(cap_id);
+        let capability = mib.raw().capability(cap_id);
         e.status = capability.status().to_string();
         e.description = capability.description().to_string();
         e.reference = capability.reference().to_string();
@@ -692,7 +692,7 @@ fn syntax_constraint_type_name(mib: &Mib, sc: &mib_rs::mib::SyntaxConstraints) -
     let Some(type_id) = sc.type_id else {
         return String::new();
     };
-    let type_ = mib.type_(type_id);
+    let type_ = mib.raw().type_(type_id);
     if !type_.name().is_empty() {
         return type_.name().to_string();
     }
@@ -717,7 +717,7 @@ fn base_type_syntax(base: BaseType) -> String {
 }
 
 fn extract_module(mib: &Mib, mod_id: mib_rs::mib::ModuleId) -> ExtractedModule {
-    let module = mib.module(mod_id);
+    let module = mib.raw().module(mod_id);
     let revisions = module
         .revisions()
         .iter()
@@ -736,13 +736,13 @@ fn extract_module(mib: &Mib, mod_id: mib_rs::mib::ModuleId) -> ExtractedModule {
 }
 
 fn extract_type(mib: &Mib, type_id: mib_rs::mib::TypeId) -> ExtractedType {
-    let type_ = mib.type_(type_id);
+    let type_ = mib.raw().type_(type_id);
 
     ExtractedType {
         name: type_.name().to_string(),
         module: type_
             .module()
-            .map(|mod_id| mib.module(mod_id).name().to_string())
+            .map(|mod_id| mib.raw().module(mod_id).name().to_string())
             .unwrap_or_default(),
         parent: type_
             .parent()
@@ -1162,7 +1162,7 @@ fn qualified_type_name(module: &str, name: &str) -> String {
 }
 
 fn normalized_parent_type_name(mib: &Mib, type_id: mib_rs::mib::TypeId) -> String {
-    let type_ = mib.type_(type_id);
+    let type_ = mib.raw().type_(type_id);
     if !type_.name().is_empty() {
         return type_.name().to_string();
     }
@@ -1231,7 +1231,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
 
     for node_id in mib.tree().all_nodes() {
         if let Some(mod_id) = mib.effective_module(node_id) {
-            let mod_name = mib.module(mod_id).name();
+            let mod_name = mib.raw().module(mod_id).name();
             if gomib_node_modules.contains(mod_name) {
                 let oid = mib.tree().oid_of(node_id).to_string();
                 if !gomib_oids.contains(oid.as_str()) {
@@ -1271,7 +1271,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
         .iter()
         .flat_map(|module| {
             module.types().iter().filter_map(|&type_id| {
-                let type_ = mib.type_(type_id);
+                let type_ = mib.raw().type_(type_id);
                 if type_.name().is_empty() {
                     return None;
                 }
@@ -1308,7 +1308,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
 
         let module_name = type_
             .module()
-            .map(|mod_id| mib.module(mod_id).name())
+            .map(|mod_id| mib.raw().module(mod_id).name())
             .unwrap_or_default();
         if !module_name.is_empty() && gomib_type_modules.contains(module_name) {
             let key = qualified_type_name(module_name, type_.name());

@@ -17,11 +17,22 @@ pub mod types;
 
 // Re-exports for convenience
 pub use error::LoadError;
-pub use load::{LoadOptions, LoadResult, load};
-pub use mib::{Oid, ParseOidError, ResolveOidError};
+pub use load::{Loader, load};
+pub use mib::{
+    Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid,
+    ParseOidError, ResolveOidError, Type,
+};
 pub use source::{FindResult, Source};
 pub use token::{Token, TokenKind};
 pub use types::{
     Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,
     Language, ReportingLevel, ResolverStrictness, Severity, Status,
 };
+
+pub mod raw {
+    pub use crate::mib::{
+        CapabilityData, CapabilityId, ComplianceData, ComplianceId, GroupData, GroupId,
+        ModuleData, ModuleId, NodeData, NodeId, NotificationData, NotificationId, ObjectData,
+        ObjectId, OidTree, RawMib, Symbol, TypeData, TypeId,
+    };
+}

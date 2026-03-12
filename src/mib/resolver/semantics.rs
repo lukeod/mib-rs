@@ -197,7 +197,7 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         // tcpConnTable). Compare the existing object's source module, not
         // the node's module from OID phase.
         let existing_obj = ctx.mib.tree().get(node_id).object;
-        let existing_obj_mod = existing_obj.and_then(|oid| ctx.mib.object(oid).module());
+        let existing_obj_mod = existing_obj.and_then(|oid| ctx.mib.raw().object(oid).module());
         if existing_obj.is_none() || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
         {
             ctx.mib.tree.attach_object(node_id, obj_id);
@@ -491,10 +491,10 @@ fn check_augments_nesting(ctx: &mut ResolverContext) {
             let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_id, &name) else {
                 continue;
             };
-            let Some(target_obj_id) = ctx.mib.object(obj_id).augments() else {
+            let Some(target_obj_id) = ctx.mib.raw().object(obj_id).augments() else {
                 continue;
             };
-            if ctx.mib.object(target_obj_id).augments().is_some() {
+            if ctx.mib.raw().object(target_obj_id).augments().is_some() {
                 ctx.emit_diagnostic(
                     DiagCode::AugmentNested,
                     Some(ir_id),
@@ -529,14 +529,14 @@ fn resolve_index_entry(
     let obj = lookup_object_in_module_scope(ctx, ir_mod, &item.object);
 
     let encoding = if let Some(obj_id) = obj {
-        let o = ctx.mib.object(obj_id);
+        let o = ctx.mib.raw().object(obj_id);
         let base = o.typ.map_or(BaseType::Unknown, |tid| {
-            ctx.mib.type_(tid).effective_base(ctx.mib.types_slice())
+            ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice())
         });
         let sizes = if !o.sizes.is_empty() {
             &o.sizes
         } else if let Some(tid) = o.typ {
-            ctx.mib.type_(tid).effective_sizes(ctx.mib.types_slice())
+            ctx.mib.raw().type_(tid).effective_sizes(ctx.mib.types_slice())
         } else {
             &[]
         };
@@ -662,7 +662,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         for obj_name in &objects {
             let obj = lookup_object_by_name(ctx, ir_id, obj_name);
             if let Some(obj_id) = obj {
-                if ctx.mib.object(obj_id).access() == Access::NotAccessible {
+                if ctx.mib.raw().object(obj_id).access() == Access::NotAccessible {
                     ctx.emit_diagnostic(
                         DiagCode::NotifObjectAccess,
                         Some(ir_id),
@@ -696,7 +696,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         let notif_id = ctx.mib.add_notification(nd);
 
         let existing = ctx.mib.tree().get(node_id).notification;
-        let existing_mod = existing.and_then(|id| ctx.mib.notification(id).module());
+        let existing_mod = existing.and_then(|id| ctx.mib.raw().notification(id).module());
         if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_notification(node_id, notif_id);
         }
@@ -824,7 +824,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                     }
 
                     if let Some(obj_id) = object_id
-                        && ctx.mib.object(obj_id).access() == Access::NotAccessible
+                        && ctx.mib.raw().object(obj_id).access() == Access::NotAccessible
                     {
                         ctx.emit_diagnostic(
                             DiagCode::GroupNotAccessible,
@@ -876,7 +876,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         let group_id = ctx.mib.add_group(gd);
 
         let existing = ctx.mib.tree().get(node_id).group;
-        let existing_mod = existing.and_then(|id| ctx.mib.group(id).module());
+        let existing_mod = existing.and_then(|id| ctx.mib.raw().group(id).module());
         if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_group(node_id, group_id);
         }
@@ -898,10 +898,10 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
 fn member_node_status(ctx: &ResolverContext, node_id: NodeId) -> Option<Status> {
     let node = ctx.mib.tree().get(node_id);
     if let Some(obj_id) = node.object {
-        return Some(ctx.mib.object(obj_id).status());
+        return Some(ctx.mib.raw().object(obj_id).status());
     }
     if let Some(notif_id) = node.notification {
-        return Some(ctx.mib.notification(notif_id).status());
+        return Some(ctx.mib.raw().notification(notif_id).status());
     }
     None
 }
@@ -1115,7 +1115,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         let comp_id = ctx.mib.add_compliance(cd);
 
         let existing = ctx.mib.tree().get(node_id).compliance;
-        let existing_mod = existing.and_then(|id| ctx.mib.compliance(id).module());
+        let existing_mod = existing.and_then(|id| ctx.mib.raw().compliance(id).module());
         if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_compliance(node_id, comp_id);
         }
@@ -1300,7 +1300,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         let cap_id = ctx.mib.add_capability(cap);
 
         let existing = ctx.mib.tree().get(node_id).capability;
-        let existing_mod = existing.and_then(|id| ctx.mib.capability(id).module());
+        let existing_mod = existing.and_then(|id| ctx.mib.raw().capability(id).module());
         if existing.is_none() || super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
             ctx.mib.tree.attach_capability(node_id, cap_id);
         }
@@ -1362,7 +1362,7 @@ fn convert_defval(
                 );
             }
             let is_bits = typ.is_some_and(|tid| {
-                let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
+                let base = ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice());
                 base == BaseType::Bits
             });
             let bytes = binary_decode(s, is_bits);
@@ -1371,7 +1371,7 @@ fn convert_defval(
         ir::syntax::DefVal::Enum(label) => {
             // Check if this is an OID reference by checking the object's base type.
             let is_oid = typ.is_some_and(|tid| {
-                let base = ctx.mib.type_(tid).effective_base(ctx.mib.types_slice());
+                let base = ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice());
                 base == BaseType::ObjectIdentifier
             });
             if is_oid {
