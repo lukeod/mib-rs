@@ -490,24 +490,23 @@ fn check_type_unreferenced(ctx: &mut ResolverContext) {
     let mut referenced: Vec<std::collections::HashSet<String>> =
         vec![std::collections::HashSet::new(); ctx.modules.len()];
 
-    for idx in 0..ctx.modules.len() {
-        let m = &ctx.modules[idx];
+    for (m, refs) in ctx.modules.iter().zip(referenced.iter_mut()) {
         for def in &m.definitions {
             match def {
                 ir::Definition::ObjectType(ot) => {
-                    collect_type_refs(&ot.syntax, &mut referenced[idx]);
+                    collect_type_refs(&ot.syntax, refs);
                 }
                 ir::Definition::TypeDef(td) => {
-                    collect_type_refs(&td.syntax, &mut referenced[idx]);
+                    collect_type_refs(&td.syntax, refs);
                 }
                 ir::Definition::ModuleCompliance(comp) => {
                     for cm in &comp.modules {
                         for obj in &cm.objects {
                             if let Some(syntax) = &obj.syntax {
-                                collect_type_refs(syntax, &mut referenced[idx]);
+                                collect_type_refs(syntax, refs);
                             }
                             if let Some(syntax) = &obj.write_syntax {
-                                collect_type_refs(syntax, &mut referenced[idx]);
+                                collect_type_refs(syntax, refs);
                             }
                         }
                     }
@@ -516,10 +515,10 @@ fn check_type_unreferenced(ctx: &mut ResolverContext) {
                     for support in &cap.supports {
                         for variation in &support.variations {
                             if let Some(syntax) = &variation.syntax {
-                                collect_type_refs(syntax, &mut referenced[idx]);
+                                collect_type_refs(syntax, refs);
                             }
                             if let Some(syntax) = &variation.write_syntax {
-                                collect_type_refs(syntax, &mut referenced[idx]);
+                                collect_type_refs(syntax, refs);
                             }
                         }
                     }

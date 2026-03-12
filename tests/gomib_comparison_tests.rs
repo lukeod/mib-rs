@@ -229,10 +229,10 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         }
 
         // DefaultValue: Go does `if dv := obj.DefaultValue(); !dv.IsZero() { n.DefaultValue = dv.String() }`
-        if let Some(dv) = obj.default_value() {
-            if !dv.is_unset() {
-                e.default_value = dv.to_string();
-            }
+        if let Some(dv) = obj.default_value()
+            && !dv.is_unset()
+        {
+            e.default_value = dv.to_string();
         }
 
         // Indexes
@@ -396,15 +396,15 @@ fn gomib_exhaustive_comparison() {
             fixture.keys().map(|s| s.as_str()).collect();
 
         for node_id in mib.tree().all_nodes() {
-            if let Some(mod_id) = mib.effective_module(node_id) {
-                if mib.module(mod_id).name() == module {
-                    let oid = mib.tree().oid_of(node_id).to_string();
-                    if !fixture_oids.contains(oid.as_str()) {
-                        let name = mib.tree().get(node_id).name();
-                        failures.push(format!(
-                            "{name} ({oid}): node exists in mib-rs module {module} but not in fixture"
-                        ));
-                    }
+            if let Some(mod_id) = mib.effective_module(node_id)
+                && mib.module(mod_id).name() == module
+            {
+                let oid = mib.tree().oid_of(node_id).to_string();
+                if !fixture_oids.contains(oid.as_str()) {
+                    let name = mib.tree().get(node_id).name();
+                    failures.push(format!(
+                        "{name} ({oid}): node exists in mib-rs module {module} but not in fixture"
+                    ));
                 }
             }
         }

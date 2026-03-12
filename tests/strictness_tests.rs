@@ -20,8 +20,8 @@ fn violations_dir() -> PathBuf {
 
 fn load_at_strictness(module: &str, strictness: ResolverStrictness) -> Mib {
     let src = multi_source(vec![
-        dir_source(&corpus_dir()).expect("failed to create corpus source"),
-        dir_source(&problems_dir()).expect("failed to create problems source"),
+        dir_source(corpus_dir()).expect("failed to create corpus source"),
+        dir_source(problems_dir()).expect("failed to create problems source"),
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;
@@ -35,8 +35,8 @@ fn load_at_strictness(module: &str, strictness: ResolverStrictness) -> Mib {
 
 fn load_violation_mib(module: &str, strictness: ResolverStrictness) -> Mib {
     let src = multi_source(vec![
-        dir_source(&corpus_dir()).expect("failed to create corpus source"),
-        dir_source(&violations_dir()).expect("failed to create violations source"),
+        dir_source(corpus_dir()).expect("failed to create corpus source"),
+        dir_source(violations_dir()).expect("failed to create violations source"),
     ]);
     let mut diag = DiagnosticConfig::verbose();
     diag.fail_at = Severity::Fatal;

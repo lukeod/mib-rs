@@ -371,10 +371,7 @@ fn is_user_defined_type(mib: &Mib, td: &TypeData) -> bool {
     if td.is_textual_convention() {
         return true;
     }
-    match td.module() {
-        Some(mid) if mib.module(mid).is_base() => false,
-        _ => true,
-    }
+    !matches!(td.module(), Some(mid) if mib.module(mid).is_base())
 }
 
 // --- Export building ---

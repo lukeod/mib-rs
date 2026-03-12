@@ -307,6 +307,6 @@ mod tests {
         };
         assert!(d1 < d2);
         assert!(d2 > d1);
-        assert!(!(d1 > d2));
+        assert!(d1 <= d2);
     }
 }

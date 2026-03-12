@@ -313,7 +313,7 @@ fn for_each_fixture_node(
     let mut failures = Vec::new();
     for &module in FIXTURE_MODULES {
         let fixture = load_fixture(module);
-        for (_, fn_) in &fixture {
+        for fn_ in fixture.values() {
             if !filter(fn_) {
                 continue;
             }
@@ -409,24 +409,24 @@ fn fixture_types() {
             }
             None => String::new(),
         };
-        if !fn_.tc_name.is_empty() || !got_tc.is_empty() {
-            if got_tc != fn_.tc_name {
-                failures.push(format!(
-                    "{}: TC name: got={got_tc:?} fixture={:?}",
-                    fn_.name, fn_.tc_name
-                ));
-            }
+        if (!fn_.tc_name.is_empty() || !got_tc.is_empty())
+            && got_tc != fn_.tc_name
+        {
+            failures.push(format!(
+                "{}: TC name: got={got_tc:?} fixture={:?}",
+                fn_.name, fn_.tc_name
+            ));
         }
 
         // Display hint
         let got_hint = obj.effective_display_hint();
-        if !fn_.hint.is_empty() || !got_hint.is_empty() {
-            if !hints_equivalent(got_hint, &fn_.hint) {
-                failures.push(format!(
-                    "{}: hint: got={got_hint:?} fixture={:?}",
-                    fn_.name, fn_.hint
-                ));
-            }
+        if (!fn_.hint.is_empty() || !got_hint.is_empty())
+            && !hints_equivalent(got_hint, &fn_.hint)
+        {
+            failures.push(format!(
+                "{}: hint: got={got_hint:?} fixture={:?}",
+                fn_.name, fn_.hint
+            ));
         }
     });
     assert!(

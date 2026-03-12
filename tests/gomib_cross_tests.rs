@@ -336,8 +336,10 @@ fn load_mibrs(strictness: ResolverStrictness) -> Mib {
     let src = dir_source(&dir).expect("failed to create corpus source");
     // Never fail on diagnostics, matching Go's behavior where Load always
     // returns a valid Mib.
-    let mut diag = DiagnosticConfig::default();
-    diag.fail_at = Severity::Fatal;
+    let diag = DiagnosticConfig {
+        fail_at: Severity::Fatal,
+        ..Default::default()
+    };
     let opts = LoadOptions::new()
         .source(src)
         .resolver_strictness(strictness)
@@ -569,10 +571,10 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
             e.ranges.push((r.min, r.max));
         }
 
-        if let Some(dv) = obj.default_value() {
-            if !dv.is_unset() {
-                e.default_value = dv.to_string();
-            }
+        if let Some(dv) = obj.default_value()
+            && !dv.is_unset()
+        {
+            e.default_value = dv.to_string();
         }
 
         for idx in obj.index() {

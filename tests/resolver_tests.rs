@@ -1064,7 +1064,7 @@ fn timestamp_normalization_in_module_preference() {
 // --- Object table navigation tests ---
 
 #[test]
-fn table_navigation_ifTable() {
+fn table_navigation_if_table() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r.mib;
 
