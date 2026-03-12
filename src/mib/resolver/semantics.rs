@@ -107,19 +107,7 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
 
 /// Create resolved Object instances from OBJECT-TYPE definitions.
 fn create_resolved_objects(ctx: &mut ResolverContext) {
-    // Collect (ir_mod_idx, def_idx) pairs to avoid borrowing ctx.modules during mutation.
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::ObjectType(_) => Some((idx, di)),
-                    _ => None,
-                })
-        })
-        .collect();
+    let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ObjectType(_)));
 
     let mut created_object_count = 0;
     for (mod_idx, def_idx) in work {
@@ -441,18 +429,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
 
 /// Resolve INDEX and AUGMENTS references after all objects exist.
 fn link_object_indexes(ctx: &mut ResolverContext) {
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::ObjectType(_) => Some((idx, di)),
-                    _ => None,
-                })
-        })
-        .collect();
+    let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ObjectType(_)));
 
     for (mod_idx, def_idx) in work {
         let ir_id = IrModuleId(mod_idx as u32);
@@ -641,18 +618,7 @@ fn lookup_object_in_module_scope(
 
 /// Create resolved Notification instances.
 fn create_resolved_notifications(ctx: &mut ResolverContext) {
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::Notification(_) => Some((idx, di)),
-                    _ => None,
-                })
-        })
-        .collect();
+    let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::Notification(_)));
 
     let mut created_notification_count = 0;
     for (mod_idx, def_idx) in work {
@@ -761,20 +727,12 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
 
 /// Create resolved Group instances (both OBJECT-GROUP and NOTIFICATION-GROUP).
 fn create_resolved_groups(ctx: &mut ResolverContext) {
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::ObjectGroup(_) | ir::Definition::NotificationGroup(_) => {
-                        Some((idx, di))
-                    }
-                    _ => None,
-                })
-        })
-        .collect();
+    let work = ctx.collect_definitions(|def| {
+        matches!(
+            def,
+            ir::Definition::ObjectGroup(_) | ir::Definition::NotificationGroup(_)
+        )
+    });
 
     let mut created_group_count = 0;
     for (mod_idx, def_idx) in work {
@@ -995,18 +953,8 @@ fn check_group_member_status(
 
 /// Create resolved Compliance instances.
 fn create_resolved_compliances(ctx: &mut ResolverContext) {
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::ModuleCompliance(_) => Some((idx, di)),
-                    _ => None,
-                })
-        })
-        .collect();
+    let work =
+        ctx.collect_definitions(|def| matches!(def, ir::Definition::ModuleCompliance(_)));
 
     let mut created_compliance_count = 0;
     for (mod_idx, def_idx) in work {
@@ -1202,18 +1150,8 @@ struct VariationData {
 
 /// Create resolved Capability instances.
 fn create_resolved_capabilities(ctx: &mut ResolverContext) {
-    let work: Vec<(usize, usize)> = (0..ctx.modules.len())
-        .flat_map(|idx| {
-            ctx.modules[idx]
-                .definitions
-                .iter()
-                .enumerate()
-                .filter_map(move |(di, def)| match def {
-                    ir::Definition::AgentCapabilities(_) => Some((idx, di)),
-                    _ => None,
-                })
-        })
-        .collect();
+    let work =
+        ctx.collect_definitions(|def| matches!(def, ir::Definition::AgentCapabilities(_)));
 
     let mut created_capability_count = 0;
     for (mod_idx, def_idx) in work {

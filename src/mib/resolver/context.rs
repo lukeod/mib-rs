@@ -154,6 +154,29 @@ impl ResolverContext {
             .filter(|(_, m)| !crate::lower::base_modules::is_base_module(&m.name))
     }
 
+    /// Collect (module_index, definition_index) pairs for definitions matching a predicate.
+    /// Used to gather work items before mutating ctx.
+    pub fn collect_definitions(
+        &self,
+        filter: fn(&ir::Definition) -> bool,
+    ) -> Vec<(usize, usize)> {
+        (0..self.modules.len())
+            .flat_map(|idx| {
+                self.modules[idx]
+                    .definitions
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(di, def)| {
+                        if filter(def) {
+                            Some((idx, di))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .collect()
+    }
+
     /// Emit a diagnostic if the config says to report it.
     pub fn emit_diagnostic(
         &mut self,

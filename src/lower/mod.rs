@@ -383,6 +383,60 @@ fn check_empty_required(
     }
 }
 
+/// Check required DESCRIPTION and optional REFERENCE for emptiness.
+/// Used by most SMIv2 definition types.
+fn check_description_reference(
+    ctx: &mut LoweringContext,
+    description: &str,
+    reference: &Option<ast::QuotedString>,
+    span: Span,
+    def_name: &str,
+) {
+    check_empty_required(
+        ctx,
+        description,
+        span,
+        def_name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        reference,
+        span,
+        def_name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
+}
+
+/// Check optional DESCRIPTION and optional REFERENCE for emptiness.
+/// Used by definition types where DESCRIPTION is optional (e.g. OBJECT-TYPE, TRAP-TYPE).
+fn check_optional_description_reference(
+    ctx: &mut LoweringContext,
+    description: &Option<ast::QuotedString>,
+    reference: &Option<ast::QuotedString>,
+    span: Span,
+    def_name: &str,
+) {
+    check_empty_optional(
+        ctx,
+        description,
+        span,
+        def_name,
+        "DESCRIPTION",
+        DiagCode::EmptyDescription,
+    );
+    check_empty_optional(
+        ctx,
+        reference,
+        span,
+        def_name,
+        "REFERENCE",
+        DiagCode::EmptyReference,
+    );
+}
+
 fn check_module_name_suffix(ctx: &mut LoweringContext, module: &ir::Module) {
     if module.language != Language::SMIv2 || base_modules::is_base_module(&module.name) {
         return;
@@ -544,30 +598,8 @@ fn check_macro_imports(ctx: &mut LoweringContext, ast_module: &ast::Module, modu
 
 fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext) -> ir::ObjectType {
     let name = &def.name.name;
-    check_empty_optional(
-        ctx,
-        &def.description,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
-    check_empty_optional(
-        ctx,
-        &def.units,
-        def.span,
-        name,
-        "UNITS",
-        DiagCode::EmptyUnits,
-    );
+    check_optional_description_reference(ctx, &def.description, &def.reference, def.span, name);
+    check_empty_optional(ctx, &def.units, def.span, name, "UNITS", DiagCode::EmptyUnits);
 
     let augments = def
         .augments
@@ -626,30 +658,9 @@ fn lower_module_identity(
     ctx: &mut LoweringContext,
 ) -> ir::ModuleIdentity {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_required(
-        ctx,
-        &def.organization.value,
-        def.span,
-        name,
-        "ORGANIZATION",
-        DiagCode::EmptyOrganization,
-    );
-    check_empty_required(
-        ctx,
-        &def.contact_info.value,
-        def.span,
-        name,
-        "CONTACT-INFO",
-        DiagCode::EmptyContact,
-    );
+    check_empty_required(ctx, &def.description.value, def.span, name, "DESCRIPTION", DiagCode::EmptyDescription);
+    check_empty_required(ctx, &def.organization.value, def.span, name, "ORGANIZATION", DiagCode::EmptyOrganization);
+    check_empty_required(ctx, &def.contact_info.value, def.span, name, "CONTACT-INFO", DiagCode::EmptyContact);
 
     let revisions = def
         .revisions
@@ -678,22 +689,7 @@ fn lower_object_identity(
     ctx: &mut LoweringContext,
 ) -> ir::ObjectIdentity {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     ir::ObjectIdentity {
         name: name.clone(),
@@ -710,22 +706,7 @@ fn lower_notification_type(
     ctx: &mut LoweringContext,
 ) -> ir::Notification {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     let oid = lower_oid_assignment(&def.oid);
     ir::Notification {
@@ -743,22 +724,7 @@ fn lower_notification_type(
 
 fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext) -> ir::Notification {
     let name = &def.name.name;
-    check_empty_optional(
-        ctx,
-        &def.description,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_optional_description_reference(ctx, &def.description, &def.reference, def.span, name);
 
     ir::Notification {
         name: name.clone(),
@@ -781,30 +747,8 @@ fn lower_textual_convention(
     ctx: &mut LoweringContext,
 ) -> ir::TypeDef {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
-    check_empty_optional(
-        ctx,
-        &def.display_hint,
-        def.span,
-        name,
-        "DISPLAY-HINT",
-        DiagCode::EmptyFormat,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
+    check_empty_optional(ctx, &def.display_hint, def.span, name, "DISPLAY-HINT", DiagCode::EmptyFormat);
 
     ir::TypeDef {
         name: name.clone(),
@@ -858,22 +802,7 @@ fn lower_value_assignment(
 
 fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext) -> ir::ObjectGroup {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     ir::ObjectGroup {
         name: name.clone(),
@@ -891,22 +820,7 @@ fn lower_notification_group(
     ctx: &mut LoweringContext,
 ) -> ir::NotificationGroup {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     ir::NotificationGroup {
         name: name.clone(),
@@ -924,22 +838,7 @@ fn lower_module_compliance(
     ctx: &mut LoweringContext,
 ) -> ir::ModuleCompliance {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     let modules = def
         .modules
@@ -1017,22 +916,7 @@ fn lower_agent_capabilities(
     ctx: &mut LoweringContext,
 ) -> ir::AgentCapabilities {
     let name = &def.name.name;
-    check_empty_required(
-        ctx,
-        &def.description.value,
-        def.span,
-        name,
-        "DESCRIPTION",
-        DiagCode::EmptyDescription,
-    );
-    check_empty_optional(
-        ctx,
-        &def.reference,
-        def.span,
-        name,
-        "REFERENCE",
-        DiagCode::EmptyReference,
-    );
+    check_description_reference(ctx, &def.description.value, &def.reference, def.span, name);
 
     let supports = def
         .supports

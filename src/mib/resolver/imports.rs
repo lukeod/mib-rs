@@ -69,13 +69,15 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             continue;
         }
         seen_symbols.insert(imp.symbol.clone(), imp.module.clone());
-        if !by_module.contains_key(&imp.module) {
-            order.push(imp.module.clone());
+        match by_module.entry(imp.module.clone()) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                order.push(imp.module.clone());
+                e.insert(vec![(imp.symbol.clone(), imp.span)]);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().push((imp.symbol.clone(), imp.span));
+            }
         }
-        by_module
-            .entry(imp.module.clone())
-            .or_default()
-            .push((imp.symbol.clone(), imp.span));
     }
     for dup in duplicates {
         ctx.emit_diagnostic(

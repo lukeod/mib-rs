@@ -153,7 +153,7 @@ fn match_glob(pattern: &str, s: &str) -> bool {
 fn glob_match(pattern: &[u8], s: &[u8]) -> bool {
     let mut pi = 0;
     let mut si = 0;
-    let mut star_pi = usize::MAX;
+    let mut star_pi: Option<usize> = None;
     let mut star_si = 0;
 
     while si < s.len() {
@@ -161,11 +161,11 @@ fn glob_match(pattern: &[u8], s: &[u8]) -> bool {
             pi += 1;
             si += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
-            star_pi = pi;
+            star_pi = Some(pi);
             star_si = si;
             pi += 1;
-        } else if star_pi != usize::MAX {
-            pi = star_pi + 1;
+        } else if let Some(sp) = star_pi {
+            pi = sp + 1;
             star_si += 1;
             si = star_si;
         } else {

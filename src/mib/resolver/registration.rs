@@ -101,16 +101,21 @@ pub(super) fn group_imports(ir_mod: &ir::Module) -> Vec<Import> {
     let mut order: Vec<&str> = Vec::new();
     let mut by_module: HashMap<&str, Vec<ImportSymbol>> = HashMap::new();
     for imp in &ir_mod.imports {
-        if !by_module.contains_key(imp.module.as_str()) {
-            order.push(imp.module.as_str());
+        match by_module.entry(&imp.module) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                order.push(imp.module.as_str());
+                e.insert(vec![ImportSymbol {
+                    name: imp.symbol.clone(),
+                    span: imp.span,
+                }]);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().push(ImportSymbol {
+                    name: imp.symbol.clone(),
+                    span: imp.span,
+                });
+            }
         }
-        by_module
-            .entry(&imp.module)
-            .or_default()
-            .push(ImportSymbol {
-                name: imp.symbol.clone(),
-                span: imp.span,
-            });
     }
 
     order
