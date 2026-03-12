@@ -142,6 +142,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         });
     }
 
+    fn emit_diagnostic_with<F>(&mut self, code: DiagCode, span: Span, message: F)
+    where
+        F: FnOnce() -> String,
+    {
+        if !self.diag_config.should_report(code) {
+            return;
+        }
+        self.diagnostics.push(SpanDiagnostic {
+            severity: code.severity(),
+            code,
+            span,
+            message: message(),
+        });
+    }
+
     // ---- Helper methods ----
 
     fn make_ident(&self, token: Token) -> Ident {
@@ -162,39 +177,31 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn validate_identifier(&mut self, name: &str, span: Span) {
         if name.contains('_') {
-            self.emit_diagnostic(
-                DiagCode::IdentifierUnderscore,
-                span,
-                format!("identifier {:?} contains underscore (RFC violation)", name),
-            );
+            self.emit_diagnostic_with(DiagCode::IdentifierUnderscore, span, || {
+                format!("identifier {:?} contains underscore (RFC violation)", name)
+            });
         }
         if name.ends_with('-') {
-            self.emit_diagnostic(
-                DiagCode::IdentifierHyphenEnd,
-                span,
-                format!("identifier {:?} ends with hyphen", name),
-            );
+            self.emit_diagnostic_with(DiagCode::IdentifierHyphenEnd, span, || {
+                format!("identifier {:?} ends with hyphen", name)
+            });
         }
         if name.len() > 64 {
-            self.emit_diagnostic(
-                DiagCode::IdentifierLength64,
-                span,
+            self.emit_diagnostic_with(DiagCode::IdentifierLength64, span, || {
                 format!(
                     "identifier {:?} exceeds 64 character limit ({} chars)",
                     name,
                     name.len()
-                ),
-            );
+                )
+            });
         } else if name.len() > 32 {
-            self.emit_diagnostic(
-                DiagCode::IdentifierLength32,
-                span,
+            self.emit_diagnostic_with(DiagCode::IdentifierLength32, span, || {
                 format!(
                     "identifier {:?} exceeds 32 character recommendation ({} chars)",
                     name,
                     name.len()
-                ),
-            );
+                )
+            });
         }
     }
 
@@ -202,11 +209,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         if let Some(first) = name.bytes().next()
             && first.is_ascii_uppercase()
         {
-            self.emit_diagnostic(
-                DiagCode::BadIdentifierCase,
-                span,
-                format!("{:?} should start with a lowercase letter", name),
-            );
+            self.emit_diagnostic_with(DiagCode::BadIdentifierCase, span, || {
+                format!("{:?} should start with a lowercase letter", name)
+            });
         }
     }
 
@@ -217,11 +222,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         if self.check(TokenKind::ForbiddenKeyword) {
             let token = self.advance();
             let name = self.text(token.span).to_string();
-            self.emit_diagnostic(
-                DiagCode::KeywordReserved,
-                token.span,
-                format!("identifier {:?} is a reserved ASN.1 keyword", name),
-            );
+            self.emit_diagnostic_with(DiagCode::KeywordReserved, token.span, || {
+                format!("identifier {:?} is a reserved ASN.1 keyword", name)
+            });
             return Ok(token);
         }
         Err(self.make_error("expected identifier".to_string()))
@@ -654,13 +657,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
                 if first == TokenKind::LowercaseIdent {
                     let name = self.text(self.peek().span).to_string();
-                    self.emit_diagnostic(
+                    self.emit_diagnostic_with(
                         DiagCode::BadIdentifierCase,
                         self.peek().span,
-                        format!(
-                            "type assignment {:?} should start with an uppercase letter",
-                            name
-                        ),
+                        || {
+                            format!(
+                                "type assignment {:?} should start with an uppercase letter",
+                                name
+                            )
+                        },
                     );
                 }
                 self.parse_type_assignment()
@@ -1951,14 +1956,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 let ident = self.make_ident(token);
 
                 if token.kind == TokenKind::LowercaseIdent {
-                    self.emit_diagnostic(
-                        DiagCode::BadIdentifierCase,
-                        token.span,
+                    self.emit_diagnostic_with(DiagCode::BadIdentifierCase, token.span, || {
                         format!(
                             "type reference {:?} should start with an uppercase letter",
                             ident.name
-                        ),
-                    );
+                        )
+                    });
                 }
 
                 if self.check(TokenKind::LParen) {

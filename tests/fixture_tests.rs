@@ -10,53 +10,8 @@ use mib_rs::load::{LoadOptions, load};
 use mib_rs::mib::Mib;
 use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, Kind, Language, ResolverStrictness};
-use serde::Deserialize;
 
-use common::corpus_dir;
-
-// -- Fixture schema --
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-#[allow(dead_code)]
-struct FixtureNode {
-    #[serde(rename = "OID")]
-    oid: String,
-    name: String,
-    module: String,
-    #[serde(rename = "Type")]
-    typ: String,
-    access: String,
-    status: String,
-    hint: String,
-    #[serde(rename = "TCName")]
-    tc_name: String,
-    units: String,
-    enum_values: HashMap<String, String>,
-    indexes: Option<Vec<IndexInfo>>,
-    augments: String,
-    ranges: Option<Vec<RangeInfo>>,
-    default_value: String,
-    kind: String,
-    varbinds: Option<Vec<String>>,
-    node_type: String,
-    bit_values: HashMap<String, String>,
-    reference: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct IndexInfo {
-    name: String,
-    implied: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct RangeInfo {
-    low: i64,
-    high: i64,
-}
+use common::{FixtureNode, corpus_dir};
 
 // -- Fixture loading --
 

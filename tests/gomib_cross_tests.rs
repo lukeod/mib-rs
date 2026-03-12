@@ -16,61 +16,10 @@ use mib_rs::source::dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, ResolverStrictness, Severity};
 use serde::Deserialize;
 
-use common::corpus_dir;
+use common::{FixtureNode as CommonFixtureNode, RangeInfo, corpus_dir};
 
 // -- Fixture schema (matches gomib-fixturegen JSON output) --
-
-#[derive(Debug, Deserialize)]
-struct FixtureNode {
-    #[serde(rename = "OID")]
-    oid: String,
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Module")]
-    module: String,
-    #[serde(rename = "Description")]
-    description: String,
-    #[serde(rename = "Type")]
-    typ: String,
-    #[serde(rename = "Access")]
-    access: String,
-    #[serde(rename = "Status")]
-    status: String,
-    #[serde(rename = "Hint")]
-    hint: String,
-    #[serde(rename = "TCName")]
-    tc_name: String,
-    #[serde(rename = "Units")]
-    units: String,
-    #[serde(rename = "EnumValues")]
-    enum_values: HashMap<String, String>,
-    #[serde(rename = "Indexes")]
-    indexes: Option<Vec<IndexInfo>>,
-    #[serde(rename = "Augments")]
-    augments: String,
-    #[serde(rename = "Ranges")]
-    ranges: Option<Vec<RangeInfo>>,
-    #[serde(rename = "DefaultValue")]
-    default_value: String,
-    #[serde(rename = "Kind")]
-    kind: String,
-    #[serde(rename = "Varbinds")]
-    varbinds: Option<Vec<String>>,
-    #[serde(rename = "GroupMembers")]
-    group_members: Option<Vec<String>>,
-    #[serde(rename = "NodeType")]
-    node_type: String,
-    #[serde(rename = "BitValues")]
-    bit_values: HashMap<String, String>,
-    #[serde(rename = "Reference")]
-    reference: String,
-    #[serde(rename = "ProductRelease")]
-    product_release: String,
-    #[serde(rename = "ComplianceModules", default)]
-    compliance_modules: Vec<FixtureComplianceModule>,
-    #[serde(rename = "CapabilitySupports", default)]
-    capability_supports: Vec<FixtureCapabilityModule>,
-}
+type FixtureNode = CommonFixtureNode<FixtureComplianceModule, FixtureCapabilityModule>;
 
 #[derive(Debug, Deserialize)]
 struct FixtureComplianceModule {
@@ -226,22 +175,6 @@ struct FixturePayload {
     types: HashMap<String, FixtureType>,
     #[serde(rename = "Diagnostics", default)]
     diagnostics: Vec<FixtureDiagnostic>,
-}
-
-#[derive(Debug, Deserialize)]
-struct IndexInfo {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Implied")]
-    implied: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct RangeInfo {
-    #[serde(rename = "Low")]
-    low: i64,
-    #[serde(rename = "High")]
-    high: i64,
 }
 
 #[derive(Debug, Deserialize)]

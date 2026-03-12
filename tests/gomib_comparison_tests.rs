@@ -14,69 +14,8 @@ use mib_rs::load::{LoadOptions, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
 use mib_rs::source::dir_source;
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
-use serde::Deserialize;
 
-use common::corpus_dir;
-
-// -- Fixture schema (matches gomib-fixturegen output exactly) --
-
-#[derive(Debug, Deserialize)]
-struct FixtureNode {
-    #[serde(rename = "OID")]
-    oid: String,
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Module")]
-    module: String,
-    #[serde(rename = "Type")]
-    typ: String,
-    #[serde(rename = "Access")]
-    access: String,
-    #[serde(rename = "Status")]
-    status: String,
-    #[serde(rename = "Hint")]
-    hint: String,
-    #[serde(rename = "TCName")]
-    tc_name: String,
-    #[serde(rename = "Units")]
-    units: String,
-    #[serde(rename = "EnumValues")]
-    enum_values: HashMap<String, String>,
-    #[serde(rename = "Indexes")]
-    indexes: Option<Vec<IndexInfo>>,
-    #[serde(rename = "Augments")]
-    augments: String,
-    #[serde(rename = "Ranges")]
-    ranges: Option<Vec<RangeInfo>>,
-    #[serde(rename = "DefaultValue")]
-    default_value: String,
-    #[serde(rename = "Kind")]
-    kind: String,
-    #[serde(rename = "Varbinds")]
-    varbinds: Option<Vec<String>>,
-    #[serde(rename = "NodeType")]
-    node_type: String,
-    #[serde(rename = "BitValues")]
-    bit_values: HashMap<String, String>,
-    #[serde(rename = "Reference")]
-    reference: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct IndexInfo {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Implied")]
-    implied: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct RangeInfo {
-    #[serde(rename = "Low")]
-    low: i64,
-    #[serde(rename = "High")]
-    high: i64,
-}
+use common::{FixtureNode, corpus_dir};
 
 // -- Loading --
 

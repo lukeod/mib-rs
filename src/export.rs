@@ -592,6 +592,23 @@ fn cmp_oid(a: &Oid, b: &Oid) -> Ordering {
     a.len().cmp(&b.len())
 }
 
+fn sort_keyed_values<K, T, F>(mut items: Vec<(K, T)>, mut cmp: F) -> Vec<T>
+where
+    F: FnMut(&(K, T), &(K, T)) -> Ordering,
+{
+    items.sort_by(|a, b| cmp(a, b));
+    items.into_iter().map(|(_, value)| value).collect()
+}
+
+fn sort_oid_keyed_values<T, F>(items: Vec<(Oid, T)>, mut tie_break: F) -> Vec<T>
+where
+    F: FnMut(&T, &T) -> Ordering,
+{
+    sort_keyed_values(items, |a, b| {
+        cmp_oid(&a.0, &b.0).then_with(|| tie_break(&a.1, &b.1))
+    })
+}
+
 /// Build the complete schema v1 export payload from a resolved Mib.
 pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let tree = mib.tree();
@@ -763,7 +780,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
 
         let columns: Vec<ExportOidRef> = match kind {
             Kind::Table | Kind::Row => {
-                let mut cols: Vec<(Oid, ExportOidRef)> = mib
+                let cols: Vec<(Oid, ExportOidRef)> = mib
                     .object_columns(obj_id)
                     .into_iter()
                     .map(|cid| {
@@ -775,30 +792,24 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                         (col_oid, object_id_to_ref(mib, cid))
                     })
                     .collect();
-                cols.sort_by(|a, b| {
-                    cmp_oid(&a.0, &b.0)
-                        .then(a.1.module.cmp(&b.1.module))
-                        .then(a.1.name.cmp(&b.1.name))
-                });
-                cols.into_iter().map(|(_, r)| r).collect()
+                sort_oid_keyed_values(cols, |a, b| {
+                    a.module.cmp(&b.module).then(a.name.cmp(&b.name))
+                })
             }
             _ => Vec::new(),
         };
 
         // Sort augmented_by by OID
-        let mut augmented_sorted: Vec<(Oid, ExportOidRef)> = augmented_by
+        let augmented_sorted: Vec<(Oid, ExportOidRef)> = augmented_by
             .into_iter()
             .map(|r| {
                 let o: Oid = r.oid.parse().unwrap_or_default();
                 (o, r)
             })
             .collect();
-        augmented_sorted.sort_by(|a, b| {
-            cmp_oid(&a.0, &b.0)
-                .then(a.1.module.cmp(&b.1.module))
-                .then(a.1.name.cmp(&b.1.name))
+        let augmented_by = sort_oid_keyed_values(augmented_sorted, |a, b| {
+            a.module.cmp(&b.module).then(a.name.cmp(&b.name))
         });
-        let augmented_by = augmented_sorted.into_iter().map(|(_, r)| r).collect();
 
         objects.push((
             oid.clone(),
@@ -825,12 +836,9 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             },
         ));
     }
-    objects.sort_by(|a, b| {
-        cmp_oid(&a.0, &b.0)
-            .then(a.1.module.cmp(&b.1.module))
-            .then(a.1.name.cmp(&b.1.name))
+    let objects = sort_oid_keyed_values(objects, |a, b| {
+        a.module.cmp(&b.module).then(a.name.cmp(&b.name))
     });
-    let objects: Vec<ExportObject> = objects.into_iter().map(|(_, o)| o).collect();
 
     // --- Notifications ---
     let mut notifications: Vec<(Oid, ExportNotification)> = Vec::new();
@@ -879,15 +887,13 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             },
         ));
     }
-    notifications.sort_by(|a, b| {
-        cmp_oid(&a.0, &b.0)
-            .then(a.1.module.cmp(&b.1.module))
-            .then(a.1.name.cmp(&b.1.name))
+    let notifications = sort_oid_keyed_values(notifications, |a, b| {
+        a.module
+            .cmp(&b.module)
+            .then(a.name.cmp(&b.name))
             // "notification" < "trap" alphabetically, preferring NOTIFICATION-TYPE over TRAP-TYPE
-            .then(a.1.kind.cmp(&b.1.kind))
+            .then(a.kind.cmp(&b.kind))
     });
-    let notifications: Vec<ExportNotification> =
-        notifications.into_iter().map(|(_, n)| n).collect();
 
     // --- Groups ---
     let mut groups: Vec<(Oid, ExportGroup)> = Vec::new();
@@ -934,14 +940,13 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             },
         ));
     }
-    groups.sort_by(|a, b| {
-        cmp_oid(&a.0, &b.0)
-            .then(a.1.module.cmp(&b.1.module))
-            .then(a.1.name.cmp(&b.1.name))
+    let groups = sort_oid_keyed_values(groups, |a, b| {
+        a.module
+            .cmp(&b.module)
+            .then(a.name.cmp(&b.name))
             // Prefer larger groups first for duplicate keys
-            .then(b.1.members.len().cmp(&a.1.members.len()))
+            .then(b.members.len().cmp(&a.members.len()))
     });
-    let groups: Vec<ExportGroup> = groups.into_iter().map(|(_, g)| g).collect();
 
     // --- Compliances ---
     let mut compliances: Vec<(Oid, ExportCompliance)> = Vec::new();
@@ -1022,12 +1027,9 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             },
         ));
     }
-    compliances.sort_by(|a, b| {
-        cmp_oid(&a.0, &b.0)
-            .then(a.1.module.cmp(&b.1.module))
-            .then(a.1.name.cmp(&b.1.name))
+    let compliances = sort_oid_keyed_values(compliances, |a, b| {
+        a.module.cmp(&b.module).then(a.name.cmp(&b.name))
     });
-    let compliances: Vec<ExportCompliance> = compliances.into_iter().map(|(_, c)| c).collect();
 
     // --- Capabilities ---
     let mut capabilities: Vec<(Oid, ExportCapability)> = Vec::new();
@@ -1118,12 +1120,9 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             },
         ));
     }
-    capabilities.sort_by(|a, b| {
-        cmp_oid(&a.0, &b.0)
-            .then(a.1.module.cmp(&b.1.module))
-            .then(a.1.name.cmp(&b.1.name))
+    let capabilities = sort_oid_keyed_values(capabilities, |a, b| {
+        a.module.cmp(&b.module).then(a.name.cmp(&b.name))
     });
-    let capabilities: Vec<ExportCapability> = capabilities.into_iter().map(|(_, c)| c).collect();
 
     // --- Diagnostics ---
     let mut diagnostics: Vec<ExportDiagnostic> = mib
