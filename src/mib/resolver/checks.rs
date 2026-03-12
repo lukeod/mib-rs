@@ -647,7 +647,12 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         .get(&ir_id)
                         .and_then(|syms| syms.get(&td.name))
                         .copied()
-                        .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))
+                        .map(|tid| {
+                            ctx.mib
+                                .raw()
+                                .type_(tid)
+                                .effective_base(ctx.mib.types_slice())
+                        })
                         .and_then(|base| {
                             if base == BaseType::Unknown {
                                 diagnostic_base_from_syntax(&td.syntax)
@@ -666,7 +671,12 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         .copied()
                         .and_then(|nid| ctx.mib.tree().get(nid).object)
                         .and_then(|oid| ctx.mib.raw().object(oid).typ)
-                        .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()));
+                        .map(|tid| {
+                            ctx.mib
+                                .raw()
+                                .type_(tid)
+                                .effective_base(ctx.mib.types_slice())
+                        });
                     collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.span, base);
                 }
                 _ => {}
@@ -1137,7 +1147,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
             let name = def.name();
             let span = def.span();
             by_lower
-                .entry(name.to_lowercase())
+                .entry(name.to_ascii_lowercase())
                 .or_default()
                 .push((name, span));
         }
@@ -1994,11 +2004,11 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
     let mut checks: Vec<PairingCheck> = Vec::new();
 
     // Build IR lookup for object syntax (needed for subtyped/SIZE checks).
-    let mut obj_syntax_map: HashMap<(IrModuleId, String), &ir::TypeSyntax> = HashMap::new();
+    let mut obj_syntax_map: HashMap<(IrModuleId, &str), &ir::TypeSyntax> = HashMap::new();
     for (ir_id, m) in ctx.all_modules() {
         for def in &m.definitions {
             if let ir::Definition::ObjectType(ot) = def {
-                obj_syntax_map.insert((ir_id, ot.name.clone()), &ot.syntax);
+                obj_syntax_map.insert((ir_id, &ot.name), &ot.syntax);
             }
         }
     }
@@ -2051,7 +2061,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
             // Only check if the OBJECT-TYPE SYNTAX has explicit enum refinement.
             let has_enum_syntax = ir_mod.is_some_and(|ir_id| {
                 obj_syntax_map
-                    .get(&(ir_id, obj_name.clone()))
+                    .get(&(ir_id, obj_name.as_str()))
                     .is_some_and(|s| matches!(s, ir::TypeSyntax::IntegerEnum { .. }))
             });
             if has_enum_syntax && let Some(row_id) = row_object_for_column(ctx, node_id) {
@@ -2064,19 +2074,17 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
                         continue;
                     }
                     // Check whether the sibling has an explicit SIZE constraint.
-                    let col_name = col_obj.name().to_string();
+                    let col_name = col_obj.name();
                     let has_size = ir_mod.is_some_and(|ir_id| {
-                        obj_syntax_map
-                            .get(&(ir_id, col_name.clone()))
-                            .is_some_and(|s| {
-                                matches!(
-                                    s,
-                                    ir::TypeSyntax::Constrained {
-                                        constraint: ir::Constraint::Size { .. },
-                                        ..
-                                    }
-                                )
-                            })
+                        obj_syntax_map.get(&(ir_id, col_name)).is_some_and(|s| {
+                            matches!(
+                                s,
+                                ir::TypeSyntax::Constrained {
+                                    constraint: ir::Constraint::Size { .. },
+                                    ..
+                                }
+                            )
+                        })
                     });
                     if !has_size {
                         checks.push(PairingCheck {
@@ -2084,7 +2092,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
                             span: obj_span,
                             name: obj_name.clone(),
                             check: PairingCheckKind::Subtyped {
-                                sibling_name: col_name,
+                                sibling_name: col_name.to_string(),
                             },
                         });
                     }
@@ -2747,9 +2755,12 @@ fn index_element_sub_ids(
             Some(sizes[0].max as usize)
         }
         IndexEncoding::LengthPrefixed => {
-            let base = obj
-                .typ
-                .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))?;
+            let base = obj.typ.map(|tid| {
+                ctx.mib
+                    .raw()
+                    .type_(tid)
+                    .effective_base(ctx.mib.types_slice())
+            })?;
             if base == BaseType::ObjectIdentifier {
                 return Some(129);
             }
@@ -2757,9 +2768,12 @@ fn index_element_sub_ids(
             usize::try_from(max).ok().map(|n| n + 1)
         }
         IndexEncoding::Implied => {
-            let base = obj
-                .typ
-                .map(|tid| ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice()))?;
+            let base = obj.typ.map(|tid| {
+                ctx.mib
+                    .raw()
+                    .type_(tid)
+                    .effective_base(ctx.mib.types_slice())
+            })?;
             if base == BaseType::ObjectIdentifier {
                 return Some(128);
             }

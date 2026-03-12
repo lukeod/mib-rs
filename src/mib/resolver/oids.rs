@@ -59,10 +59,10 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
     let (oid_defs, trap_defs) = collect_oid_definitions(ctx);
 
     // Build dependency graph.
-    let mut g = graph::Graph::new();
+    let mut g = graph::Graph::with_capacity(oid_defs.len());
     let mut def_to_gn: Vec<graph::NodeIndex> = Vec::with_capacity(oid_defs.len());
     let mut sym_to_gn_idx: std::collections::HashMap<graph::Symbol, usize> =
-        std::collections::HashMap::new();
+        std::collections::HashMap::with_capacity(oid_defs.len());
 
     for (i, od) in oid_defs.iter().enumerate() {
         let sym = graph::Symbol {

@@ -50,6 +50,14 @@ impl Graph {
         Self::default()
     }
 
+    /// Create a graph with pre-allocated capacity for the given number of nodes.
+    pub fn with_capacity(nodes: usize) -> Self {
+        Graph {
+            inner: DiGraph::with_capacity(nodes, nodes),
+            node_index: HashMap::with_capacity(nodes),
+        }
+    }
+
     /// Add a node to the graph. Returns the node index.
     pub fn add_node(&mut self, sym: Symbol) -> NodeIndex {
         if let Some(&idx) = self.node_index.get(&sym) {

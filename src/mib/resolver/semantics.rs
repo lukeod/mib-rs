@@ -108,6 +108,7 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
 /// Create resolved Object instances from OBJECT-TYPE definitions.
 fn create_resolved_objects(ctx: &mut ResolverContext) {
     let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ObjectType(_)));
+    ctx.mib.objects.reserve(work.len());
 
     let mut created_object_count = 0;
     for (mod_idx, def_idx) in work {
@@ -516,7 +517,9 @@ fn resolve_index_entry(
     item: &ir::definition::IndexItem,
 ) -> Option<IndexEntry> {
     if is_bare_type_index(&item.object) {
-        let type_id = ctx.lookup_type_for_module(ir_mod, &item.object).map(|(id, _)| id);
+        let type_id = ctx
+            .lookup_type_for_module(ir_mod, &item.object)
+            .map(|(id, _)| id);
         let (base, sizes) = if let Some(type_id) = type_id {
             let td = ctx.mib.raw().type_(type_id);
             (
@@ -543,12 +546,18 @@ fn resolve_index_entry(
         let o = ctx.mib.raw().object(obj_id);
         let type_id = o.typ;
         let base = o.typ.map_or(BaseType::Unknown, |tid| {
-            ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice())
+            ctx.mib
+                .raw()
+                .type_(tid)
+                .effective_base(ctx.mib.types_slice())
         });
         let sizes = if !o.sizes.is_empty() {
             &o.sizes
         } else if let Some(tid) = o.typ {
-            ctx.mib.raw().type_(tid).effective_sizes(ctx.mib.types_slice())
+            ctx.mib
+                .raw()
+                .type_(tid)
+                .effective_sizes(ctx.mib.types_slice())
         } else {
             &[]
         };
@@ -630,6 +639,7 @@ fn lookup_object_in_module_scope(
 /// Create resolved Notification instances.
 fn create_resolved_notifications(ctx: &mut ResolverContext) {
     let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::Notification(_)));
+    ctx.mib.notifications.reserve(work.len());
 
     let mut created_notification_count = 0;
     for (mod_idx, def_idx) in work {
@@ -738,6 +748,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
             ir::Definition::ObjectGroup(_) | ir::Definition::NotificationGroup(_)
         )
     });
+    ctx.mib.groups.reserve(work.len());
 
     let mut created_group_count = 0;
     for (mod_idx, def_idx) in work {
@@ -959,6 +970,7 @@ fn check_group_member_status(
 /// Create resolved Compliance instances.
 fn create_resolved_compliances(ctx: &mut ResolverContext) {
     let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ModuleCompliance(_)));
+    ctx.mib.compliances.reserve(work.len());
 
     let mut created_compliance_count = 0;
     for (mod_idx, def_idx) in work {
@@ -1163,6 +1175,7 @@ struct VariationData {
 /// Create resolved Capability instances.
 fn create_resolved_capabilities(ctx: &mut ResolverContext) {
     let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::AgentCapabilities(_)));
+    ctx.mib.capabilities.reserve(work.len());
 
     let mut created_capability_count = 0;
     for (mod_idx, def_idx) in work {
@@ -1375,7 +1388,11 @@ fn convert_defval(
                 );
             }
             let is_bits = typ.is_some_and(|tid| {
-                let base = ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice());
+                let base = ctx
+                    .mib
+                    .raw()
+                    .type_(tid)
+                    .effective_base(ctx.mib.types_slice());
                 base == BaseType::Bits
             });
             let bytes = binary_decode(s, is_bits);
@@ -1384,7 +1401,11 @@ fn convert_defval(
         ir::syntax::DefVal::Enum(label) => {
             // Check if this is an OID reference by checking the object's base type.
             let is_oid = typ.is_some_and(|tid| {
-                let base = ctx.mib.raw().type_(tid).effective_base(ctx.mib.types_slice());
+                let base = ctx
+                    .mib
+                    .raw()
+                    .type_(tid)
+                    .effective_base(ctx.mib.types_slice());
                 base == BaseType::ObjectIdentifier
             });
             if is_oid {
