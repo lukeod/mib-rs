@@ -202,6 +202,18 @@ fn gomib_dir() -> PathBuf {
         .join("gomib")
 }
 
+/// Returns true if the Go toolchain and gomib source tree are available.
+fn can_run_cross_tests() -> bool {
+    let gomib = gomib_dir();
+    if !gomib.join("go.mod").exists() {
+        return false;
+    }
+    Command::new("go")
+        .arg("version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 // -- Build and run gomib-fixturegen --
 
 static FIXTUREGEN_BIN: OnceLock<PathBuf> = OnceLock::new();
@@ -1369,30 +1381,54 @@ fn assert_no_diagnostic_divergences(level: &str, strictness: ResolverStrictness)
 
 #[test]
 fn cross_permissive() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_divergences("permissive", ResolverStrictness::Permissive);
 }
 
 #[test]
 fn cross_normal() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_divergences("normal", ResolverStrictness::Normal);
 }
 
 #[test]
 fn cross_strict() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_divergences("strict", ResolverStrictness::Strict);
 }
 
 #[test]
 fn diagnostics_cross_permissive() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_diagnostic_divergences("permissive", ResolverStrictness::Permissive);
 }
 
 #[test]
 fn diagnostics_cross_normal() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_diagnostic_divergences("normal", ResolverStrictness::Normal);
 }
 
 #[test]
 fn diagnostics_cross_strict() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
     assert_no_diagnostic_divergences("strict", ResolverStrictness::Strict);
 }
