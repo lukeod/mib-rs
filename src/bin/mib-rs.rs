@@ -587,43 +587,35 @@ fn parse_kind(s: &str) -> Option<Kind> {
 }
 
 fn glob_match(pattern: &str, name: &str) -> bool {
-    let mut pi = pattern.chars().peekable();
-    let mut ni = name.chars().peekable();
+    let pattern: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let mut pi = 0;
+    let mut ni = 0;
+    let mut star_pi = None;
+    let mut star_ni = 0;
 
-    while let Some(&pc) = pi.peek() {
-        match pc {
-            '*' => {
-                pi.next();
-                if pi.peek().is_none() {
-                    return true;
-                }
-                while ni.peek().is_some() {
-                    let remaining_name: String = ni.clone().collect();
-                    let remaining_pattern: String = pi.clone().collect();
-                    if glob_match(&remaining_pattern, &remaining_name) {
-                        return true;
-                    }
-                    ni.next();
-                }
-                return false;
-            }
-            '?' => {
-                pi.next();
-                if ni.next().is_none() {
-                    return false;
-                }
-            }
-            c => {
-                pi.next();
-                match ni.next() {
-                    Some(nc) if nc == c => {}
-                    _ => return false,
-                }
-            }
+    while ni < name.len() {
+        if pi < pattern.len() && (pattern[pi] == '?' || pattern[pi] == name[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if pi < pattern.len() && pattern[pi] == '*' {
+            star_pi = Some(pi);
+            star_ni = ni;
+            pi += 1;
+        } else if let Some(sp) = star_pi {
+            pi = sp + 1;
+            star_ni += 1;
+            ni = star_ni;
+        } else {
+            return false;
         }
     }
 
-    ni.peek().is_none()
+    while pi < pattern.len() && pattern[pi] == '*' {
+        pi += 1;
+    }
+
+    pi == pattern.len()
 }
 
 fn cmd_dump(paths: &[String], modules: Vec<String>, strict: bool, permissive: bool) -> i32 {
@@ -671,5 +663,33 @@ fn truncate(s: &str, max_len: usize) -> String {
             .last()
             .unwrap_or(0);
         format!("{}...", &first_line[..end])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glob_match;
+
+    #[test]
+    fn glob_match_matches_literals_and_wildcards() {
+        assert!(glob_match("sys*", "sysDescr"));
+        assert!(glob_match("if?ndex", "ifIndex"));
+        assert!(glob_match("*Entry", "ifTableEntry"));
+        assert!(glob_match("foo**bar", "foobazbar"));
+    }
+
+    #[test]
+    fn glob_match_rejects_non_matches() {
+        assert!(!glob_match("if?ndex", "ifXIndex"));
+        assert!(!glob_match("sys*", "ifDescr"));
+        assert!(!glob_match("*Entry", "ifTable"));
+    }
+
+    #[test]
+    fn glob_match_handles_empty_inputs() {
+        assert!(glob_match("", ""));
+        assert!(glob_match("*", ""));
+        assert!(!glob_match("?", ""));
+        assert!(!glob_match("", "sysDescr"));
     }
 }

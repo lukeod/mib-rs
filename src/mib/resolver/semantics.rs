@@ -970,7 +970,16 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
             span: Span,
         }
 
-        let (name, span, status, description, reference, oid, ir_mod_name, comp_mod_data) = {
+        let (name, span, status, description, reference, oid, ir_mod_name, comp_mod_data): (
+            String,
+            Span,
+            crate::types::Status,
+            String,
+            String,
+            crate::ir::OidAssignment,
+            String,
+            Vec<CompModData>,
+        ) = {
             let mc = match &ctx.modules[mod_idx].definitions[def_idx] {
                 ir::Definition::ModuleCompliance(mc) => mc,
                 _ => continue,
@@ -1156,7 +1165,16 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
             span: Span,
         }
 
-        let (name, span, status, description, reference, product_release, oid, supports_data) = {
+        let (name, span, status, description, reference, product_release, oid, supports_data): (
+            String,
+            Span,
+            crate::types::Status,
+            String,
+            String,
+            String,
+            crate::ir::OidAssignment,
+            Vec<SupportsData>,
+        ) = {
             let ac = match &ctx.modules[mod_idx].definitions[def_idx] {
                 ir::Definition::AgentCapabilities(ac) => ac,
                 _ => continue,

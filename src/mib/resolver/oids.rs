@@ -19,6 +19,12 @@ struct OidDef {
     kind: OidDefKind,
 }
 
+impl OidDef {
+    fn name(&self) -> &str {
+        &self.symbol.name
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OidDefKind {
     ObjectType,
@@ -472,7 +478,7 @@ fn resolve_oid_component(
                 let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
                 let comp_name = format!("{module}.{name}");
                 ctx.record_unresolved_oid(
-                    &od.name,
+                    od.name(),
                     &comp_name,
                     &mod_name,
                     UnresolvedReason::ComponentNotFound,
@@ -581,7 +587,7 @@ fn resolve_name_component(
 
     let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
     ctx.record_unresolved_oid(
-        &od.name,
+        od.name(),
         name,
         &mod_name,
         UnresolvedReason::ComponentNotFound,
@@ -636,7 +642,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
 
     // Detect OID reuse/registration conflicts before overwriting the node label.
     let existing_name = ctx.mib.tree().get(node_id).name.clone();
-    if !existing_name.is_empty() && existing_name != od.name {
+    if !existing_name.is_empty() && existing_name != od.name() {
         let code = if is_registered_kind(ctx.mib.tree().get(node_id).kind) {
             crate::types::DiagCode::OidRegistered
         } else {
@@ -645,10 +651,15 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         let msg = if code == crate::types::DiagCode::OidRegistered {
             format!(
                 "{:?}: registers OID already registered by {:?}",
-                od.name, existing_name
+                od.name(),
+                existing_name
             )
         } else {
-            format!("{:?}: reuses OID assigned to {:?}", od.name, existing_name)
+            format!(
+                "{:?}: reuses OID assigned to {:?}",
+                od.name(),
+                existing_name
+            )
         };
         ctx.emit_diagnostic(code, Some(od.ir_mod), def_span, msg);
     }
@@ -665,7 +676,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
                 crate::types::DiagCode::LastSubidZero,
                 Some(od.ir_mod),
                 def_span,
-                format!("{:?}: last sub-identifier must not be zero", od.name),
+                format!("{:?}: last sub-identifier must not be zero", od.name()),
             );
         }
     }
@@ -677,7 +688,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     let prefer = existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod);
 
     if prefer {
-        ctx.mib.tree.set_name(node_id, od.name.clone());
+        ctx.mib.tree.set_name(node_id, od.name().to_string());
 
         let node_kind = od.kind.to_node_kind();
         ctx.mib.tree.set_kind(node_id, node_kind);
@@ -705,17 +716,17 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     } else if existing_name.is_empty() {
         // No prior name - set name even if module isn't preferred, so the
         // node isn't left unnamed.
-        ctx.mib.tree.set_name(node_id, od.name.clone());
+        ctx.mib.tree.set_name(node_id, od.name().to_string());
     }
 
     // Register symbol -> node mapping.
     ctx.module_symbol_to_node
         .entry(od.ir_mod)
         .or_default()
-        .insert(od.name.clone(), node_id);
+        .insert(od.name().to_string(), node_id);
 
     // Register in Mib name index.
-    ctx.mib.register_node(&od.name, node_id);
+    ctx.mib.register_node(od.name(), node_id);
 
     // Non-semantic definitions get added to module's node list now.
     // Semantic definitions (ObjectType, Notification, etc.) are deferred to semantics phase.
@@ -723,7 +734,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         OidDefKind::ValueAssignment | OidDefKind::ObjectIdentity | OidDefKind::ModuleIdentity => {
             ctx.mib
                 .module_mut(resolved_mod_id)
-                .add_node(&od.name, node_id);
+                .add_node(od.name(), node_id);
         }
         _ => {} // deferred to semantics
     }
@@ -735,18 +746,18 @@ fn finalize_trap_type_definition(ctx: &mut ResolverContext, od: &OidDef, node_id
     let prefer = existing_mod.is_none() || should_prefer_module(ctx, existing_mod, od.ir_mod);
 
     if prefer {
-        ctx.mib.tree.set_name(node_id, od.name.clone());
+        ctx.mib.tree.set_name(node_id, od.name().to_string());
         ctx.mib.tree.set_kind(node_id, Kind::Notification);
         ctx.mib.tree.set_module(node_id, resolved_mod_id);
     } else if ctx.mib.tree().get(node_id).name.is_empty() {
-        ctx.mib.tree.set_name(node_id, od.name.clone());
+        ctx.mib.tree.set_name(node_id, od.name().to_string());
     }
 
     ctx.module_symbol_to_node
         .entry(od.ir_mod)
         .or_default()
-        .insert(od.name.clone(), node_id);
-    ctx.mib.register_node(&od.name, node_id);
+        .insert(od.name().to_string(), node_id);
+    ctx.mib.register_node(od.name(), node_id);
 }
 
 fn is_registered_kind(kind: Kind) -> bool {
@@ -807,7 +818,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
             None => {
                 let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
                 ctx.record_unresolved_oid(
-                    &od.name,
+                    od.name(),
                     &enterprise_name,
                     &mod_name,
                     UnresolvedReason::EnterpriseNotFound,

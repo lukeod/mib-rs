@@ -77,6 +77,7 @@ pub struct FixtureNode<C = serde::de::IgnoredAny, S = serde::de::IgnoredAny> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 pub struct IndexInfo {
     pub name: String,
     pub implied: bool,
@@ -84,6 +85,7 @@ pub struct IndexInfo {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 pub struct RangeInfo {
     pub low: i64,
     pub high: i64,
