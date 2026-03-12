@@ -241,8 +241,8 @@ pub use types::{
 
 /// Low-level resolved data access.
 ///
-/// This module exposes arena ids, backing records, and the explicit [`RawMib`]
-/// view returned by [`Mib::raw()`].
+/// This module exposes arena ids, backing records, and the explicit
+/// [`RawMib`](raw::RawMib) view returned by [`Mib::raw()`].
 pub mod raw {
     pub use crate::mib::{
         CapabilityData, CapabilityId, ComplianceData, ComplianceId, GroupData, GroupId, ModuleData,

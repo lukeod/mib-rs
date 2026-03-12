@@ -5,6 +5,16 @@ edition = "2024"
 description = "SNMP MIB parser and resolver"
 license = "MIT"
 rust-version = "1.88"
+repository = "https://github.com/lukeod/mib-rs"
+documentation = "https://docs.rs/mib-rs"
+readme = "README.md"
+keywords = ["snmp", "mib", "smi", "network", "parser"]
+categories = ["network-programming", "parser-implementations"]
+exclude = ["testdata/corpus/primary/", "testdata/fixtures/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [[bin]]
 name = "mib-rs"

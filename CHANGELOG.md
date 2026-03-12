@@ -1,0 +1,32 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-03-13
+
+### Added
+
+- SMIv1 (RFC 1155/1212/1215) and SMIv2 (RFC 2578/2579/2580) parser
+- Five-phase resolver: registration, imports, types, OIDs, semantics
+- OID tree with numeric and symbolic resolution, instance lookups
+- Type chains with effective base type, display hints, enums, bit fields, ranges
+- Table, row, column, and index resolution (including AUGMENTS and IMPLIED)
+- Notification, group, compliance, and capability resolution
+- Diagnostic collection with configurable strictness (permissive, normal, strict)
+- Synthetic base modules: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, RFC1065-SMI, RFC-1212, RFC-1215
+- System MIB path discovery for net-snmp and libsmi installations
+- Parallel file loading with rayon
+- Three API tiers: high-level handles, low-level raw arena data, compiler pipeline
+- Memory source for loading MIBs from strings/bytes
+- Directory and directory-tree source implementations
+- JSON export (schema v1) with serde feature
+- CLI tool with load, get, find, list, lint, paths, and dump commands
+- Tracing integration for debug and trace logging
+
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/lukeod/mib-rs/releases/tag/v0.1.0
