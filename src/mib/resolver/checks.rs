@@ -738,19 +738,9 @@ fn diagnostic_base_from_syntax(syntax: &ir::TypeSyntax) -> Option<BaseType> {
 }
 
 fn diagnostic_base_from_name(name: &str) -> Option<BaseType> {
-    match name {
-        "INTEGER" | "Integer32" => Some(BaseType::Integer32),
-        "OCTET STRING" => Some(BaseType::OctetString),
-        "OBJECT IDENTIFIER" | "ObjectName" | "NotificationName" => Some(BaseType::ObjectIdentifier),
-        "BITS" => Some(BaseType::Bits),
-        "Counter" | "Counter32" => Some(BaseType::Counter32),
-        "Counter64" => Some(BaseType::Counter64),
-        "Gauge" | "Gauge32" => Some(BaseType::Gauge32),
-        "Unsigned32" => Some(BaseType::Unsigned32),
-        "TimeTicks" => Some(BaseType::TimeTicks),
-        "IpAddress" | "NetworkAddress" => Some(BaseType::IpAddress),
-        "Opaque" => Some(BaseType::Opaque),
-        _ => None,
+    match super::types::base_type_from_name(name) {
+        BaseType::Unknown => None,
+        b => Some(b),
     }
 }
 

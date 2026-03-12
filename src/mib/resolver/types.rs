@@ -114,7 +114,7 @@ pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     }
 }
 
-fn base_type_from_name(name: &str) -> BaseType {
+pub(crate) fn base_type_from_name(name: &str) -> BaseType {
     match name {
         "INTEGER" | "Integer32" => BaseType::Integer32,
         "OCTET STRING" => BaseType::OctetString,

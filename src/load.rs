@@ -85,8 +85,6 @@ impl LoadOptions {
 pub struct LoadResult {
     /// The resolved MIB.
     pub mib: Mib,
-    /// Non-fatal issues encountered during loading.
-    pub warnings: Vec<String>,
 }
 
 /// Load MIB modules from configured sources and resolve them.
@@ -145,7 +143,7 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
     );
     let mib = crate::mib::resolver::resolve(ir_modules, strictness, &diag_config);
 
-    let warnings = check_load_result(&mib, &diag_config, requested_names.as_deref())?;
+    check_load_result(&mib, &diag_config, requested_names.as_deref())?;
 
     info!(
         target: "mib_rs::load",
@@ -154,10 +152,9 @@ pub fn load(options: LoadOptions) -> Result<LoadResult, LoadError> {
         type_count = mib.types_slice().len(),
         node_count = mib.tree().len(),
         diagnostic_count = mib.diagnostics().len(),
-        warning_count = warnings.len(),
         "load complete",
     );
-    Ok(LoadResult { mib, warnings })
+    Ok(LoadResult { mib })
 }
 
 /// Load all modules from all sources in parallel.
@@ -410,9 +407,7 @@ fn check_load_result(
     mib: &Mib,
     diag_config: &DiagnosticConfig,
     requested_modules: Option<&[String]>,
-) -> Result<Vec<String>, LoadError> {
-    let warnings = Vec::new();
-
+) -> Result<(), LoadError> {
     // Check for missing requested modules.
     if let Some(requested) = requested_modules {
         let mut missing = Vec::new();
@@ -448,5 +443,5 @@ fn check_load_result(
         }
     }
 
-    Ok(warnings)
+    Ok(())
 }

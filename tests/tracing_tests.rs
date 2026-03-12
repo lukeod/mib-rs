@@ -282,7 +282,6 @@ END
             && event.fields.contains(r#"component="load""#)
             && event.fields.contains(r#"module_count="#)
             && event.fields.contains(r#"type_count="#)
-            && event.fields.contains(r#"warning_count=0"#)
     }));
 }
 

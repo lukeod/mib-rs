@@ -1180,9 +1180,9 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
             .cmp(&b.phase)
             .then(a.code.cmp(&b.code))
             .then(a.severity.cmp(&b.severity))
-            .then(cmp_opt_str(&a.module, &b.module))
-            .then(cmp_opt(&a.line, &b.line))
-            .then(cmp_opt(&a.column, &b.column))
+            .then(a.module.cmp(&b.module))
+            .then(a.line.cmp(&b.line))
+            .then(a.column.cmp(&b.column))
             .then(a.message.cmp(&b.message))
     });
 
@@ -1254,23 +1254,6 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
     }
 }
 
-fn cmp_opt<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
-    match (a, b) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (Some(a), Some(b)) => a.cmp(b),
-    }
-}
-
-fn cmp_opt_str(a: &Option<String>, b: &Option<String>) -> Ordering {
-    match (a.as_deref(), b.as_deref()) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (Some(a), Some(b)) => a.cmp(b),
-    }
-}
 
 #[cfg(test)]
 mod tests {

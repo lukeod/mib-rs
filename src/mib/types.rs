@@ -230,6 +230,10 @@ impl DefVal {
         &self.raw
     }
 
+    pub fn value(&self) -> &DefValValue {
+        &self.value
+    }
+
     pub fn is_unset(&self) -> bool {
         self.kind == DefValKind::Unset
     }

@@ -190,12 +190,7 @@ fn load_mib(
     }
 
     match load(opts) {
-        Ok(r) => {
-            for w in &r.warnings {
-                eprintln!("warning: {w}");
-            }
-            Ok(r.mib)
-        }
+        Ok(r) => Ok(r.mib),
         Err(e) => {
             eprintln!("error: {e}");
             Err(1)
@@ -659,6 +654,12 @@ fn truncate(s: &str, max_len: usize) -> String {
     if first_line.len() <= max_len {
         first_line.to_string()
     } else {
-        format!("{}...", &first_line[..max_len])
+        let end = first_line
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= max_len)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &first_line[..end])
     }
 }
