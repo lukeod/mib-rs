@@ -93,6 +93,8 @@ pub fn dir_with_config(
     }))
 }
 
+/// Create a Source that chains multiple directory trees.
+/// Equivalent to calling [`dir`] on each root and combining with [`chain`].
 pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
     let mut sources = Vec::new();
     for root in roots {
@@ -164,10 +166,12 @@ struct MemorySource {
     modules: HashMap<String, (PathBuf, Vec<u8>)>,
 }
 
+/// Create a Source backed by a single in-memory MIB module.
 pub fn memory(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Box<dyn Source> {
     memory_modules([(name.into(), bytes.into())])
 }
 
+/// Create a Source backed by multiple in-memory MIB modules.
 pub fn memory_modules(
     modules: impl IntoIterator<Item = (impl Into<String>, impl Into<Vec<u8>>)>,
 ) -> Box<dyn Source> {

@@ -23,16 +23,20 @@ corpus/
 
 ## Usage
 
-```go
-// Load with recursive directory traversal
-src, _ := loader.Dir("testdata/corpus/primary")
-l := loader.New(src)
-l.Load("IF-MIB")  // finds ietf/IF-MIB.mib
+```rust
+use mib_rs::{Loader, source};
+
+let src = source::dir("testdata/corpus/primary").unwrap();
+let mib = Loader::new()
+    .source(src)
+    .modules(["IF-MIB"])  // finds ietf/IF-MIB.mib
+    .load()
+    .unwrap();
 ```
 
 ```bash
 # CLI
-gomib load -p ./testdata/corpus/primary IF-MIB IP-MIB
+mib-rs load -p ./testdata/corpus/primary IF-MIB IP-MIB
 ```
 
 ## Selection Criteria

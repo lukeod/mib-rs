@@ -46,5 +46,5 @@ Notes:
 - The shared OID fixtures intentionally reserve `99998.30` and `99998.31`.
 - The semantic global fixtures intentionally reserve `99998.40` and `99998.41`.
 
-Update this file and `TestProblemCorpusEnterpriseAllocations` together when a
-new synthetic fixture needs a direct `enterprises.*` root.
+Update this file and the problem corpus enterprise allocation test together
+when a new synthetic fixture needs a direct `enterprises.*` root.

@@ -135,6 +135,7 @@ impl<'a> Node<'a> {
             .map(|id| Module::new(self.mib, id))
     }
 
+    /// Return the object attached to this node, if any.
     pub fn object(self) -> Option<Object<'a>> {
         self.data().object().map(|id| Object::new(self.mib, id))
     }

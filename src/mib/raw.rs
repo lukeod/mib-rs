@@ -11,6 +11,10 @@ use super::object::ObjectData;
 use super::typedef::TypeData;
 use super::types::*;
 
+/// Low-level view into the resolved MIB data.
+///
+/// Provides direct access to arena-backed records and the OID tree by id.
+/// Most callers should prefer the high-level handle API ([`super::handle`]).
 #[derive(Clone, Copy)]
 pub struct RawMib<'a> {
     mib: &'a Mib,

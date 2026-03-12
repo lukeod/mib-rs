@@ -197,6 +197,7 @@ impl Mib {
         self.find_in_nodes(name, |n| n.notification)
     }
 
+    /// Look up a notification by name and return a borrowed handle.
     #[must_use]
     pub fn notification(&self, name: &str) -> Option<Notification<'_>> {
         self.notification_by_name(name)
@@ -209,6 +210,7 @@ impl Mib {
         self.find_in_nodes(name, |n| n.group)
     }
 
+    /// Look up a group by name and return a borrowed handle.
     #[must_use]
     pub fn group(&self, name: &str) -> Option<Group<'_>> {
         self.group_by_name(name).map(|id| Group::new(self, id))
@@ -220,6 +222,7 @@ impl Mib {
         self.find_in_nodes(name, |n| n.compliance)
     }
 
+    /// Look up a compliance statement by name and return a borrowed handle.
     #[must_use]
     pub fn compliance(&self, name: &str) -> Option<Compliance<'_>> {
         self.compliance_by_name(name)
@@ -232,6 +235,7 @@ impl Mib {
         self.find_in_nodes(name, |n| n.capability)
     }
 
+    /// Look up a capability statement by name and return a borrowed handle.
     #[must_use]
     pub fn capability(&self, name: &str) -> Option<Capability<'_>> {
         self.capability_by_name(name)
@@ -512,6 +516,7 @@ impl Mib {
 
     // --- Collection accessors ---
 
+    /// Iterate all resolved modules as borrowed handles.
     pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
         HandleIter::new(
             self,
@@ -519,6 +524,7 @@ impl Mib {
         )
     }
 
+    /// Iterate all resolved objects as borrowed handles.
     pub fn objects(&self) -> HandleIter<'_, Object<'_>, impl Iterator<Item = ObjectId>> {
         HandleIter::new(
             self,
@@ -526,38 +532,47 @@ impl Mib {
         )
     }
 
+    /// Iterate all resolved types as borrowed handles.
     pub fn types(&self) -> HandleIter<'_, Type<'_>, impl Iterator<Item = TypeId>> {
         HandleIter::new(self, (0..self.types.len()).map(|i| TypeId::new(i as u32)))
     }
 
+    /// Iterate all OID tree nodes (excluding root) as borrowed handles.
     pub fn nodes(&self) -> HandleIter<'_, Node<'_>, impl Iterator<Item = NodeId>> {
         HandleIter::new(self, self.tree.all_nodes())
     }
 
+    /// Direct slice access to the module arena.
     pub fn modules_slice(&self) -> &[ModuleData] {
         &self.modules
     }
 
+    /// Direct slice access to the object arena.
     pub fn objects_slice(&self) -> &[ObjectData] {
         &self.objects
     }
 
+    /// Direct slice access to the type arena.
     pub fn types_slice(&self) -> &[TypeData] {
         &self.types
     }
 
+    /// Direct slice access to the notification arena.
     pub fn notifications_slice(&self) -> &[NotificationData] {
         &self.notifications
     }
 
+    /// Direct slice access to the group arena.
     pub fn groups_slice(&self) -> &[GroupData] {
         &self.groups
     }
 
+    /// Direct slice access to the compliance arena.
     pub fn compliances_slice(&self) -> &[ComplianceData] {
         &self.compliances
     }
 
+    /// Direct slice access to the capability arena.
     pub fn capabilities_slice(&self) -> &[CapabilityData] {
         &self.capabilities
     }
@@ -656,7 +671,6 @@ impl Mib {
 
     // --- Object table navigation ---
 
-    /// Returns the containing table object for a table, row, or column.
     /// Return the containing table object for a table, row, or column.
     ///
     /// Tables return themselves. Scalars and non-tabular objects return `None`.
@@ -840,18 +854,22 @@ impl Mib {
 
     // --- Diagnostics ---
 
+    /// Return the total number of OID tree nodes created during resolution.
     pub fn node_count(&self) -> usize {
         self.node_count
     }
 
+    /// Return all diagnostics collected during loading and resolution.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
+    /// Return all unresolved symbol references collected during resolution.
     pub fn unresolved(&self) -> &[UnresolvedRef] {
         &self.unresolved
     }
 
+    /// Return true if any diagnostic has error severity or higher.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
