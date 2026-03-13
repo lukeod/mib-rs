@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-13
+
+### Fixed
+
+- Improved rustdoc coverage and accuracy across all modules
+- Fixed broken rustdoc links in error and source modules
+
 ## [0.1.0] - 2026-03-13
 
 ### Added
@@ -28,5 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/lukeod/mib-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lukeod/mib-rs/releases/tag/v0.1.0
