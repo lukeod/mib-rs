@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-13
+
+### Changed
+
+- Expand rustdoc coverage across all public types and modules
+- Add lib.rs sections for query formats, sources, type introspection, diagnostics, and feature flags
+- Add field-level doc comments to export, IR, and mib/types structs
+
 ## [0.1.1] - 2026-03-13
 
 ### Fixed
@@ -35,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/lukeod/mib-rs/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lukeod/mib-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lukeod/mib-rs/releases/tag/v0.1.0
