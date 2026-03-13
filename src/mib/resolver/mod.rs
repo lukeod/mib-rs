@@ -31,7 +31,13 @@ use context::ResolverContext;
 /// Resolve a set of parsed IR modules into a fully resolved [`Mib`].
 ///
 /// Runs six sequential phases: registration, imports, types, OIDs, semantics, checks.
-/// All phases are single-threaded and infallible (errors become diagnostics).
+/// All phases are single-threaded and infallible - errors are collected as
+/// [`Diagnostic`](crate::types::Diagnostic) values rather than causing early
+/// termination, so the output contains as much useful data as possible.
+///
+/// The `strictness` parameter controls fallback behavior (e.g., whether
+/// unimported SMI types are resolved via global lookup). The `diag_config`
+/// controls which diagnostics are reported.
 pub fn resolve(
     modules: Vec<ir::Module>,
     strictness: ResolverStrictness,

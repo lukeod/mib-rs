@@ -1,3 +1,9 @@
+//! SNMP Object Identifier (OID) type and parsing.
+//!
+//! An [`Oid`] is a sequence of `u32` arcs representing a position in the
+//! global OID tree. It supports parsing from dotted-decimal notation, display,
+//! parent/child navigation, and prefix matching via standard slice methods.
+
 use smallvec::SmallVec;
 use std::fmt;
 use std::str::FromStr;
@@ -66,12 +72,14 @@ impl AsRef<[u32]> for Oid {
 }
 
 impl From<&[u32]> for Oid {
+    /// Create an [`Oid`] from a slice of arc values.
     fn from(arcs: &[u32]) -> Self {
         Oid(SmallVec::from_slice(arcs))
     }
 }
 
 impl From<Vec<u32>> for Oid {
+    /// Create an [`Oid`] from a vector of arc values.
     fn from(arcs: Vec<u32>) -> Self {
         Oid(SmallVec::from_vec(arcs))
     }
@@ -80,6 +88,12 @@ impl From<Vec<u32>> for Oid {
 /// Parses dotted-decimal notation, with or without a leading dot.
 ///
 /// Accepts `"1.3.6.1"` and `".1.3.6.1"`.
+///
+/// # Errors
+///
+/// Returns [`ParseOidError::Empty`] if the string is empty or contains
+/// only a dot. Returns [`ParseOidError::InvalidArc`] if any arc
+/// component cannot be parsed as a `u32`.
 impl FromStr for Oid {
     type Err = ParseOidError;
 
@@ -120,13 +134,13 @@ impl fmt::Debug for Oid {
     }
 }
 
-/// Error parsing an OID string.
+/// Error returned when parsing an [`Oid`] from a dotted-decimal string fails.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ParseOidError {
     /// The input string was empty or contained only a dot.
     #[error("empty OID")]
     Empty,
-    /// An arc component could not be parsed as a u32.
+    /// An arc component could not be parsed as a `u32`.
     #[error("invalid arc: {0}")]
     InvalidArc(String),
 }

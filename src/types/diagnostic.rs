@@ -1,3 +1,10 @@
+//! Diagnostic reporting and configuration.
+//!
+//! [`Diagnostic`] represents a single issue found during parsing or resolution.
+//! [`DiagnosticConfig`] controls which diagnostics are reported and which
+//! severities cause loading to fail, with preset configurations for common
+//! use cases.
+
 use std::collections::HashMap;
 use std::fmt;
 

@@ -31,14 +31,34 @@ pub struct FindResult {
 /// Provides access to MIB files for the loading pipeline.
 ///
 /// Implementations must be `Send + Sync` to support parallel loading.
-/// The library ships with [`dir`], [`dirs()`], [`memory`], [`memory_modules`],
-/// and [`chain`] constructors.
+/// The library ships several constructors:
+///
+/// - [`dir`] / [`dir_with_config`] - directory tree on disk
+/// - [`dirs()`] - multiple directory trees combined
+/// - [`memory`] / [`memory_modules`] - in-memory content
+/// - [`chain`] - combine arbitrary sources in priority order
 pub trait Source: Send + Sync {
-    /// Return the content and path for the named module, or `Ok(None)` if
-    /// this source does not contain it.
+    /// Look up a module by name and return its content and source path.
+    ///
+    /// Returns `Ok(None)` if this source does not contain the named module.
+    /// The `name` parameter is the MIB module name (e.g. `"IF-MIB"`), not a
+    /// filename.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] if the underlying storage cannot be read (e.g.
+    /// file I/O failure, permission denied).
     fn find(&self, name: &str) -> io::Result<Option<FindResult>>;
 
     /// List all module names available from this source.
+    ///
+    /// The returned names should match what [`find`](Source::find) accepts.
+    /// Callers use this to discover modules when no explicit module list is
+    /// provided to the loader.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] if listing fails (e.g. directory read error).
     fn list_modules(&self) -> io::Result<Vec<String>>;
 }
 
@@ -47,6 +67,13 @@ pub trait Source: Send + Sync {
 /// Controls which file extensions are recognized as MIB files during
 /// directory indexing. Use [`SourceConfig::default`] for the standard
 /// set ([`DEFAULT_EXTENSIONS`]).
+///
+/// # Examples
+///
+/// ```
+/// let config = mib_rs::source::SourceConfig::default()
+///     .with_extensions(&[".mib", ".txt"]);
+/// ```
 #[derive(Clone)]
 pub struct SourceConfig {
     extensions: Vec<String>,
@@ -62,8 +89,9 @@ impl Default for SourceConfig {
 
 impl SourceConfig {
     /// Override the default file extensions used to match MIB files.
+    ///
     /// Extensions are normalized to lowercase with a leading dot.
-    /// An empty string matches files with no extension.
+    /// An empty string (`""`) matches files with no extension (e.g. `IF-MIB`).
     pub fn with_extensions(mut self, exts: &[&str]) -> Self {
         self.extensions = exts
             .iter()
@@ -93,8 +121,17 @@ struct DirSource {
 /// headers), not from filenames. When duplicate module names appear, the
 /// first file encountered wins.
 ///
+/// The directory is eagerly indexed at construction time, so all file I/O
+/// for discovery happens during this call rather than during later
+/// [`Source::find`] lookups.
+///
 /// Uses [`DEFAULT_EXTENSIONS`] for file matching. For custom extensions,
 /// use [`dir_with_config`].
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if `root` does not exist, is not a directory,
+/// or cannot be read.
 ///
 /// # Examples
 ///
@@ -107,6 +144,13 @@ pub fn dir(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
 }
 
 /// Create a [`Source`] backed by a directory tree with custom [`SourceConfig`].
+///
+/// Like [`dir`], but allows overriding file extension matching via
+/// [`SourceConfig::with_extensions`].
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if `root` does not exist or is not a directory.
 pub fn dir_with_config(
     root: impl AsRef<Path>,
     config: SourceConfig,
@@ -129,6 +173,10 @@ pub fn dir_with_config(
 /// Create a [`Source`] that chains multiple directory trees.
 ///
 /// Equivalent to calling [`dir`] on each root and combining with [`chain`].
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if any root does not exist or is not a directory.
 pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
     let mut sources = Vec::new();
     for root in roots {
@@ -197,6 +245,7 @@ impl Source for MultiSource {
     }
 }
 
+/// A source backed by in-memory byte buffers keyed by module name.
 struct MemorySource {
     modules: HashMap<String, (PathBuf, Vec<u8>)>,
 }

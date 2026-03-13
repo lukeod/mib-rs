@@ -12,6 +12,9 @@ use crate::ir;
 use crate::types::{BaseType, Language, Span, Status};
 
 /// Metadata for a recognized base module.
+///
+/// Used to check whether a module name refers to one of the seven
+/// synthetic foundation modules.
 pub struct BaseModuleInfo {
     /// Canonical module name, e.g. `"SNMPv2-SMI"`.
     pub name: &'static str,
@@ -50,12 +53,12 @@ const BASE_MODULES: &[BaseModuleInfo] = &[
     },
 ];
 
-/// Reports whether name is a recognized base module.
+/// Reports whether `name` is a recognized base module.
 pub fn is_base_module(name: &str) -> bool {
     base_module_from_name(name).is_some()
 }
 
-/// Returns the BaseModuleInfo for the given name, if any.
+/// Returns the [`BaseModuleInfo`] for the given name, if any.
 pub fn base_module_from_name(name: &str) -> Option<&'static BaseModuleInfo> {
     BASE_MODULES.iter().find(|bm| bm.name == name)
 }
@@ -90,7 +93,10 @@ pub(crate) fn create_base_modules() -> Vec<ir::Module> {
 
 static CACHED_BASE_MODULES: LazyLock<Vec<ir::Module>> = LazyLock::new(create_base_modules);
 
-/// Returns a reference to the cached base module with the given name, or None.
+/// Returns a reference to the cached [`ir::Module`] for the given base module name.
+///
+/// The modules are lazily constructed on first access and cached for the
+/// lifetime of the process. Returns `None` if `name` is not a base module.
 pub fn get_base_module(name: &str) -> Option<&'static ir::Module> {
     CACHED_BASE_MODULES.iter().find(|m| m.name == name)
 }

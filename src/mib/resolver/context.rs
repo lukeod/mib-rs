@@ -1,3 +1,9 @@
+//! Resolver context: mutable state shared across all resolver phases.
+//!
+//! [`ResolverContext`] holds the in-progress [`Mib`], parsed IR modules,
+//! various lookup indexes, and unresolved reference tracking. Each phase
+//! reads and mutates this shared context.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
@@ -30,7 +36,7 @@ pub(super) enum UnresolvedReason {
 }
 
 impl UnresolvedReason {
-    /// Convert to the public-facing reason string used in UnresolvedRef.
+    /// Convert to the public-facing reason string used in [`UnresolvedRef`].
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ModuleNotFound => "module_not_found",
@@ -46,7 +52,10 @@ impl UnresolvedReason {
     }
 }
 
-/// Resolver-internal module index (index into ctx.modules Vec).
+/// Resolver-internal module identifier.
+///
+/// A lightweight index into [`ResolverContext::modules`]. Distinct from
+/// [`ModuleId`], which identifies resolved modules in the output [`Mib`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct IrModuleId(pub u32);
 
@@ -57,7 +66,12 @@ impl IrModuleId {
     }
 }
 
-/// All mutable state for the five resolver phases.
+/// Mutable state shared across all resolver phases.
+///
+/// Created once at the start of resolution and passed through each phase.
+/// After resolution completes, [`ResolverContext::drop_modules`] releases
+/// the IR data and [`ResolverContext::finalize_unresolved`] converts
+/// internal tracking entries into the public [`UnresolvedRef`] type.
 pub(super) struct ResolverContext {
     /// The output Mib being constructed.
     pub mib: Mib,
@@ -170,8 +184,10 @@ impl ResolverContext {
             .filter(|(_, m)| !crate::lower::base_modules::is_base_module(&m.name))
     }
 
-    /// Collect (module_index, definition_index) pairs for definitions matching a predicate.
-    /// Used to gather work items before mutating ctx.
+    /// Collect `(module_index, definition_index)` pairs for definitions matching a predicate.
+    ///
+    /// Useful for gathering work items before mutating the context, since
+    /// iteration and mutation cannot happen simultaneously.
     pub fn collect_definitions(&self, filter: fn(&ir::Definition) -> bool) -> Vec<(usize, usize)> {
         (0..self.modules.len())
             .flat_map(|idx| {
@@ -189,6 +205,10 @@ impl ResolverContext {
     }
 
     /// Emit a diagnostic if the config says to report it.
+    ///
+    /// Resolves source location (line/column) from the module's line table
+    /// when `ir_mod` is provided. Diagnostics filtered out by the
+    /// [`DiagnosticConfig`] are silently dropped.
     pub fn emit_diagnostic(
         &mut self,
         code: DiagCode,
@@ -227,6 +247,9 @@ impl ResolverContext {
     }
 
     /// Look up a node by name within a module's scope (local defs, then imports).
+    ///
+    /// Returns `(NodeId, used_import)` where `used_import` is true if the
+    /// symbol was found through the module's import chain rather than locally.
     pub fn lookup_node_for_module(&self, mod_id: IrModuleId, name: &str) -> Option<(NodeId, bool)> {
         // Check module's own symbols
         if let Some(node) = self
@@ -252,6 +275,9 @@ impl ResolverContext {
     }
 
     /// Look up an object by name within a module's scope (local defs, then imports).
+    ///
+    /// Returns `(ObjectId, used_import)` where `used_import` is true if the
+    /// symbol was found through the module's import chain.
     pub fn lookup_object_for_module(
         &self,
         mod_id: IrModuleId,
@@ -277,6 +303,15 @@ impl ResolverContext {
     }
 
     /// Look up a type by name within a module's scope, with well-known fallbacks.
+    ///
+    /// Search order:
+    /// - Local definitions in the module.
+    /// - Imported symbols (single hop, already transitively resolved).
+    /// - Tier 1 fallback (always): ASN.1 primitives from SNMPv2-SMI.
+    /// - Tier 2 fallback (Normal+ strictness): SMI globals, SMIv1 types, SNMPv2-TC types.
+    ///
+    /// Returns `(TypeId, used_import)` where `used_import` is true if the
+    /// symbol was found through the module's import chain.
     pub fn lookup_type_for_module(&self, mod_id: IrModuleId, name: &str) -> Option<(TypeId, bool)> {
         if let Some(result) = self.lookup_type_in_module_scope(mod_id, name) {
             return Some(result);
@@ -378,7 +413,10 @@ impl ResolverContext {
         None
     }
 
-    /// Look up a node across all versions of a named module.
+    /// Look up a node by name across all versions of a named module.
+    ///
+    /// Checks every IR module registered under `module_name` (there may be
+    /// multiple versions) and returns the first match.
     pub fn lookup_node_in_module(&self, module_name: &str, name: &str) -> Option<NodeId> {
         let candidates = self.module_index.get(module_name)?;
         for &cand in candidates {
@@ -567,7 +605,7 @@ impl ResolverContext {
         );
     }
 
-    /// Drop parsed modules after resolution to free memory.
+    /// Drop parsed IR modules and associated indexes to free memory.
     pub fn drop_modules(&mut self) {
         self.modules.clear();
         self.module_index.clear();
@@ -575,7 +613,7 @@ impl ResolverContext {
         self.module_oid_def_names.clear();
     }
 
-    /// Convert unresolved tracking entries to the public UnresolvedRef type.
+    /// Convert internal [`UnresolvedTracking`] entries to the public [`UnresolvedRef`] type.
     pub fn finalize_unresolved(&mut self) {
         let all = self
             .unresolved_imports

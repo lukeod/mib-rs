@@ -137,8 +137,15 @@ impl Loader {
 /// Load MIB modules from configured sources and resolve them.
 ///
 /// This is the free-function form of [`Loader::load`]. It consumes the
-/// builder, runs the full pipeline (scan, parse, lower, resolve), and
-/// returns the resolved [`Mib`] or a [`LoadError`].
+/// [`Loader`] builder, runs the full pipeline (scan, parse, lower, resolve),
+/// and returns the resolved [`Mib`] or a [`LoadError`].
+///
+/// Synthetic base modules (SNMPv2-SMI, SNMPv2-TC, etc.) are always included
+/// automatically, even if no external sources provide them.
+///
+/// # Errors
+///
+/// See [`Loader::load`] for the full list of error conditions.
 pub fn load(options: Loader) -> Result<Mib, LoadError> {
     let requested_module_count = options.modules.as_ref().map_or(0, Vec::len);
     let load_mode = if options.modules.is_some() {
@@ -212,8 +219,14 @@ impl Loader {
     /// Execute the full load pipeline and return the resolved [`Mib`].
     ///
     /// Runs source discovery, parallel parsing, lowering, and resolution.
-    /// Returns [`LoadError`] if no sources are configured, requested modules
-    /// are missing, or diagnostics exceed the configured threshold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::NoSources`] if no sources are configured,
+    /// [`LoadError::MissingModules`] if explicitly requested modules cannot
+    /// be found, [`LoadError::DiagnosticThreshold`] if any diagnostic
+    /// exceeds the configured severity threshold, or [`LoadError::Io`] on
+    /// file read failures.
     pub fn load(self) -> Result<Mib, LoadError> {
         load(self)
     }

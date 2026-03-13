@@ -1,9 +1,21 @@
+//! NOTIFICATION-TYPE and TRAP-TYPE definitions.
+//!
+//! [`NotificationData`] covers both SMIv2 NOTIFICATION-TYPE and SMIv1
+//! TRAP-TYPE definitions. SMIv1 traps additionally carry [`TrapInfo`]
+//! with the enterprise OID and trap number.
+//!
+//! For handle-oriented access, see [`Notification`](super::handle::Notification).
+
 use crate::types::Span;
 
 use super::object::EntityData;
 use super::types::*;
 
 /// A NOTIFICATION-TYPE or TRAP-TYPE definition.
+///
+/// Covers both SMIv2 NOTIFICATION-TYPE and SMIv1 TRAP-TYPE macro instances.
+/// SMIv1 traps carry additional [`TrapInfo`] with the enterprise OID and
+/// trap number, accessible via [`trap_info`](Self::trap_info).
 #[derive(Debug, Clone)]
 pub struct NotificationData {
     pub(crate) entity: EntityData,
@@ -30,42 +42,42 @@ impl NotificationData {
         self.entity.span
     }
 
-    /// Return the OID tree node id, if resolved.
+    /// Return the OID tree [`NodeId`], if resolved.
     pub fn node(&self) -> Option<NodeId> {
         self.entity.node
     }
 
-    /// Return the defining module id.
+    /// Return the defining [`ModuleId`].
     pub fn module(&self) -> Option<ModuleId> {
         self.entity.module
     }
 
-    /// Return the status.
+    /// Return the [`Status`](crate::types::Status).
     pub fn status(&self) -> crate::types::Status {
         self.entity.status
     }
 
-    /// Return the DESCRIPTION clause text.
+    /// Return the DESCRIPTION clause text, or an empty string if absent.
     pub fn description(&self) -> &str {
         &self.entity.description
     }
 
-    /// Return the REFERENCE clause text.
+    /// Return the REFERENCE clause text, or an empty string if absent.
     pub fn reference(&self) -> &str {
         &self.entity.reference
     }
 
-    /// Return symbolic OID references.
+    /// Return the symbolic OID references from the value assignment.
     pub fn oid_refs(&self) -> &[OidRef] {
         &self.entity.oid_refs
     }
 
-    /// Return the OBJECTS clause entries (object ids).
+    /// Return the OBJECTS clause entries as [`ObjectId`]s.
     pub fn objects(&self) -> &[ObjectId] {
         &self.objects
     }
 
-    /// Return SMIv1 TRAP-TYPE fields, if this is a trap.
+    /// Return the SMIv1 [`TrapInfo`], or `None` for SMIv2 notifications.
     pub fn trap_info(&self) -> Option<&TrapInfo> {
         self.trap_info.as_ref()
     }

@@ -1,12 +1,26 @@
+//! OBJECT-TYPE definitions and the shared entity base type.
+//!
+//! [`ObjectData`] holds all fields from an SMIv1 or SMIv2 OBJECT-TYPE
+//! definition, including the resolved type, access level, INDEX clause,
+//! DEFVAL, and effective (inherited) constraint values computed during
+//! resolution.
+//!
+//! [`EntityData`] is the shared base for all OID-bearing entity types
+//! (objects, notifications, groups, compliances, capabilities).
+//!
+//! For handle-oriented access, see [`Object`](super::handle::Object).
+
 use crate::types::{Access, Kind, Span};
 
 use super::types::*;
 
 /// Common fields shared by all OID-bearing entity definitions.
 ///
-/// Used as an embedded struct in [`ObjectData`], [`NotificationData`](super::notification::NotificationData),
+/// Embedded in [`ObjectData`], [`NotificationData`](super::notification::NotificationData),
 /// [`GroupData`](super::group::GroupData), [`ComplianceData`](super::compliance::ComplianceData),
-/// and [`CapabilityData`](super::capability::CapabilityData).
+/// and [`CapabilityData`](super::capability::CapabilityData). Not accessed
+/// directly by callers; each containing type re-exposes the relevant fields
+/// through its own accessor methods.
 #[derive(Debug, Clone)]
 pub struct EntityData {
     pub(crate) name: String,
@@ -166,7 +180,11 @@ impl ObjectData {
         &self.augmented_by
     }
 
-    /// Return the node kind by looking up the OID tree.
+    /// Return the node [`Kind`] by looking up the [`OidTree`](super::node::OidTree).
+    ///
+    /// Returns [`Kind::Unknown`] if the object's OID was not resolved.
+    /// Callers using the [`Object`](super::handle::Object) handle do not need
+    /// this method; use [`Object::kind`](super::handle::Object::kind) instead.
     pub fn kind(&self, tree: &super::node::OidTree) -> Kind {
         match self.entity.node {
             Some(id) => tree.get(id).kind,
@@ -174,27 +192,30 @@ impl ObjectData {
         }
     }
 
-    /// Return the effective display hint.
+    /// Return the effective display hint, inherited from the resolved type chain.
+    ///
+    /// This is pre-computed during resolution, so it does not require
+    /// walking the type chain at query time.
     pub fn effective_display_hint(&self) -> &str {
         &self.hint
     }
 
-    /// Return the effective SIZE constraints.
+    /// Return the effective SIZE constraints, inherited from the resolved type chain.
     pub fn effective_sizes(&self) -> &[Range] {
         &self.sizes
     }
 
-    /// Return the effective range constraints.
+    /// Return the effective range constraints, inherited from the resolved type chain.
     pub fn effective_ranges(&self) -> &[Range] {
         &self.ranges
     }
 
-    /// Return the effective enumeration values.
+    /// Return the effective enumeration values, inherited from the resolved type chain.
     pub fn effective_enums(&self) -> &[NamedValue] {
         &self.enums
     }
 
-    /// Return the effective BITS definitions.
+    /// Return the effective BITS definitions, inherited from the resolved type chain.
     pub fn effective_bits(&self) -> &[NamedValue] {
         &self.bits
     }

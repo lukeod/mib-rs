@@ -1,3 +1,9 @@
+//! Reference table for SMI clause keywords.
+//!
+//! Provides [`ClauseInfo`] descriptions for clause keywords used within SMI macro
+//! definitions (SYNTAX, STATUS, INDEX, DEFVAL, etc.), including which macros
+//! use each clause, the defining RFC, and a brief description.
+
 /// Describes an SMI clause keyword used within a macro definition (e.g. SYNTAX, STATUS, INDEX).
 ///
 /// See [`clause_description`] to look up a clause by name.
@@ -13,6 +19,10 @@ pub struct ClauseInfo {
 }
 
 /// Returns info about an SMI clause keyword, or `None` if the name is not recognized.
+///
+/// Covers clause keywords used within SMI macro definitions: SYNTAX, MAX-ACCESS,
+/// STATUS, DESCRIPTION, REFERENCE, DEFVAL, INDEX, AUGMENTS, UNITS, DISPLAY-HINT,
+/// and others from RFC 2578/2579/2580 and RFC 1155/1215.
 pub fn clause_description(name: &str) -> Option<&'static ClauseInfo> {
     CLAUSE_INFO_TABLE.iter().find(|info| info.name == name)
 }

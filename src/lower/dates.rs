@@ -1,4 +1,9 @@
 //! ExtUTCTime date validation for MODULE-IDENTITY dates and revisions.
+//!
+//! Validates the `LAST-UPDATED` and `REVISION` date strings against the
+//! ExtUTCTime format defined in RFC 2578. Checks for correct length,
+//! character validity, calendar validity, chronological ordering, and
+//! emits style warnings for dates outside the reasonable SMI range.
 
 use crate::types::{DiagCode, Span};
 

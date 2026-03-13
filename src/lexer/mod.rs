@@ -571,6 +571,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 }
 
+/// Yields tokens until EOF is reached. The EOF token itself is not yielded;
+/// the iterator simply returns `None`. Use [`Lexer::tokenize`] if you need
+/// the final EOF token included.
 impl<'src, 'cfg> Iterator for Lexer<'src, 'cfg> {
     type Item = Token;
 

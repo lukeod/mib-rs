@@ -20,6 +20,14 @@ use crate::source::{self, Source};
 ///
 /// Reads config files and environment variables, deduplicates paths, and
 /// filters to directories that actually exist on disk.
+///
+/// Checked sources (in order):
+/// - net-snmp defaults (`~/.snmp/mibs`, `/usr/share/snmp/mibs`, etc.)
+/// - `/etc/snmp/snmp.conf` and `~/.snmp/snmp.conf` (`mibdirs` directive)
+/// - `MIBDIRS` environment variable
+/// - libsmi defaults (`/usr/share/mibs/ietf`, etc.)
+/// - `/etc/smi.conf` and `~/.smirc` (`path` directive)
+/// - `SMIPATH` environment variable
 pub fn discover_system_paths() -> Vec<String> {
     let mut all = discover_netsnmp_paths();
     all.extend(discover_libsmi_paths());

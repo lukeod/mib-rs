@@ -1,3 +1,17 @@
+//! Phase 3: Type resolution.
+//!
+//! Builds the resolved type system in three steps:
+//!
+//! - Seed ASN.1 primitive types (INTEGER, OCTET STRING, OBJECT IDENTIFIER, BITS)
+//!   in SNMPv2-SMI.
+//! - Create resolved [`Type`](super::super::typedef::TypeData) entries for every
+//!   TEXTUAL-CONVENTION and type assignment across all modules.
+//! - Resolve parent chains using topological sort to handle dependencies, then
+//!   inherit base types down the chain.
+//!
+//! Types involved in dependency cycles are recorded as unresolved with
+//! appropriate diagnostics.
+
 use std::collections::HashMap;
 
 use tracing::{Level, enabled, trace};
@@ -11,6 +25,9 @@ use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext};
 
 /// Phase 3: Build the type system.
+///
+/// Seeds primitive types, creates user-defined types, then resolves parent
+/// chains and inherits base types through the type graph.
 pub(super) fn resolve_types(ctx: &mut ResolverContext) {
     seed_primitive_types(ctx);
     create_user_types(ctx);
@@ -101,7 +118,12 @@ fn create_user_types(ctx: &mut ResolverContext) {
     }
 }
 
-/// Determine the base type from syntax.
+/// Determine the [`BaseType`] from an IR type syntax node.
+///
+/// Recursively unwraps constrained types and resolves type references
+/// through well-known name mappings via [`base_type_from_name`]. Returns
+/// [`BaseType::Unknown`] for unrecognized or structural types (SEQUENCE,
+/// SEQUENCE OF).
 pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     match syntax {
         ir::TypeSyntax::IntegerEnum { .. } => BaseType::Integer32,
@@ -114,7 +136,10 @@ pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     }
 }
 
-/// Map a well-known type name to its base type, or `Unknown` if not recognized.
+/// Map a well-known type name to its [`BaseType`], or [`BaseType::Unknown`] if not recognized.
+///
+/// Handles ASN.1 primitives (INTEGER, OCTET STRING, etc.), SMIv2 application
+/// types (Counter32, Gauge32, etc.), and their SMIv1 aliases (Counter, Gauge).
 pub(crate) fn base_type_from_name(name: &str) -> BaseType {
     match name {
         "INTEGER" | "Integer32" => BaseType::Integer32,
@@ -176,7 +201,11 @@ fn extract_constraint(constraint: &ir::Constraint, td: &mut TypeData) {
     }
 }
 
-/// Convert an IR range constraint to the resolved Range type.
+/// Convert an IR range constraint to the resolved [`Range`] type.
+///
+/// Returns `None` if a range bound cannot be converted to `i64`.
+/// Used by both the type phase and the semantics phase (for inline
+/// OBJECT-TYPE constraints).
 pub(super) fn resolve_range(r: &ir::syntax::Range) -> Option<Range> {
     let min = range_value_to_i64(&r.min)?;
     let max = match &r.max {
@@ -527,6 +556,10 @@ fn is_application_base_type(b: BaseType) -> bool {
 }
 
 /// Validate that SMIv2 modules explicitly import SMI base types they reference.
+///
+/// Per RFC 2578, application types like Counter32, Gauge32, etc. must be
+/// explicitly imported from SNMPv2-SMI. Emits [`DiagCode::BasetypeNotImported`]
+/// when a module uses these types without importing them.
 pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
     let smi_base_types = [
         "Integer32",

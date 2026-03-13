@@ -2,8 +2,10 @@
 //!
 //! Contains enums for SMI concepts ([`Access`], [`Status`], [`Kind`], [`BaseType`]),
 //! diagnostic infrastructure ([`Diagnostic`], [`DiagCode`], [`DiagnosticConfig`]),
-//! source spans ([`Span`], [`ByteOffset`]), and reference tables for SMI macro and
-//! clause keywords.
+//! source spans ([`Span`], [`ByteOffset`]), line table utilities
+//! ([`build_line_table`], [`line_col_from_table`]), configuration types
+//! ([`ResolverStrictness`], [`ReportingLevel`]), and reference tables for SMI
+//! [`macro`](macro_info) and [`clause`](clause_info) keywords.
 
 pub mod clause_info;
 mod diagcode;

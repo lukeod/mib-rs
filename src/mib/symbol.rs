@@ -1,3 +1,10 @@
+//! Untyped symbol references into the resolved MIB.
+//!
+//! [`Symbol`] is a tagged union of all possible definition kinds. It wraps
+//! the arena id for the definition and provides uniform access to common
+//! properties (name, span, module, node, status) without requiring the
+//! caller to know the definition kind upfront.
+
 use crate::types::{Span, Status};
 
 use super::types::*;
@@ -100,7 +107,7 @@ impl Symbol {
         }
     }
 
-    /// Return the ObjectId if this is an Object symbol.
+    /// Return the [`ObjectId`] if this is an `Object` variant.
     #[must_use]
     pub fn as_object(&self) -> Option<ObjectId> {
         match self {
@@ -109,7 +116,7 @@ impl Symbol {
         }
     }
 
-    /// Return the NotificationId if this is a Notification symbol.
+    /// Return the [`NotificationId`] if this is a `Notification` variant.
     #[must_use]
     pub fn as_notification(&self) -> Option<NotificationId> {
         match self {
@@ -118,7 +125,7 @@ impl Symbol {
         }
     }
 
-    /// Return the GroupId if this is a Group symbol.
+    /// Return the [`GroupId`] if this is a `Group` variant.
     #[must_use]
     pub fn as_group(&self) -> Option<GroupId> {
         match self {
@@ -127,7 +134,7 @@ impl Symbol {
         }
     }
 
-    /// Return the ComplianceId if this is a Compliance symbol.
+    /// Return the [`ComplianceId`] if this is a `Compliance` variant.
     #[must_use]
     pub fn as_compliance(&self) -> Option<ComplianceId> {
         match self {
@@ -136,7 +143,7 @@ impl Symbol {
         }
     }
 
-    /// Return the CapabilityId if this is a Capability symbol.
+    /// Return the [`CapabilityId`] if this is a `Capability` variant.
     #[must_use]
     pub fn as_capability(&self) -> Option<CapabilityId> {
         match self {
@@ -145,7 +152,7 @@ impl Symbol {
         }
     }
 
-    /// Return the TypeId if this is a Type symbol.
+    /// Return the [`TypeId`] if this is a `Type` variant.
     #[must_use]
     pub fn as_type(&self) -> Option<TypeId> {
         match self {

@@ -1,3 +1,8 @@
+//! SMI/MIB keyword lookup tables.
+//!
+//! Maps keyword strings to their [`TokenKind`] variants and identifies
+//! reserved ASN.1 keywords that are forbidden in MIB files.
+
 use super::token::TokenKind;
 
 /// Look up a keyword string, returning its [`TokenKind`] if recognized.

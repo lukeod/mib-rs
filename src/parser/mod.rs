@@ -2321,9 +2321,10 @@ fn strip_string_literal(s: &str) -> &str {
     }
 }
 
-/// Parse source bytes into AST modules.
+/// Parse source bytes into [`ast::Module`](crate::ast::Module) nodes.
 ///
-/// A single source file may contain multiple concatenated modules.
+/// This is the main entry point for parsing. A single source file may
+/// contain multiple concatenated MIB modules (common in RFC files).
 /// Each returned [`Module`] carries its own diagnostics.
 pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
     let span = info_span!(

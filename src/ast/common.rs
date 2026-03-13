@@ -1,4 +1,7 @@
 //! Common AST leaf types shared across definitions and syntax nodes.
+//!
+//! These small types ([`Ident`], [`QuotedString`], [`NamedNumber`]) appear
+//! throughout the AST as building blocks for larger constructs.
 
 use crate::types::Span;
 

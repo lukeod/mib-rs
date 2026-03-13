@@ -1,3 +1,16 @@
+//! Type definitions and TEXTUAL-CONVENTIONs.
+//!
+//! [`TypeData`] represents a named type definition from an SMI module. Types
+//! form parent chains via [`TypeData::parent`]; the chain terminates at a
+//! base SMI type such as `INTEGER` or `OCTET STRING`.
+//!
+//! The `effective_*` methods walk the parent chain to find the nearest
+//! non-empty value for constraints, display hints, and enumeration values.
+//! These require a reference to the full type arena (`&[TypeData]`).
+//!
+//! For handle-oriented access with automatic arena threading, see
+//! [`Type`](super::handle::Type).
+
 use crate::types::{BaseType, Span, Status};
 
 use super::types::*;
@@ -139,10 +152,14 @@ impl TypeData {
     }
 }
 
-/// Methods that walk the parent type chain. These require access to the
-/// full type arena slice.
+/// Methods that walk the parent type chain.
+///
+/// These require a reference to the full type arena (`&[TypeData]`).
+/// Callers using the [`Type`](super::handle::Type) handle do not need to
+/// pass the arena; the handle threads it automatically.
 impl TypeData {
-    /// Walk the parent type chain and return the first non-default base type.
+    /// Walk the parent type chain and return the first non-[`Unknown`](BaseType::Unknown)
+    /// base type.
     pub fn effective_base(&self, types: &[TypeData]) -> BaseType {
         walk_type_chain_ref(self, types, |t| {
             if t.base != BaseType::Unknown {

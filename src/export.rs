@@ -1,9 +1,12 @@
 //! JSON export of a resolved [`Mib`] as a schema v1 payload.
 //!
 //! The entry point is [`export_v1`], which converts a resolved [`Mib`] into an
-//! [`ExportPayload`]. All types are `Serialize`-able and produce a
-//! deterministic, sorted JSON representation suitable for golden-file
-//! comparison tests.
+//! [`ExportPayload`]. All types derive [`Serialize`] and
+//! produce a deterministic, sorted JSON representation suitable for
+//! golden-file comparison tests.
+//!
+//! The schema uses `camelCase` field names and string representations for
+//! enums (status, access, base type, etc.) to keep the JSON human-readable.
 
 use std::cmp::Ordering;
 
@@ -18,29 +21,52 @@ use crate::types::{Access, BaseType, Kind, Language, ResolverStrictness, Severit
 /// Top-level payload for the schema v1 resolved-mib export.
 ///
 /// Built by [`export_v1`] from a resolved [`Mib`].
+///
+/// Collections are sorted deterministically: modules and types by name,
+/// OID-bearing items (objects, notifications, groups, compliances,
+/// capabilities) by numeric OID, and diagnostics by phase/code/location.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportPayload {
+    /// Always `1` for this schema version.
     pub schema_version: u32,
+    /// Always `"resolved-mib"`.
     pub export_kind: &'static str,
+    /// The [`ResolverStrictness`] used during resolution, as a string.
     pub strictness: String,
+    /// Metadata about the exporter that produced this payload.
     pub exporter: Exporter,
+    /// All loaded modules, sorted by name.
     pub modules: Vec<ExportModule>,
+    /// User-defined types (TEXTUAL-CONVENTIONs and type assignments), sorted by module then name.
     pub types: Vec<ExportType>,
+    /// OID tree nodes that are not objects, notifications, groups, compliances, or capabilities.
     pub nodes: Vec<ExportNode>,
+    /// OBJECT-TYPE definitions, sorted by OID.
     pub objects: Vec<ExportObject>,
+    /// NOTIFICATION-TYPE and TRAP-TYPE definitions, sorted by OID.
     pub notifications: Vec<ExportNotification>,
+    /// OBJECT-GROUP and NOTIFICATION-GROUP definitions, sorted by OID.
     pub groups: Vec<ExportGroup>,
+    /// MODULE-COMPLIANCE definitions, sorted by OID.
     pub compliances: Vec<ExportCompliance>,
+    /// AGENT-CAPABILITIES definitions, sorted by OID.
     pub capabilities: Vec<ExportCapability>,
+    /// Diagnostics from parsing, lowering, and resolution.
     pub diagnostics: Vec<ExportDiagnostic>,
 }
 
-/// Identifies the exporter implementation, version, and commit.
+/// Identifies the exporter implementation, version, and commit hash.
+///
+/// Populated by [`export_v1`] with the crate name; version and commit
+/// are left empty and can be filled in by CLI tooling.
 #[derive(Serialize)]
 pub struct Exporter {
+    /// Exporter name, e.g. `"mib-rs"`.
     pub implementation: &'static str,
+    /// Crate or tool version string, if known.
     pub version: String,
+    /// Git commit hash, if known.
     pub commit: String,
 }
 
@@ -48,46 +74,74 @@ pub struct Exporter {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportModule {
+    /// Module name (e.g. `"IF-MIB"`).
     pub name: String,
+    /// Numeric OID from MODULE-IDENTITY, if present.
     pub oid: Option<String>,
+    /// SMI language version (`"SMIv1"`, `"SMIv2"`, or `"SPPI"`).
     pub language: Option<String>,
+    /// ORGANIZATION clause from MODULE-IDENTITY.
     pub organization: Option<String>,
+    /// CONTACT-INFO clause from MODULE-IDENTITY.
     pub contact_info: Option<String>,
+    /// DESCRIPTION clause from MODULE-IDENTITY.
     pub description: Option<String>,
+    /// LAST-UPDATED clause from MODULE-IDENTITY.
     pub last_updated: Option<String>,
+    /// REVISION entries from MODULE-IDENTITY, in declaration order.
     pub revisions: Vec<ExportRevision>,
 }
 
 /// A REVISION entry from MODULE-IDENTITY.
 #[derive(Serialize)]
 pub struct ExportRevision {
+    /// Revision date string (e.g. `"200206140000Z"`).
     pub date: String,
+    /// DESCRIPTION text for this revision.
     pub description: String,
 }
 
 /// A resolved type definition (TEXTUAL-CONVENTION or type assignment).
+///
+/// The `key` field is formatted as `"Module::TypeName"` and uniquely
+/// identifies the type across the entire MIB.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportType {
+    /// Unique key in `"Module::TypeName"` format.
     pub key: String,
+    /// Type name (e.g. `"DisplayString"`).
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// Parent type key in `"Module::TypeName"` format, if this type refines another.
     pub parent: Option<String>,
+    /// Resolved base type (e.g. `"OctetString"`, `"Integer32"`).
     pub base: String,
+    /// STATUS clause (only present for TEXTUAL-CONVENTIONs).
     pub status: Option<String>,
+    /// DISPLAY-HINT clause, if any.
     pub display_hint: Option<String>,
+    /// DESCRIPTION clause, if any.
     pub description: Option<String>,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// Whether this type was defined as a TEXTUAL-CONVENTION.
     pub is_textual_convention: bool,
+    /// SIZE, range, enum, and BITS constraints.
     pub constraints: ExportConstraints,
 }
 
 /// Collected SIZE, range, enum, and BITS constraints for a type or object.
 #[derive(Serialize)]
 pub struct ExportConstraints {
+    /// SIZE constraints (for OCTET STRING and similar).
     pub sizes: Vec<ExportRange>,
+    /// Value range constraints (for INTEGER-based types).
     pub ranges: Vec<ExportRange>,
+    /// Named integer enum values (e.g. `up(1)`, `down(2)`).
     pub enums: Vec<ExportEnum>,
+    /// Named bit positions (e.g. `flag1(0)`, `flag2(1)`).
     pub bits: Vec<ExportBit>,
 }
 
@@ -113,33 +167,55 @@ pub struct ExportBit {
 }
 
 /// Effective (fully resolved) syntax for an object or compliance refinement.
+///
+/// Contains the final base type, display hint, and constraints after
+/// walking the full type chain. The `type_ref` field, when present, is
+/// in `"Module::TypeName"` format.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEffectiveSyntax {
+    /// Reference to the user-defined type, if any (e.g. `"SNMPv2-TC::DisplayString"`).
     pub type_ref: Option<String>,
+    /// Resolved base type name (e.g. `"OctetString"`, `"Integer32"`).
     pub base: String,
+    /// DISPLAY-HINT from the type or object, if any.
     pub display_hint: Option<String>,
+    /// Merged constraints from the type chain and any local refinements.
     pub constraints: ExportConstraints,
 }
 
 /// A reference to a named OID node (name, defining module, and numeric OID).
 #[derive(Serialize)]
 pub struct ExportOidRef {
+    /// Object or node name (e.g. `"ifIndex"`).
     pub name: String,
+    /// Defining module name (e.g. `"IF-MIB"`).
     pub module: String,
+    /// Numeric OID string (e.g. `"1.3.6.1.2.1.2.2.1.1"`). Empty if unresolved.
     pub oid: String,
 }
 
 /// An OID tree node that is not an object, notification, group, compliance, or capability.
+///
+/// Covers MODULE-IDENTITY, OBJECT-IDENTITY, and plain OBJECT IDENTIFIER
+/// value assignments.
 #[derive(Serialize)]
 pub struct ExportNode {
+    /// Unique key in `"Module::NodeName"` format.
     pub key: String,
+    /// Numeric OID string.
     pub oid: String,
+    /// Node name (e.g. `"internet"`, `"ifMIB"`).
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// Node kind: `"module-identity"`, `"object-identity"`, or `"node"`.
     pub kind: String,
+    /// STATUS clause, present only for module-identity and object-identity nodes.
     pub status: Option<String>,
+    /// DESCRIPTION clause, if any.
     pub description: Option<String>,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
 }
 
@@ -147,32 +223,58 @@ pub struct ExportNode {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportObject {
+    /// Unique key in `"Module::ObjectName"` format.
     pub key: String,
+    /// Numeric OID string (e.g. `"1.3.6.1.2.1.2.2.1.1"`).
     pub oid: String,
+    /// Object name (e.g. `"ifIndex"`).
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// One of `"scalar"`, `"table"`, `"row"`, `"column"`, or `"object"`.
     pub kind: String,
+    /// STATUS clause value (e.g. `"current"`, `"deprecated"`).
     pub status: String,
+    /// MAX-ACCESS or ACCESS clause value (e.g. `"read-only"`, `"read-write"`).
     pub access: String,
+    /// DESCRIPTION clause, if any.
     pub description: Option<String>,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// UNITS clause, if any.
     pub units: Option<String>,
+    /// DEFVAL clause, if present and non-empty.
     pub default_value: Option<ExportDefVal>,
+    /// Fully resolved syntax (base type, constraints, display hint).
     pub syntax: Option<ExportEffectiveSyntax>,
+    /// INDEX entries declared directly on this object.
     pub indexes: Vec<ExportIndex>,
+    /// Effective indexes, including those inherited via AUGMENTS.
     pub effective_indexes: Vec<ExportIndex>,
+    /// The row object this object AUGMENTS, if any.
     pub augments: Option<ExportOidRef>,
+    /// Other row objects that AUGMENT this one.
     pub augmented_by: Vec<ExportOidRef>,
+    /// Parent table for row and column objects.
     pub table: Option<ExportOidRef>,
+    /// Row entry for table and column objects.
     pub row: Option<ExportOidRef>,
+    /// Column objects for table and row objects, sorted by OID.
     pub columns: Vec<ExportOidRef>,
 }
 
 /// A resolved DEFVAL with its kind, typed value, and raw text.
+///
+/// The `kind` field is one of: `"int"`, `"uint"`, `"string"`, `"bytes"`,
+/// `"enum"`, `"bits"`, or `"oid"`. The `value` is a JSON representation
+/// appropriate for the kind (string for most, array for bits).
 #[derive(Serialize)]
 pub struct ExportDefVal {
+    /// Value kind discriminator.
     pub kind: String,
+    /// Typed value as JSON (string for scalars, array for bits).
     pub value: serde_json::Value,
+    /// Original text from the MIB source.
     pub raw: String,
 }
 
@@ -187,18 +289,28 @@ pub struct ExportIndex {
     pub syntax: Option<ExportEffectiveSyntax>,
 }
 
-/// A resolved NOTIFICATION-TYPE or TRAP-TYPE.
+/// A resolved NOTIFICATION-TYPE (SMIv2) or TRAP-TYPE (SMIv1).
 #[derive(Serialize)]
 pub struct ExportNotification {
+    /// Unique key in `"Module::NotificationName"` format.
     pub key: String,
+    /// Numeric OID string.
     pub oid: String,
+    /// Notification name.
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// STATUS clause value.
     pub status: String,
+    /// Either `"notification"` (SMIv2) or `"trap"` (SMIv1).
     pub kind: String,
+    /// SMIv1 TRAP-TYPE fields, present only when `kind` is `"trap"`.
     pub trap: Option<ExportTrap>,
+    /// DESCRIPTION clause text.
     pub description: String,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// OBJECTS clause: the variables included with this notification.
     pub objects: Vec<ExportOidRef>,
 }
 
@@ -206,34 +318,53 @@ pub struct ExportNotification {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportTrap {
+    /// ENTERPRISE clause OID reference.
     pub enterprise: ExportOidRef,
+    /// Numeric trap number (the value after `::=`).
     pub trap_number: u32,
 }
 
 /// A resolved OBJECT-GROUP or NOTIFICATION-GROUP.
 #[derive(Serialize)]
 pub struct ExportGroup {
+    /// Unique key in `"Module::GroupName"` format.
     pub key: String,
+    /// Numeric OID string.
     pub oid: String,
+    /// Group name.
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// Either `"object-group"` or `"notification-group"`.
     pub kind: String,
+    /// STATUS clause value.
     pub status: String,
+    /// DESCRIPTION clause text.
     pub description: String,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// OBJECTS or NOTIFICATIONS clause members.
     pub members: Vec<ExportOidRef>,
 }
 
 /// A resolved MODULE-COMPLIANCE definition.
 #[derive(Serialize)]
 pub struct ExportCompliance {
+    /// Unique key in `"Module::ComplianceName"` format.
     pub key: String,
+    /// Numeric OID string.
     pub oid: String,
+    /// Compliance object name.
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// STATUS clause value.
     pub status: String,
+    /// DESCRIPTION clause text.
     pub description: String,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// MODULE clauses within this compliance definition.
     pub modules: Vec<ExportComplianceModule>,
 }
 
@@ -241,17 +372,24 @@ pub struct ExportCompliance {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportComplianceModule {
+    /// Module name this clause applies to.
     pub module: String,
+    /// Whether this clause refers to the same module that defines the compliance.
     pub is_current_module: bool,
+    /// MANDATORY-GROUPS entries.
     pub mandatory_groups: Vec<ExportOidRef>,
+    /// Conditionally required GROUP entries.
     pub groups: Vec<ExportComplianceGroup>,
+    /// OBJECT refinement entries.
     pub objects: Vec<ExportComplianceObject>,
 }
 
 /// A conditionally required GROUP within MODULE-COMPLIANCE.
 #[derive(Serialize)]
 pub struct ExportComplianceGroup {
+    /// Reference to the group.
     pub group: ExportOidRef,
+    /// DESCRIPTION clause explaining when this group is required.
     pub description: Option<String>,
 }
 
@@ -259,10 +397,15 @@ pub struct ExportComplianceGroup {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportComplianceObject {
+    /// Reference to the refined object.
     pub object: ExportOidRef,
+    /// Refined SYNTAX, if narrowed from the object's original syntax.
     pub syntax: Option<ExportEffectiveSyntax>,
+    /// Refined WRITE-SYNTAX, if narrowed for write operations.
     pub write_syntax: Option<ExportEffectiveSyntax>,
+    /// MIN-ACCESS level, if specified.
     pub min_access: Option<String>,
+    /// DESCRIPTION clause for this refinement.
     pub description: Option<String>,
 }
 
@@ -270,14 +413,23 @@ pub struct ExportComplianceObject {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportCapability {
+    /// Unique key in `"Module::CapabilityName"` format.
     pub key: String,
+    /// Numeric OID string.
     pub oid: String,
+    /// Capability object name.
     pub name: String,
+    /// Defining module name.
     pub module: String,
+    /// STATUS clause value.
     pub status: String,
+    /// PRODUCT-RELEASE clause, if present.
     pub product_release: Option<String>,
+    /// DESCRIPTION clause text.
     pub description: String,
+    /// REFERENCE clause, if any.
     pub reference: Option<String>,
+    /// SUPPORTS clauses describing which modules/groups this agent supports.
     pub supports: Vec<ExportCapabilitySupports>,
 }
 
@@ -285,9 +437,13 @@ pub struct ExportCapability {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportCapabilitySupports {
+    /// Supported module name.
     pub module: String,
+    /// INCLUDES groups from this module.
     pub includes: Vec<ExportOidRef>,
+    /// VARIATION clauses for objects in this module.
     pub object_variations: Vec<ExportObjectVariation>,
+    /// VARIATION clauses for notifications in this module.
     pub notification_variations: Vec<ExportNotificationVariation>,
 }
 
@@ -295,32 +451,49 @@ pub struct ExportCapabilitySupports {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportObjectVariation {
+    /// Reference to the varied object.
     pub object: ExportOidRef,
+    /// Refined SYNTAX, if narrowed.
     pub syntax: Option<ExportEffectiveSyntax>,
+    /// Refined WRITE-SYNTAX, if narrowed for write operations.
     pub write_syntax: Option<ExportEffectiveSyntax>,
+    /// Overridden ACCESS level, if different from the object's definition.
     pub access: Option<String>,
+    /// CREATION-REQUIRES objects needed to create a row.
     pub creation_requires: Vec<ExportOidRef>,
+    /// DEFVAL override for this variation.
     pub default_value: Option<ExportDefVal>,
+    /// DESCRIPTION clause for this variation.
     pub description: Option<String>,
 }
 
 /// A VARIATION clause for a notification within AGENT-CAPABILITIES.
 #[derive(Serialize)]
 pub struct ExportNotificationVariation {
+    /// Reference to the varied notification.
     pub notification: ExportOidRef,
+    /// Overridden ACCESS level, if specified.
     pub access: Option<String>,
+    /// DESCRIPTION clause for this variation.
     pub description: Option<String>,
 }
 
 /// A diagnostic message from parsing, lowering, or resolution.
 #[derive(Serialize)]
 pub struct ExportDiagnostic {
+    /// Pipeline phase that produced this diagnostic (e.g. `"parser"`, `"resolver"`).
     pub phase: String,
+    /// Machine-readable diagnostic code.
     pub code: String,
+    /// One of `"error"`, `"warning"`, `"info"`, or `"style"`.
     pub severity: String,
+    /// Module name where the diagnostic originated, if known.
     pub module: Option<String>,
+    /// Source line number (1-based), if known.
     pub line: Option<usize>,
+    /// Source column number (1-based), if known.
     pub column: Option<usize>,
+    /// Human-readable diagnostic message.
     pub message: String,
 }
 
@@ -659,10 +832,27 @@ where
     })
 }
 
-/// Builds the complete schema v1 export payload from a resolved [`Mib`].
+/// Build the complete schema v1 export payload from a resolved [`Mib`].
 ///
 /// All collections are sorted deterministically (modules and types by name,
-/// objects/notifications/groups by OID) for reproducible output.
+/// objects/notifications/groups by OID) for reproducible output. The
+/// `strictness` parameter is recorded in the payload metadata but does not
+/// affect the export itself.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mib_rs::{Loader, export};
+/// use mib_rs::types::ResolverStrictness;
+///
+/// let mib = Loader::new()
+///     .system_paths()
+///     .modules(["IF-MIB"])
+///     .load()
+///     .unwrap();
+/// let payload = export::export_v1(&mib, ResolverStrictness::Normal);
+/// let json = serde_json::to_string_pretty(&payload).unwrap();
+/// ```
 pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let tree = mib.tree();
 

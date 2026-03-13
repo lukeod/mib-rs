@@ -1,9 +1,19 @@
+//! MODULE-COMPLIANCE definitions.
+//!
+//! [`ComplianceData`] holds the MODULE clauses from a MODULE-COMPLIANCE
+//! statement, each specifying mandatory groups and optional object refinements.
+//!
+//! For handle-oriented access, see [`Compliance`](super::handle::Compliance).
+
 use crate::types::Span;
 
 use super::object::EntityData;
 use super::types::*;
 
 /// A MODULE-COMPLIANCE definition.
+///
+/// Contains one or more [`ComplianceModule`] clauses, each specifying
+/// mandatory groups and optional object refinements for a target module.
 #[derive(Debug, Clone)]
 pub struct ComplianceData {
     pub(crate) entity: EntityData,
@@ -28,37 +38,37 @@ impl ComplianceData {
         self.entity.span
     }
 
-    /// Return the OID tree node id, if resolved.
+    /// Return the OID tree [`NodeId`], if resolved.
     pub fn node(&self) -> Option<NodeId> {
         self.entity.node
     }
 
-    /// Return the defining module id.
+    /// Return the defining [`ModuleId`].
     pub fn module(&self) -> Option<ModuleId> {
         self.entity.module
     }
 
-    /// Return the status.
+    /// Return the [`Status`](crate::types::Status).
     pub fn status(&self) -> crate::types::Status {
         self.entity.status
     }
 
-    /// Return the DESCRIPTION clause text.
+    /// Return the DESCRIPTION clause text, or an empty string if absent.
     pub fn description(&self) -> &str {
         &self.entity.description
     }
 
-    /// Return the REFERENCE clause text.
+    /// Return the REFERENCE clause text, or an empty string if absent.
     pub fn reference(&self) -> &str {
         &self.entity.reference
     }
 
-    /// Return symbolic OID references.
+    /// Return the symbolic OID references from the value assignment.
     pub fn oid_refs(&self) -> &[OidRef] {
         &self.entity.oid_refs
     }
 
-    /// Return the MODULE clauses.
+    /// Return the [`ComplianceModule`] clauses.
     pub fn modules(&self) -> &[ComplianceModule] {
         &self.modules
     }

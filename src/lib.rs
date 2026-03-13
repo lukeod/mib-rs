@@ -1,23 +1,25 @@
 //! SNMP MIB parsing, resolution, query, and tooling APIs.
 //!
+//! # API Tiers
+//!
 //! This crate exposes three intentional API tiers:
 //!
-//! - High-level resolved queries: start with [`Loader`] and navigate the
+//! - **High-level handles** - start with [`Loader`] and navigate the
 //!   resolved model with [`Mib`], [`Module`], [`Node`], [`Object`], and [`Type`].
-//! - Low-level resolved data: call [`Mib::raw()`] to work with stable ids,
+//! - **Low-level raw data** - call [`Mib::raw()`] to work with stable ids,
 //!   arena-backed records, and the OID tree directly. This tier exists for
 //!   tooling such as linters, language servers, exporters, and editor
-//!   integrations.
-//! - Compiler pipeline data: [`ast`], [`parser`], [`lower`], [`ir`], and
+//!   integrations. See the [`raw`] module.
+//! - **Compiler pipeline** - [`ast`], [`parser`], [`lower`], [`ir`], and
 //!   [`token`] expose pre-resolution stages for callers that need syntax-aware
-//!   analysis or diagnostics before full resolution.
+//!   analysis or diagnostics before full resolution. See the [`compile`] module.
 //!
 //! Most library code should stay in the handle-oriented high-level API. Drop to
 //! [`raw`] or the compiler pipeline only when you need that additional control.
 //!
-//! # Examples
+//! # Loading MIBs
 //!
-//! Load a module from memory and inspect an object through the high-level API:
+//! Use [`Loader`] to configure sources, select modules, and run the pipeline:
 //!
 //! ```rust
 //! use mib_rs::{BaseType, Loader};
@@ -110,7 +112,9 @@
 //! assert_eq!(ty.effective_display_hint(), "255a");
 //! ```
 //!
-//! Resolve symbolic and numeric OIDs without dropping to raw ids:
+//! # OID Resolution
+//!
+//! Resolve symbolic and numeric OIDs, including instance suffixes:
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -147,7 +151,9 @@
 //! assert_eq!(mib.lookup_oid(&"1.3.6.1.4.1.99999.2.1.1.2.99".parse().unwrap()).name(), "docDescr");
 //! ```
 //!
-//! Work with tables, columns, and effective indexes through object handles:
+//! # Tables and Indexes
+//!
+//! Navigate tables, columns, and effective indexes through object handles:
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -180,6 +186,8 @@
 //! assert_eq!(index_type.name(), "Integer32");
 //! ```
 //!
+//! # Module Iteration
+//!
 //! Scope lookups to a module and iterate the resolved handles it owns:
 //!
 //! ```rust
@@ -208,6 +216,105 @@
 //! let type_names: Vec<_> = module.types().map(|ty| ty.name()).collect();
 //! assert!(type_names.contains(&"DocName"));
 //! ```
+//!
+//! # Query Formats
+//!
+//! [`Mib::resolve_oid`], [`Mib::resolve_node`], and [`Mib::resolve`] accept
+//! several query forms:
+//!
+//! | Form | Example | Description |
+//! |------|---------|-------------|
+//! | Plain name | `sysDescr` | Looks up by object/node name across all modules |
+//! | Qualified name | `SNMPv2-MIB::sysDescr` | Scoped to a specific module |
+//! | Instance OID | `ifDescr.7` | Name with numeric suffix appended |
+//! | Numeric OID | `1.3.6.1.2.1.1.1` | Dotted decimal, leading dot optional |
+//!
+//! For instance OIDs (both symbolic and numeric), [`Mib::resolve_node`] returns
+//! the deepest matching tree node, while [`Mib::resolve_oid`] returns the full
+//! numeric OID with the suffix included.
+//!
+//! [`Mib::format_oid`] converts a numeric [`Oid`] back to `MODULE::name.suffix`
+//! form using longest-prefix matching.
+//!
+//! # Sources
+//!
+//! Sources provide MIB file content to the loading pipeline. The [`source`]
+//! module has several constructors:
+//!
+//! | Constructor | Description |
+//! |-------------|-------------|
+//! | [`source::dir`] | Recursively indexes a directory tree on disk |
+//! | [`source::dirs`] | Chains multiple directory trees |
+//! | [`source::memory`] | Single in-memory module (for tests or embedding) |
+//! | [`source::memory_modules`] | Multiple in-memory modules |
+//! | [`source::chain`] | Combines multiple sources; first match wins |
+//!
+//! [`Loader::system_paths`](load::Loader::system_paths) auto-discovers
+//! net-snmp and libsmi MIB directories from config files and environment
+//! variables (see [`searchpath`]).
+//!
+//! Module names are derived from file content (scanning for `DEFINITIONS`
+//! headers), not from filenames. Files are matched by extension using
+//! [`source::DEFAULT_EXTENSIONS`] (`.mib`, `.smi`, `.txt`, `.my`, or no
+//! extension).
+//!
+//! # Type Introspection
+//!
+//! Types form parent chains that terminate at a base SMI type. Each [`Type`]
+//! handle exposes both its own properties and effective (inherited) values:
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | [`Type::base`] | Directly assigned base type |
+//! | [`Type::effective_base`] | Base type after following the parent chain |
+//! | [`Type::parent`] | Immediate parent type (if derived) |
+//! | [`Type::display_hint`] | This type's own DISPLAY-HINT |
+//! | [`Type::effective_display_hint`] | First non-empty hint in the chain |
+//! | [`Type::enums`] | This type's own enum values |
+//! | [`Type::effective_enums`] | First non-empty enums in the chain |
+//! | [`Type::sizes`] / [`Type::ranges`] | This type's own constraints |
+//! | [`Type::effective_sizes`] / [`Type::effective_ranges`] | Inherited constraints |
+//! | [`Type::is_textual_convention`] | Whether defined as a TEXTUAL-CONVENTION |
+//!
+//! Convenience predicates: [`Type::is_counter`], [`Type::is_gauge`],
+//! [`Type::is_string`], [`Type::is_enumeration`], [`Type::is_bits`].
+//!
+//! Objects expose the same effective accessors directly (e.g.
+//! [`Object::effective_display_hint`], [`Object::effective_enums`]) without
+//! needing to go through the type handle.
+//!
+//! # Diagnostics
+//!
+//! The library collects diagnostics rather than failing fast. After loading,
+//! inspect them via [`Mib::diagnostics`] and [`Mib::has_errors`].
+//!
+//! Two independent controls affect behavior:
+//!
+//! - **[`ResolverStrictness`]** controls resolver fallback behavior (how
+//!   aggressively the resolver attempts to recover from issues). Set via
+//!   [`Loader::resolver_strictness`](load::Loader::resolver_strictness).
+//! - **[`DiagnosticConfig`]** controls reporting and failure thresholds (which
+//!   diagnostics are surfaced, and which severity causes [`LoadError::DiagnosticThreshold`]).
+//!   Set via [`Loader::diagnostic_config`](load::Loader::diagnostic_config).
+//!
+//! [`DiagnosticConfig`] has presets via [`ReportingLevel`]:
+//!
+//! | Preset | Reports | Fails at |
+//! |--------|---------|----------|
+//! | `Verbose` | All (including style/info) | Severe |
+//! | `Default` | Minor and above | Severe |
+//! | `Quiet` | Error and above | Severe |
+//! | `Silent` | Nothing | Fatal only |
+//!
+//! Individual diagnostic codes can be overridden or suppressed via
+//! [`DiagnosticConfig::overrides`] and [`DiagnosticConfig::ignore`].
+//!
+//! # Feature Flags
+//!
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `serde` | yes | Serde support and JSON export via [`export`] |
+//! | `cli` | yes | CLI binary (`mib-rs`) |
 pub mod ast;
 pub mod error;
 #[cfg(feature = "serde")]

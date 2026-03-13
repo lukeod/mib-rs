@@ -1,3 +1,10 @@
+//! Phase 6: Post-resolution validation checks.
+//!
+//! Runs a suite of SMI compliance checks against the fully resolved model.
+//! Each check emits diagnostics for violations - none modify the resolved data.
+//! Checks cover ACCESS/STATUS consistency, naming conventions, type usage
+//! rules, group membership, compliance structure, and various RFC requirements.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
@@ -13,7 +20,11 @@ struct Diag {
     message: String,
 }
 
-/// Run post-resolution validation checks.
+/// Run all post-resolution validation checks.
+///
+/// Each check function collects diagnostics independently. The checks are
+/// purely read-only against the resolved model - they emit diagnostics
+/// but do not modify any resolved data.
 pub(super) fn run_checks(ctx: &mut ResolverContext) {
     check_access_and_status(ctx);
     check_node_parent_kinds(ctx);

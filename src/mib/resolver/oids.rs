@@ -1,3 +1,15 @@
+//! Phase 4: OID resolution.
+//!
+//! Builds the OID trie from symbolic OID assignments across all modules.
+//! Uses a dependency graph with topological sort to ensure parent OIDs are
+//! resolved before their children. Handles well-known roots (iso, ccitt,
+//! joint-iso-ccitt), qualified references, named-number components, and
+//! TRAP-TYPE enterprise-based OID derivation (RFC 3584).
+//!
+//! When multiple modules define the same OID, ownership is determined by
+//! [`should_prefer_module`], which prefers base modules, then SMIv2 over
+//! SMIv1, then newer timestamps.
+
 use std::collections::HashSet;
 
 use tracing::trace;
@@ -11,7 +23,8 @@ use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::util::{language_rank, normalize_timestamp};
 
-/// An OID definition collected for resolution.
+/// An OID definition collected for resolution, linking an IR definition
+/// to its module and graph symbol.
 struct OidDef {
     ir_mod: IrModuleId,
     def_idx: usize,
@@ -55,6 +68,12 @@ impl OidDefKind {
 }
 
 /// Phase 4: Build the OID trie from symbolic OID references.
+///
+/// Collects all definitions with OID assignments, builds a dependency graph,
+/// and resolves them in topological order. TRAP-TYPE definitions are handled
+/// separately because their OIDs are derived from the ENTERPRISE value and
+/// trap number per RFC 3584. Populates [`ResolverContext::module_symbol_to_node`]
+/// and registers nodes in the [`Mib`](super::super::mib::Mib) tree.
 pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
     let (oid_defs, trap_defs) = collect_oid_definitions(ctx);
 
@@ -850,9 +869,14 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
     }
 }
 
-/// Determine whether a new IR module should take ownership of a node over the
-/// current owner. Prefers base modules, then SMIv2 over SMIv1, then newer
-/// LAST-UPDATED timestamps, then lexicographic module name as a final tiebreaker.
+/// Determine whether a new IR module should take ownership of a node over
+/// the current owner.
+///
+/// Preference order:
+/// - Base modules always win over user modules.
+/// - SMIv2 is preferred over SMIv1 (higher [`language_rank`](super::util::language_rank)).
+/// - Newer LAST-UPDATED timestamp wins among same-version modules.
+/// - Lexicographic module name is used as a deterministic tiebreaker.
 pub(super) fn should_prefer_module(
     ctx: &ResolverContext,
     current_resolved: Option<ModuleId>,

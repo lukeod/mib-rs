@@ -1,3 +1,9 @@
+//! Diagnostic code definitions.
+//!
+//! Each [`DiagCode`] variant identifies a specific diagnostic condition with a
+//! fixed [`Severity`] and pipeline phase. Codes use stable kebab-case string
+//! representations for configuration and filtering.
+
 use super::Severity;
 
 macro_rules! diag_codes {

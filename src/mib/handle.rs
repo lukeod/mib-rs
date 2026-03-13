@@ -1,3 +1,13 @@
+//! Lightweight borrowed handles for navigating the resolved MIB model.
+//!
+//! Each handle type ([`Node`], [`Object`], [`Type`], [`Module`], etc.) wraps
+//! an arena id together with a `&Mib` reference. Methods on handles return
+//! further handles, so you can navigate the model without touching arena ids
+//! directly.
+//!
+//! Handles are `Copy` and inexpensive to pass around. Two handles are equal
+//! when they point to the same arena slot in the same [`Mib`].
+
 use std::fmt;
 use std::marker::PhantomData;
 use std::ptr;
@@ -18,7 +28,11 @@ use super::types::*;
 macro_rules! define_handle {
     ($name:ident, $id:ident, $data:ident, $getter:ident) => {
         #[derive(Clone, Copy)]
-        #[doc = concat!("Borrowed handle to a resolved ", stringify!($name), ".")]
+        #[doc = concat!("Borrowed handle to a resolved [`", stringify!($data), "`].")]
+        ///
+        /// Wraps a [`Mib`] reference and an arena id. Handles are `Copy` and
+        /// cheap to pass around. Two handles are equal when they point to the
+        /// same arena slot in the same [`Mib`].
         pub struct $name<'a> {
             pub(crate) mib: &'a Mib,
             pub(crate) id: $id,
@@ -68,8 +82,13 @@ define_handle!(Capability, CapabilityId, CapabilityData, capability_data);
 
 /// Borrowed handle to a resolved node in the OID tree.
 ///
-/// A node may represent a plain tree node or an entity-backed node such as an
-/// object or notification.
+/// A node represents a single position in the OID hierarchy. It may be a
+/// plain structural node (e.g. `iso`, `org`) or carry an attached entity
+/// such as an [`Object`], [`Notification`], [`Group`], [`Compliance`], or
+/// [`Capability`].
+///
+/// Use [`Node::object`], [`Node::notification`], etc. to access attached
+/// entities, and [`Node::children`] or [`Node::subtree`] for tree traversal.
 #[derive(Clone, Copy)]
 pub struct Node<'a> {
     pub(crate) mib: &'a Mib,
@@ -208,7 +227,8 @@ impl fmt::Debug for Node<'_> {
 ///
 /// Indexes may be object-backed (e.g. `INDEX { ifIndex }`) or bare-type
 /// indexes (e.g. `INDEX { INTEGER }`). Obtained from
-/// [`Object::effective_indexes`].
+/// [`Object::effective_indexes`]. For the underlying data, see
+/// [`IndexEntry`].
 #[derive(Clone, Copy)]
 pub struct Index<'a> {
     mib: &'a Mib,
@@ -392,6 +412,11 @@ impl<'a> Object<'a> {
     }
 
     /// Return the OID tree node for this object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the object's OID was not resolved during loading. This should
+    /// not happen for objects obtained from a fully resolved [`Mib`].
     pub fn node(self) -> Node<'a> {
         Node::new(
             self.mib,
@@ -626,7 +651,10 @@ impl<'a> Type<'a> {
         self.data().is_textual_convention()
     }
 
-    /// Return the effective base type after following parent type chains.
+    /// Return the effective [`BaseType`] after following the parent type chain.
+    ///
+    /// Returns the first non-[`Unknown`](BaseType::Unknown) base type
+    /// encountered when walking from this type toward the root of the chain.
     pub fn effective_base(self) -> BaseType {
         self.data().effective_base(self.mib.types_slice())
     }
@@ -784,10 +812,11 @@ impl<'a> Capability<'a> {
     }
 }
 
-/// Iterator that wraps arena id iteration and yields borrowed handle types.
+/// Iterator adapter that converts arena id iteration into borrowed handles.
 ///
 /// Returned by collection methods on [`Mib`] such as [`Mib::modules`],
-/// [`Mib::objects`], [`Mib::types`], and [`Mib::nodes`].
+/// [`Mib::objects`], [`Mib::types`], and [`Mib::nodes`]. Implements
+/// [`Iterator`] for the corresponding handle type.
 pub struct HandleIter<'a, H, I> {
     mib: &'a Mib,
     ids: I,

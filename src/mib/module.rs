@@ -1,3 +1,11 @@
+//! Loaded MIB module data and per-module symbol indices.
+//!
+//! [`ModuleData`] stores module-level metadata (organization, description,
+//! revisions, imports) along with per-entity name indices for fast lookup
+//! within a single module.
+//!
+//! For handle-oriented access, see [`Module`](super::handle::Module).
+
 use std::collections::{HashMap, HashSet};
 
 use crate::mib::Oid;
@@ -296,10 +304,11 @@ impl ModuleData {
         self.nodes_by_name.entry(name.into()).or_insert(id);
     }
 
-    /// Yield all definitions in this module as Symbol values.
+    /// Yield all definitions in this module as [`Symbol`] values.
     ///
-    /// Plain nodes (nodes not attached to an object/notification/group/
-    /// compliance/capability entity) are yielded last.
+    /// Entity-backed definitions (objects, types, notifications, groups,
+    /// compliances, capabilities) come first. Plain nodes (not attached to
+    /// any entity) are yielded last.
     pub fn definitions(&self) -> impl Iterator<Item = Symbol> + '_ {
         // Covered node IDs: nodes whose names also appear in an entity map.
         let covered_node_ids: HashSet<NodeId> = self

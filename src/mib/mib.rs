@@ -1,3 +1,9 @@
+//! Top-level MIB container and query methods.
+//!
+//! [`Mib`] is the central type in the resolved model. It owns all arena
+//! storage, the OID tree, lookup indices, and diagnostics. After resolution
+//! it is immutable and safe for concurrent reads behind `&Mib`.
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -93,6 +99,9 @@ impl Mib {
     }
 
     /// Return a handle to the synthetic root of the OID tree.
+    ///
+    /// The root has no name and no OID arcs. All top-level OID branches
+    /// (`iso`, etc.) are children of this node.
     #[must_use]
     pub fn root_node(&self) -> Node<'_> {
         Node::new(self, self.tree.root())
@@ -158,8 +167,9 @@ impl Mib {
 
     /// Look up a node by name, returning the [`NodeId`].
     ///
-    /// When multiple nodes share the same name, prefers the one with an
-    /// attached object, then notifications, then any remaining node.
+    /// When multiple nodes share the same name (which can happen when
+    /// different modules define overlapping OID assignments), prefers the
+    /// one with an attached object, then notifications, then any remaining node.
     #[must_use]
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         let nodes = self.name_to_nodes.get(name)?;
@@ -387,10 +397,11 @@ impl Mib {
         node.module
     }
 
-    /// Format a numeric OID as `MODULE::name.suffix`.
+    /// Format a numeric [`Oid`] as `MODULE::name.suffix`.
     ///
     /// Uses longest-prefix matching to find the deepest named node, then
-    /// appends any remaining arcs as a dotted numeric suffix.
+    /// appends any remaining arcs as a dotted numeric suffix. Returns the
+    /// raw numeric string if no named node matches.
     pub fn format_oid(&self, oid: &Oid) -> String {
         if oid.is_empty() {
             return String::new();
@@ -417,15 +428,17 @@ impl Mib {
         result
     }
 
-    /// Look up a node by name, qualified name (`MODULE::name`), or OID query.
+    /// Look up a node by name, qualified name (`MODULE::name`), or OID query,
+    /// returning a [`Node`] handle.
     ///
     /// Symbolic and numeric instance OIDs resolve to the deepest matching node
-    /// rather than requiring an exact tree match.
+    /// rather than requiring an exact tree match. See [`Mib::resolve`] for the
+    /// accepted query forms.
     pub fn resolve_node(&self, query: &str) -> Option<Node<'_>> {
         self.resolve(query).map(|id| Node::new(self, id))
     }
 
-    /// Resolve a query to the matching node id.
+    /// Resolve a query to the matching [`NodeId`].
     ///
     /// Accepted forms include:
     /// - plain names such as `ifIndex`
@@ -434,7 +447,8 @@ impl Mib {
     /// - numeric OIDs such as `1.3.6.1.2.1.2.2.1.1.5`
     ///
     /// OID-like queries resolve to the deepest matching node, so instance OIDs
-    /// like `ifIndex.5` resolve to the `ifIndex` node.
+    /// like `ifIndex.5` resolve to the `ifIndex` node. For the typed error
+    /// variant, see [`Mib::resolve_oid`].
     pub fn resolve(&self, query: &str) -> Option<NodeId> {
         // Numeric OID
         let q = query.strip_prefix('.').unwrap_or(query);
@@ -448,10 +462,15 @@ impl Mib {
             .map(|oid| self.longest_prefix_by_oid(&oid))
     }
 
-    /// Convert a symbolic or numeric OID query to a numeric OID.
+    /// Convert a symbolic or numeric OID query to a numeric [`Oid`].
     ///
     /// Accepted forms include plain names, qualified names, symbolic suffixes,
     /// and numeric OIDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResolveOidError`] if the query is empty, the referenced module
+    /// or node name is not found, or a numeric suffix fails to parse.
     pub fn resolve_oid(&self, query: &str) -> Result<Oid, ResolveOidError> {
         if query.is_empty() {
             return Err(ResolveOidError::EmptyQuery);
@@ -599,6 +618,8 @@ impl Mib {
     }
 
     /// Return all non-base modules that define a symbol with the given name.
+    ///
+    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_defining(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -609,6 +630,8 @@ impl Mib {
     }
 
     /// Return all non-base modules that import a symbol with the given name.
+    ///
+    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_importing(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -783,6 +806,9 @@ impl Mib {
     }
 
     /// Return [`IndexEntry`] items for a row, following the AUGMENTS chain if needed.
+    ///
+    /// Returns an empty vector for non-row objects. For handle-level access,
+    /// see [`Object::effective_indexes`](super::handle::Object::effective_indexes).
     pub fn effective_indexes(&self, id: ObjectId) -> Vec<IndexEntry> {
         let mut visited = Vec::new();
         self.effective_indexes_inner(id, &mut visited)
@@ -898,7 +924,7 @@ impl Mib {
         &self.unresolved
     }
 
-    /// Return `true` if any diagnostic has error severity or higher.
+    /// Return `true` if any diagnostic has [`Severity::Error`] or higher.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()

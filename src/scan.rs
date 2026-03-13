@@ -10,6 +10,10 @@
 /// a full parse. ASN.1 line comments (`--`) are recognized so that
 /// commented-out module headers are not returned. Module names must
 /// start with an uppercase letter per ASN.1 conventions.
+///
+/// Returns an empty `Vec` if no module headers are found. A single MIB
+/// file may contain multiple modules, in which case all names are returned
+/// in the order they appear.
 pub fn scan_module_names(content: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
     let mut offset = 0;

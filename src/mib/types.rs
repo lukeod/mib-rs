@@ -1,9 +1,19 @@
+//! Shared types used across the resolved MIB model.
+//!
+//! Contains arena id newtypes ([`NodeId`], [`ObjectId`], [`TypeId`], etc.),
+//! supporting data structures ([`Range`], [`NamedValue`], [`DefVal`],
+//! [`IndexEntry`]), and SMI clause representations used by compliance and
+//! capability definitions.
+
 use std::fmt;
 
 use crate::mib::Oid;
 use crate::types::{Access, BaseType, IndexEncoding, Span};
 
 /// A single imported symbol with its source location.
+///
+/// Part of an [`Import`] group. The `name` is the symbol as written in the
+/// MIB's IMPORTS clause (e.g. `"ifIndex"`, `"DisplayString"`).
 #[derive(Debug, Clone)]
 pub struct ImportSymbol {
     /// The symbol name as it appears in the IMPORTS clause.
@@ -13,6 +23,9 @@ pub struct ImportSymbol {
 }
 
 /// A group of symbols imported from a single source module.
+///
+/// Each MIB module's IMPORTS section is represented as a list of `Import`
+/// entries, one per source module.
 #[derive(Debug, Clone)]
 pub struct Import {
     /// Name of the module being imported from.
@@ -21,7 +34,9 @@ pub struct Import {
     pub symbols: Vec<ImportSymbol>,
 }
 
-/// A min..max constraint for sizes or values.
+/// A min..max constraint range, used for both SIZE and value constraints.
+///
+/// For single-value constraints (e.g. `SIZE (6)`), `min` equals `max`.
 #[derive(Debug, Clone, Copy)]
 pub struct Range {
     /// Lower bound (inclusive).
@@ -42,7 +57,10 @@ impl fmt::Display for Range {
     }
 }
 
-/// A labeled integer from an enum or BITS definition.
+/// A labeled integer from an enumeration or BITS definition.
+///
+/// Used in OBJECT-TYPE SYNTAX enumerations, BITS definitions, and
+/// refinement clauses in compliance and capability statements.
 #[derive(Debug, Clone)]
 pub struct NamedValue {
     /// The textual label.
@@ -61,7 +79,7 @@ pub(crate) fn find_named_value<'a>(
     values.iter().find(|nv| nv.label == label)
 }
 
-/// A module revision entry.
+/// A module revision entry from a MODULE-IDENTITY REVISION clause.
 #[derive(Debug, Clone)]
 pub struct Revision {
     /// Revision timestamp string.
@@ -72,7 +90,12 @@ pub struct Revision {
     pub span: Span,
 }
 
-/// An index component for a table row.
+/// An index component from a table row's INDEX clause.
+///
+/// Indexes can be object-backed (referencing a column like `ifIndex`) or
+/// bare-type indexes (using a type name directly). The
+/// [`encoding`](Self::encoding) field indicates how this index component
+/// is encoded on the wire (see [`IndexEncoding`]).
 #[derive(Debug, Clone)]
 pub struct IndexEntry {
     /// Name of the index object.
@@ -128,6 +151,9 @@ fn is_fixed_size(sizes: &[Range]) -> bool {
 }
 
 /// Discriminant for the kind of value in a [`DefVal`].
+///
+/// Mirrors the [`DefValValue`] variants but as a simple `Copy` enum,
+/// useful for matching or display without borrowing the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DefValKind {
@@ -165,6 +191,10 @@ impl fmt::Display for DefValKind {
 }
 
 /// A DEFVAL clause value with both the interpreted value and the raw MIB syntax string.
+///
+/// The [`kind`](DefVal::kind) method returns the discriminant, [`value`](DefVal::value)
+/// returns the interpreted value, and [`raw`](DefVal::raw) returns the original
+/// syntax as written in the MIB source.
 ///
 /// Constructed via the named constructors ([`DefVal::int`], [`DefVal::string`], etc.).
 #[derive(Debug, Clone)]
@@ -330,7 +360,10 @@ impl fmt::Display for DefVal {
     }
 }
 
-/// A MODULE clause within a MODULE-COMPLIANCE definition.
+/// A MODULE clause within a [`ComplianceData`](super::compliance::ComplianceData) definition.
+///
+/// Specifies the mandatory groups and optional object refinements required
+/// for conformance to a particular module.
 #[derive(Debug, Clone)]
 pub struct ComplianceModule {
     /// Name of the module this clause applies to.
@@ -345,7 +378,10 @@ pub struct ComplianceModule {
     pub span: Span,
 }
 
-/// A GROUP clause within MODULE-COMPLIANCE.
+/// A GROUP clause within a [`ComplianceModule`].
+///
+/// Represents a conditionally required group, with a description of the
+/// conditions under which it is required.
 #[derive(Debug, Clone)]
 pub struct ComplianceGroup {
     /// Name of the conditionally required group.
@@ -356,7 +392,10 @@ pub struct ComplianceGroup {
     pub span: Span,
 }
 
-/// An OBJECT refinement within MODULE-COMPLIANCE.
+/// An OBJECT refinement within a [`ComplianceModule`].
+///
+/// May narrow the syntax, write-syntax, or minimum access level for an
+/// object beyond what the base OBJECT-TYPE definition requires.
 #[derive(Debug, Clone)]
 pub struct ComplianceObject {
     /// Name of the refined object.
@@ -373,7 +412,10 @@ pub struct ComplianceObject {
     pub span: Span,
 }
 
-/// A SUPPORTS clause within an AGENT-CAPABILITIES definition.
+/// A SUPPORTS clause within a [`CapabilityData`](super::capability::CapabilityData) definition.
+///
+/// Lists the included groups from a supported module and any object or
+/// notification variations the agent implements.
 #[derive(Debug, Clone)]
 pub struct CapabilitiesModule {
     /// Name of the supported module.
@@ -388,7 +430,10 @@ pub struct CapabilitiesModule {
     pub span: Span,
 }
 
-/// An object VARIATION within AGENT-CAPABILITIES.
+/// An object VARIATION within a [`CapabilitiesModule`].
+///
+/// Describes implementation-specific deviations for a single object,
+/// including restricted syntax, access overrides, and default values.
 #[derive(Debug, Clone)]
 pub struct ObjectVariation {
     /// Name of the varied object.
@@ -409,7 +454,9 @@ pub struct ObjectVariation {
     pub span: Span,
 }
 
-/// A notification VARIATION within AGENT-CAPABILITIES.
+/// A notification VARIATION within a [`CapabilitiesModule`].
+///
+/// Describes implementation-specific deviations for a single notification.
 #[derive(Debug, Clone)]
 pub struct NotificationVariation {
     /// Name of the varied notification.
@@ -424,6 +471,9 @@ pub struct NotificationVariation {
 
 /// Inline syntax constraints from a VARIATION SYNTAX/WRITE-SYNTAX clause
 /// or a MODULE-COMPLIANCE OBJECT refinement.
+///
+/// Represents a restricted view of a type with narrowed ranges, enums, or
+/// BITS values.
 #[derive(Debug, Clone)]
 pub struct SyntaxConstraints {
     /// Resolved type, if any.
@@ -438,12 +488,15 @@ pub struct SyntaxConstraints {
     pub bits: Vec<NamedValue>,
 }
 
-/// SMIv1 TRAP-TYPE fields.
+/// SMIv1 TRAP-TYPE specific fields.
+///
+/// Present on [`NotificationData`](super::notification::NotificationData)
+/// instances that originate from TRAP-TYPE definitions.
 #[derive(Debug, Clone)]
 pub struct TrapInfo {
-    /// ENTERPRISE OID name.
+    /// ENTERPRISE OID name from the TRAP-TYPE definition.
     pub enterprise: String,
-    /// Numeric trap identifier.
+    /// Numeric trap identifier (the specific-trap number).
     pub trap_number: u32,
 }
 
@@ -490,7 +543,8 @@ pub struct UnresolvedRef {
     pub reason: String,
 }
 
-/// A named symbolic reference from an OID assignment with its source span.
+/// A symbolic name referenced in an OID value assignment (e.g. `enterprises` in
+/// `{ enterprises 9 }`).
 #[derive(Debug, Clone)]
 pub struct OidRef {
     /// The symbolic name referenced in the OID assignment.

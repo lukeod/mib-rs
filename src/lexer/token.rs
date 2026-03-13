@@ -1,3 +1,9 @@
+//! Token types produced by the SMI/MIB [`Lexer`](super::Lexer).
+//!
+//! Contains the [`Token`] struct (pairing a [`TokenKind`] with a [`Span`])
+//! and the [`TokenKind`] enum covering all SMIv1/SMIv2 token categories:
+//! identifiers, literals, punctuation, and keywords.
+
 use crate::types::Span;
 
 /// A single lexed token with its classification and source location.
@@ -261,7 +267,8 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    /// Any keyword token (structural, clause, macro, type, tag, status/access).
+    /// Returns `true` if this is any keyword token (structural, clause, macro,
+    /// type, tag, or status/access).
     pub fn is_keyword(self) -> bool {
         self.is_structural_keyword()
             || self.is_clause_keyword()
@@ -271,12 +278,14 @@ impl TokenKind {
             || self.is_status_access_keyword()
     }
 
-    /// UppercaseIdent or LowercaseIdent.
+    /// Returns `true` for [`UppercaseIdent`](Self::UppercaseIdent) or
+    /// [`LowercaseIdent`](Self::LowercaseIdent).
     pub fn is_identifier(self) -> bool {
         matches!(self, TokenKind::UppercaseIdent | TokenKind::LowercaseIdent)
     }
 
-    /// Built-in type keywords: INTEGER through NetworkAddress.
+    /// Returns `true` for built-in SMI type keywords (`INTEGER`, `Counter32`,
+    /// `OCTET`, `STRING`, `NetworkAddress`, etc.).
     pub fn is_type_keyword(self) -> bool {
         matches!(
             self,
@@ -297,7 +306,8 @@ impl TokenKind {
         )
     }
 
-    /// MACRO invocation keywords: MODULE-IDENTITY through TRAP-TYPE.
+    /// Returns `true` for SMI macro invocation keywords (`MODULE-IDENTITY`,
+    /// `OBJECT-TYPE`, `TRAP-TYPE`, etc.).
     pub fn is_macro_keyword(self) -> bool {
         matches!(
             self,
@@ -314,7 +324,8 @@ impl TokenKind {
         )
     }
 
-    /// Clause keywords: SYNTAX through VARIABLES.
+    /// Returns `true` for clause keywords used within macro bodies (`SYNTAX`,
+    /// `STATUS`, `DESCRIPTION`, `INDEX`, `DEFVAL`, etc.).
     pub fn is_clause_keyword(self) -> bool {
         matches!(
             self,
@@ -352,7 +363,8 @@ impl TokenKind {
         )
     }
 
-    /// ASN.1 tag keywords: APPLICATION, IMPLICIT, UNIVERSAL.
+    /// Returns `true` for ASN.1 tag keywords (`APPLICATION`, `IMPLICIT`,
+    /// `UNIVERSAL`).
     pub fn is_tag_keyword(self) -> bool {
         matches!(
             self,
@@ -360,7 +372,8 @@ impl TokenKind {
         )
     }
 
-    /// Status or access value keywords: current through not-implemented.
+    /// Returns `true` for status or access value keywords (`current`,
+    /// `deprecated`, `read-only`, `not-accessible`, etc.).
     pub fn is_status_access_keyword(self) -> bool {
         matches!(
             self,
@@ -379,7 +392,8 @@ impl TokenKind {
         )
     }
 
-    /// Structural keywords: DEFINITIONS through MACRO.
+    /// Returns `true` for structural keywords that frame the module
+    /// (`DEFINITIONS`, `BEGIN`, `END`, `IMPORTS`, `FROM`, `MACRO`, etc.).
     pub fn is_structural_keyword(self) -> bool {
         matches!(
             self,
@@ -398,7 +412,11 @@ impl TokenKind {
         )
     }
 
-    /// Human-readable name for error messages.
+    /// Returns a human-readable name suitable for use in error messages.
+    ///
+    /// Punctuation tokens are shown as quoted characters (e.g. `'{'`),
+    /// keywords use their [`libsmi_name`](Self::libsmi_name), and other
+    /// tokens use descriptive labels like `"identifier"` or `"number"`.
     pub fn display_name(self) -> &'static str {
         match self {
             TokenKind::Error => "<error>",
@@ -430,7 +448,11 @@ impl TokenKind {
         }
     }
 
-    /// Returns the libsmi-compatible name for this token kind.
+    /// Returns the libsmi-compatible uppercase name for this token kind.
+    ///
+    /// These names match the token naming conventions used by the libsmi
+    /// library, with hyphens replaced by underscores (e.g. `OBJECT_TYPE`,
+    /// `READ_ONLY`, `COLON_COLON_EQUAL`).
     pub fn libsmi_name(self) -> &'static str {
         match self {
             TokenKind::Error => "ERROR",
@@ -544,8 +566,8 @@ impl TokenKind {
     }
 }
 
-/// Displays the [`libsmi_name`](TokenKind::libsmi_name) for this token kind.
 impl std::fmt::Display for TokenKind {
+    /// Formats using the [`libsmi_name`](TokenKind::libsmi_name) representation.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.libsmi_name())
     }

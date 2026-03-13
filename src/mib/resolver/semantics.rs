@@ -1,3 +1,17 @@
+//! Phase 5: Semantic resolution.
+//!
+//! Transforms OID tree nodes into fully resolved semantic entities:
+//!
+//! - Infers node kinds (table, row, column, scalar) from OBJECT-TYPE syntax.
+//! - Creates [`Object`](super::super::object::ObjectData) entries with resolved
+//!   types, access, status, indexes, and DEFVAL.
+//! - Creates [`Notification`](super::super::notification::NotificationData),
+//!   [`Group`](super::super::group::GroupData),
+//!   [`Compliance`](super::super::compliance::ComplianceData), and
+//!   [`Capability`](super::super::capability::CapabilityData) entries.
+//! - Resolves AUGMENTS references, INDEX object linkage, and
+//!   NOTIFICATION-TYPE OBJECTS references.
+
 use crate::ir;
 use crate::mib::Oid;
 use crate::types::{Access, BaseType, DiagCode, Kind, Span, Status};
@@ -11,7 +25,10 @@ use super::super::object::ObjectData;
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 
-/// Phase 5: Create resolved entities and run structural validation.
+/// Phase 5: Create resolved semantic entities from OID tree nodes.
+///
+/// Infers node kinds, creates objects/notifications/groups/compliances/capabilities,
+/// resolves INDEX and AUGMENTS references, and validates table structure.
 pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
     infer_node_kinds(ctx);
     create_resolved_objects(ctx);

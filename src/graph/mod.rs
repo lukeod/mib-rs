@@ -2,12 +2,13 @@
 //!
 //! Used by the resolver to order type and OID definitions so that
 //! dependencies are processed before dependents. Built on top of
-//! [`petgraph`] using Tarjan's SCC algorithm.
+//! `petgraph` using Tarjan's SCC algorithm.
 
 use std::collections::HashMap;
 use std::fmt;
 
 use petgraph::graph::DiGraph;
+/// Re-exported from `petgraph` for use as an opaque node handle.
 pub use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
@@ -39,20 +40,24 @@ impl fmt::Display for Symbol {
 }
 
 /// Result of [`Graph::resolution_order`].
+///
+/// Contains the topologically sorted symbols and any cycles found
+/// during the ordering computation.
 pub struct ResolutionResult {
-    /// Symbols in topological (dependency) order.
+    /// Symbols in topological (dependency) order, leaves first.
     #[cfg_attr(not(test), allow(dead_code))]
     pub order: Vec<Symbol>,
     /// Node indices in topological order, parallel to [`order`](Self::order).
     pub order_indices: Vec<NodeIndex>,
     /// Cycles detected as strongly connected components (each SCC with >1 node
-    /// or a self-loop).
+    /// or a self-loop). Each inner `Vec` contains the symbols forming one cycle,
+    /// sorted for determinism.
     pub cycles: Vec<Vec<Symbol>>,
 }
 
 /// Directed dependency graph for topological ordering with cycle detection.
 ///
-/// Wraps a [`petgraph::DiGraph`] with a symbol-to-index map for deduplication.
+/// Wraps a `petgraph::DiGraph` with a symbol-to-index map for deduplication.
 /// Edges represent "depends on" relationships: an edge from A to B means
 /// A depends on B and B should be resolved first.
 pub struct Graph {

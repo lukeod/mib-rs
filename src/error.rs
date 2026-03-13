@@ -1,7 +1,14 @@
 //! Error types for the MIB loading pipeline.
+//!
+//! The primary error type is [`LoadError`], returned by [`Loader::load`](crate::Loader::load)
+//! and the free function [`load`](crate::load::load).
 
 /// Errors returned by [`Loader::load`](crate::Loader::load) and the
 /// free function [`load`](crate::load::load).
+///
+/// All variants carry enough context for callers to present useful error
+/// messages. The [`Display`](std::fmt::Display) implementation produces
+/// human-readable text for each case.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     /// No [`Source`](crate::Source)s were configured on the [`Loader`](crate::Loader).
@@ -21,6 +28,9 @@ pub enum LoadError {
     DiagnosticThreshold,
 
     /// A [`Source`](crate::Source) implementation returned a custom error.
+    ///
+    /// Use [`LoadError::from_source`] to construct this variant from an
+    /// arbitrary error type.
     #[error("source error")]
     Source(#[source] Box<dyn std::error::Error + Send + Sync>),
 
@@ -31,6 +41,9 @@ pub enum LoadError {
 
 impl LoadError {
     /// Wrap an arbitrary error as a [`LoadError::Source`].
+    ///
+    /// Useful for custom [`Source`](crate::Source) implementations that
+    /// need to return domain-specific errors through the loading pipeline.
     pub fn from_source(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         LoadError::Source(Box::new(err))
     }

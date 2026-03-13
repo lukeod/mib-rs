@@ -1,3 +1,18 @@
+//! Phase 2: Import resolution.
+//!
+//! Resolves cross-module symbol references declared in IMPORTS clauses.
+//! Uses a multi-strategy approach:
+//!
+//! - **Direct** - symbol found in the named source module.
+//! - **Alias** - source module name maps to a known alternate (e.g., SNMPv2-SMI-v1 -> SNMPv2-SMI).
+//! - **Forwarding** - source module re-exports the symbol from a third module.
+//! - **Partial** - resolves as many symbols as possible from a mixed group, reporting the rest.
+//!
+//! After initial resolution, [`resolve_transitive_imports`] collapses
+//! multi-hop import chains so every import points directly at the defining
+//! module. Post-resolution checks ([`check_unused_imports`],
+//! [`check_obsolete_imports`]) detect unused and obsolete imports.
+
 use std::collections::{HashMap, HashSet};
 
 use tracing::trace;
@@ -8,6 +23,10 @@ use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::registration::group_imports;
 
 /// Well-known macro names that are syntactic constructs, not resolvable symbols.
+///
+/// These appear in IMPORTS clauses but are SMI macro keywords, not actual
+/// definitions that can be looked up. They are silently skipped during
+/// import resolution.
 const MACRO_NAMES: &[&str] = &[
     "MODULE-IDENTITY",
     "OBJECT-TYPE",
@@ -26,6 +45,10 @@ fn is_macro_symbol(name: &str) -> bool {
 }
 
 /// Phase 2: Resolve imports for each module.
+///
+/// Iterates all modules and resolves each IMPORTS clause using the
+/// multi-strategy approach described in the module docs. Populates
+/// [`ResolverContext::module_imports`] with symbol-to-source mappings.
 pub(super) fn resolve_imports(ctx: &mut ResolverContext) {
     let module_count = ctx.modules.len();
     for idx in 0..module_count {
@@ -433,6 +456,10 @@ fn resolve_imported_symbol(
 }
 
 /// Collapse multi-hop import chains to point directly at the defining module.
+///
+/// After initial import resolution, A may import symbol X from B, which
+/// itself imports X from C. This pass rewrites the mapping so A's import
+/// of X points directly at C, eliminating the intermediate hop.
 pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
     let mod_ids: Vec<IrModuleId> = ctx.module_imports.keys().copied().collect();
     for mod_id in mod_ids {
@@ -554,7 +581,10 @@ pub(super) fn check_obsolete_imports(ctx: &mut ResolverContext) {
     }
 }
 
-/// Copy used import information to resolved modules.
+/// Copy grouped imports and used-import tracking to resolved modules.
+///
+/// Populates each resolved module's [`imports`](super::super::module::ModuleData::imports)
+/// and [`used_import_names`](super::super::module::ModuleData::used_import_names) fields.
 pub(super) fn copy_used_imports_to_modules(ctx: &mut ResolverContext) {
     for idx in 0..ctx.modules.len() {
         let ir_id = IrModuleId(idx as u32);
@@ -576,7 +606,10 @@ pub(super) fn copy_used_imports_to_modules(ctx: &mut ResolverContext) {
     }
 }
 
-/// Copy resolved import mappings (symbol -> source module) to resolved modules.
+/// Copy resolved import mappings (symbol -> source [`ModuleId`]) to resolved modules.
+///
+/// Populates each resolved module's
+/// [`resolved_imports`](super::super::module::ModuleData::resolved_imports) field.
 pub(super) fn copy_resolved_imports_to_modules(ctx: &mut ResolverContext) {
     for idx in 0..ctx.modules.len() {
         let ir_id = IrModuleId(idx as u32);

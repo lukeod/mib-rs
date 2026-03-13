@@ -1,3 +1,9 @@
+//! Enumerations for SMI concepts.
+//!
+//! Defines the core enums used throughout the MIB parsing and resolution pipeline:
+//! severity levels, node kinds, access levels, status values, base types, and
+//! configuration knobs for resolver strictness and diagnostic reporting.
+
 use std::fmt;
 
 macro_rules! impl_display {
@@ -50,7 +56,7 @@ impl_display!(Severity {
     Info => "info",
 });
 
-/// Controls resolver fallback behavior.
+/// Controls resolver fallback behavior when resolving cross-module references.
 ///
 /// Ordered from strictest (fewest fallbacks) to most permissive.
 /// See also [`ReportingLevel`] which controls diagnostic output separately.
@@ -178,6 +184,7 @@ impl_display!(Kind {
 /// Access level for OBJECT-TYPE definitions.
 ///
 /// Covers both SMIv1 ACCESS and SMIv2 MAX-ACCESS values.
+/// See [`AccessKeyword`] for which keyword was used in the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Access {
@@ -243,7 +250,7 @@ impl_display!(Status {
     Optional => "optional",
 });
 
-/// SMI language version of a module.
+/// SMI language version of a MIB module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Language {
@@ -265,7 +272,8 @@ impl_display!(Language {
     SPPI => "SPPI",
 });
 
-/// Fundamental SMI type that a textual convention or object ultimately resolves to.
+/// Fundamental SMI type that a textual convention or [`Kind::Scalar`]/[`Kind::Column`]
+/// object ultimately resolves to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum BaseType {
@@ -320,7 +328,9 @@ impl_display!(BaseType {
     Unsigned64 => "Unsigned64",
 });
 
-/// How an INDEX component maps to instance-identifier sub-identifiers (RFC 2578 s7.7).
+/// How an INDEX component maps to instance-identifier sub-identifiers (RFC 2578, section 7.7).
+///
+/// The encoding depends on the index object's [`BaseType`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum IndexEncoding {
@@ -351,6 +361,7 @@ impl_display!(IndexEncoding {
 /// Records which access keyword was used in the source MIB.
 ///
 /// SMIv1 uses `ACCESS`, SMIv2 uses `MAX-ACCESS`, and compliance statements use `MIN-ACCESS`.
+/// The resolved access value is stored separately as [`Access`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum AccessKeyword {

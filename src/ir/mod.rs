@@ -1,9 +1,12 @@
 //! Intermediate representation produced by [lowering](crate::lower) the AST.
 //!
 //! The IR is language-independent: SMIv1 and SMIv2 constructs are unified
-//! (e.g. TRAP-TYPE and NOTIFICATION-TYPE both become [`Notification`]).
+//! (e.g. `TRAP-TYPE` and `NOTIFICATION-TYPE` both become [`Notification`]).
 //! Type and OID references remain unresolved strings until the resolver phase
 //! transforms the IR into a fully resolved [`Mib`](crate::mib::Mib).
+//!
+//! Unlike the AST, the IR uses plain `String` values instead of [`Ident`](crate::ast::Ident)
+//! nodes, and optional clauses are represented as empty strings rather than `Option`s.
 
 pub mod definition;
 pub mod oid;
@@ -25,7 +28,7 @@ pub struct Module {
     pub name: String,
     /// Detected SMI language version.
     pub language: Language,
-    /// Flattened imports (one entry per symbol).
+    /// Flattened imports: one [`Import`] per imported symbol.
     pub imports: Vec<Import>,
     /// All definitions in source order.
     pub definitions: Vec<Definition>,
@@ -69,6 +72,6 @@ pub struct Import {
     pub module: String,
     /// Imported symbol name.
     pub symbol: String,
-    /// Source span of the symbol in the IMPORTS section.
+    /// Source span of the symbol in the `IMPORTS` section.
     pub span: Span,
 }

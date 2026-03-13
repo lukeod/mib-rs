@@ -1,3 +1,14 @@
+//! OID tree nodes and the arena-backed OID tree.
+//!
+//! The [`OidTree`] stores all nodes in a contiguous arena indexed by [`NodeId`].
+//! Each [`NodeData`] holds a single arc in the OID hierarchy, links to its
+//! parent and children, and optional references to attached entities (objects,
+//! notifications, groups, etc.).
+//!
+//! For most use cases, prefer the [`Node`](super::handle::Node) handle, which
+//! wraps a `NodeId` with a `&Mib` reference and provides navigation methods
+//! that return further handles.
+
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -100,7 +111,7 @@ impl NodeData {
         self.parent
     }
 
-    /// Return the child map (arc -> NodeId) in arc order.
+    /// Return the child map (arc -> [`NodeId`]) in ascending arc order.
     pub fn children(&self) -> &BTreeMap<u32, NodeId> {
         &self.children
     }
@@ -177,6 +188,10 @@ impl OidTree {
     }
 
     /// Look up a node by id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` does not correspond to a node in this tree.
     pub fn get(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
     }

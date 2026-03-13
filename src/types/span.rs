@@ -1,3 +1,9 @@
+//! Source location types for tracking positions in MIB source text.
+//!
+//! [`ByteOffset`] represents a single position, [`Span`] represents a half-open
+//! byte range, and [`SpanDiagnostic`] is a diagnostic that carries a span
+//! (later converted to line/column in [`Diagnostic`](super::Diagnostic)).
+
 /// A byte position in source text.
 ///
 /// Wraps a `u32` offset. The sentinel value [`ByteOffset::SYNTHETIC`] marks

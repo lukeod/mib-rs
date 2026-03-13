@@ -1,3 +1,9 @@
+//! Reference table for SMI macro keywords.
+//!
+//! Provides [`MacroInfo`] descriptions for the 10 standard SMI macro keywords
+//! (OBJECT-TYPE, MODULE-IDENTITY, TEXTUAL-CONVENTION, etc.), including their
+//! defining module, RFC, and a brief description.
+
 /// Describes an SMI macro keyword (e.g. OBJECT-TYPE, MODULE-IDENTITY).
 ///
 /// See [`macro_description`] to look up a macro by name.

@@ -1,17 +1,28 @@
 //! AST types for SYNTAX clauses, constraints, indexes, and DEFVAL.
+//!
+//! These types represent the type system portions of SMI definitions,
+//! including type references, enumerated integers, BITS, subtype constraints,
+//! SEQUENCE definitions, and default values.
 
 use super::common::{Ident, NamedNumber, QuotedString};
 use super::oid::OidComponent;
 use crate::types::{Access, AccessKeyword, Span, Status};
 
-/// Wraps a TypeSyntax with its source span.
+/// A parsed SYNTAX clause, pairing a [`TypeSyntax`] with its source location.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SyntaxClause {
+    /// The type expression.
     pub syntax: TypeSyntax,
+    /// Source span covering the entire SYNTAX clause.
     pub span: Span,
 }
 
 /// A type expression in a SYNTAX clause or type assignment.
+///
+/// Covers all type forms that appear in SMI definitions: simple type
+/// references, enumerated integers, BITS, constrained types, SEQUENCE,
+/// CHOICE, tagged types, and the built-in `OCTET STRING` and
+/// `OBJECT IDENTIFIER` types.
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeSyntax {
     /// Unqualified type name reference.
@@ -45,7 +56,7 @@ pub enum TypeSyntax {
         alternatives: Vec<SequenceField>,
         span: Span,
     },
-    /// Tagged type: [APPLICATION n] IMPLICIT Type.
+    /// Tagged type, e.g. `[APPLICATION n] IMPLICIT Type`.
     Tagged {
         underlying: Box<TypeSyntax>,
         span: Span,
@@ -74,11 +85,14 @@ impl TypeSyntax {
     }
 }
 
-/// A named field within a SEQUENCE definition.
+/// A named field within a SEQUENCE or CHOICE definition.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SequenceField {
+    /// Field name.
     pub name: Ident,
+    /// Field type expression.
     pub syntax: TypeSyntax,
+    /// Source span covering the entire field declaration.
     pub span: Span,
 }
 
@@ -100,67 +114,86 @@ impl Constraint {
     }
 }
 
-/// A single range element within a constraint (min..max).
-/// When max is None, the range represents an exact value match.
+/// A single range element within a constraint.
+///
+/// When `max` is `None`, this represents an exact value (e.g. `SIZE (4)`).
+/// When `max` is `Some`, this represents a range (e.g. `0..255`).
 #[derive(Debug, PartialEq, Eq)]
 pub struct Range {
+    /// Lower bound (or exact value when `max` is `None`).
     pub min: RangeValue,
+    /// Upper bound, or `None` for an exact value match.
     pub max: Option<RangeValue>,
+    /// Source span covering the range expression.
     pub span: Span,
 }
 
-/// An endpoint in a range constraint.
+/// An endpoint in a [`Range`] constraint.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RangeValue {
     /// Signed integer literal.
     Signed(i64),
     /// Unsigned integer literal.
     Unsigned(u64),
-    /// Named reference (MIN or MAX keyword).
+    /// Named reference (`MIN` or `MAX` keyword).
     Named(Ident),
 }
 
 /// A parsed ACCESS, MAX-ACCESS, or MIN-ACCESS clause.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AccessClause {
+    /// Which keyword form was used (`ACCESS`, `MAX-ACCESS`, or `MIN-ACCESS`).
     pub keyword: AccessKeyword,
+    /// The access level value.
     pub value: Access,
+    /// Source span covering the entire clause.
     pub span: Span,
 }
 
-/// A parsed STATUS clause value and span.
+/// A parsed STATUS clause.
 #[derive(Debug, PartialEq, Eq)]
 pub struct StatusClause {
+    /// The status value (e.g. `current`, `deprecated`, `obsolete`).
     pub value: Status,
+    /// Source span covering the entire clause.
     pub span: Span,
 }
 
-/// An INDEX clause in OBJECT-TYPE.
+/// An INDEX clause in an OBJECT-TYPE definition.
 #[derive(Debug, PartialEq, Eq)]
 pub struct IndexClause {
+    /// Ordered list of index objects.
     pub items: Vec<IndexItem>,
+    /// Source span covering `INDEX { ... }`.
     pub span: Span,
 }
 
-/// A single entry in an INDEX clause, possibly IMPLIED.
+/// A single entry in an [`IndexClause`], possibly marked `IMPLIED`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct IndexItem {
+    /// Whether this index object is preceded by the `IMPLIED` keyword.
     pub implied: bool,
+    /// The index object name.
     pub object: Ident,
+    /// Source span covering this index entry.
     pub span: Span,
 }
 
-/// The target row referenced by AUGMENTS.
+/// The target row referenced by an AUGMENTS clause.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AugmentsClause {
+    /// Name of the row object being augmented.
     pub target: Ident,
+    /// Source span covering `AUGMENTS { ... }`.
     pub span: Span,
 }
 
-/// The default value for an OBJECT-TYPE.
+/// A DEFVAL clause specifying a default value for an OBJECT-TYPE.
 #[derive(Debug, PartialEq, Eq)]
 pub struct DefValClause {
+    /// The parsed default value.
     pub value: DefVal,
+    /// Source span covering `DEFVAL { ... }`.
     pub span: Span,
 }
 
@@ -190,10 +223,13 @@ pub enum DefVal {
     Unparsed { span: Span },
 }
 
-/// A REVISION clause within MODULE-IDENTITY.
+/// A REVISION clause within a [`ModuleIdentityDef`](super::ModuleIdentityDef).
 #[derive(Debug, PartialEq, Eq)]
 pub struct RevisionClause {
+    /// Revision date string (e.g. `"200006140000Z"`).
     pub date: QuotedString,
+    /// Description of what changed in this revision.
     pub description: QuotedString,
+    /// Source span covering the entire REVISION clause.
     pub span: Span,
 }

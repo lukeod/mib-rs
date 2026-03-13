@@ -1,3 +1,8 @@
+//! Line table construction and byte-offset-to-line/column conversion.
+//!
+//! Used internally to convert [`ByteOffset`] positions from the lexer/parser
+//! into human-readable 1-based line and column numbers for diagnostics.
+
 use super::ByteOffset;
 
 /// Builds a line table from source bytes.

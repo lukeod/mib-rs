@@ -3,7 +3,7 @@
 //! The top-level [`Mib`] container holds the OID tree, all entity arenas,
 //! and lookup indices built during resolution. Query it through borrowed
 //! handle types ([`Node`], [`Object`], [`Type`], [`Module`], etc.) or
-//! drop to the [`raw`] view for arena-id-level access.
+//! drop to the [`RawMib`] view for arena-id-level access.
 //!
 //! # Handle types
 //!

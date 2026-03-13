@@ -1,3 +1,10 @@
+//! Phase 1: Module registration.
+//!
+//! Creates synthetic base modules (SNMPv2-SMI, RFC1155-SMI, etc.), filters
+//! out user modules that collide with base names, registers all modules in
+//! the [`ResolverContext`], and builds definition name indexes used by
+//! later phases.
+
 use std::collections::HashSet;
 
 use super::super::module::ModuleData;
@@ -6,8 +13,12 @@ use super::context::{IrModuleId, ResolverContext};
 use crate::ir;
 use crate::lower::base_modules;
 
-/// Phase 1: Register all modules (base + user), create resolved modules,
-/// build definition name indexes.
+/// Phase 1: Register all modules (base + user), create resolved module shells,
+/// and build definition name indexes.
+///
+/// Creates synthetic base modules, filters user modules that collide with
+/// base names, extracts MODULE-IDENTITY metadata, and populates
+/// [`ResolverContext::module_index`] and [`ResolverContext::module_def_names`].
 pub(super) fn register_modules(ctx: &mut ResolverContext) {
     // Create synthetic base modules and prepend them.
     let base_mods = base_modules::create_base_modules();
@@ -95,6 +106,10 @@ pub(super) fn register_modules(ctx: &mut ResolverContext) {
 }
 
 /// Group flat per-symbol imports into by-module form for a resolved module.
+///
+/// Converts the IR's flat list of `(symbol, module)` pairs into grouped
+/// [`Import`] values sorted by first-appearance order of the source module,
+/// with symbols sorted alphabetically within each group.
 pub(super) fn group_imports(ir_mod: &ir::Module) -> Vec<Import> {
     use std::collections::HashMap;
 

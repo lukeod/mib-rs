@@ -1,4 +1,7 @@
 //! IR types for OID assignments and their components.
+//!
+//! These mirror [`crate::ast::oid`] but use `String` names instead of
+//! [`Ident`](crate::ast::Ident) nodes.
 
 use crate::types::Span;
 
@@ -15,23 +18,23 @@ pub struct OidAssignment {
 /// A single element of an OID assignment.
 #[derive(Debug, Clone)]
 pub enum OidComponent {
-    /// Symbolic name reference, e.g. internet.
+    /// Symbolic name reference, e.g. `internet`.
     Name { name: String, span: Span },
-    /// Numeric arc, e.g. 1 or 31.
+    /// Numeric arc, e.g. `1` or `31`.
     Number { value: u32, span: Span },
-    /// Name with number, e.g. org(3).
+    /// Name with number, e.g. `org(3)`.
     NamedNumber {
         name: String,
         number: u32,
         span: Span,
     },
-    /// Module-qualified reference, e.g. SNMPv2-SMI.enterprises.
+    /// Module-qualified reference, e.g. `SNMPv2-SMI.enterprises`.
     QualifiedName {
         module: String,
         name: String,
         span: Span,
     },
-    /// Module-qualified name with number, e.g. SNMPv2-SMI.enterprises(1).
+    /// Module-qualified name with number, e.g. `SNMPv2-SMI.enterprises(1)`.
     QualifiedNamedNumber {
         module: String,
         name: String,
