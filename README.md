@@ -36,7 +36,7 @@ Or add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mib-rs = "0.1"
+mib-rs = "0.1.1"
 ```
 
 ## Quick Start
