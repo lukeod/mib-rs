@@ -1,3 +1,9 @@
+//! SMI/MIB lexer (tokenizer).
+//!
+//! Converts raw source bytes into a stream of [`Token`]s. Handles
+//! SMIv1/SMIv2 syntax including `--` comments, hex/binary string literals,
+//! MACRO body skipping, and EXPORTS body skipping.
+
 mod keyword;
 pub mod token;
 
@@ -14,7 +20,14 @@ enum LexerState {
     InComment,
 }
 
-/// Tokenizes SMIv1/SMIv2 MIB source text.
+/// Tokenizer for SMIv1/SMIv2 MIB source text.
+///
+/// Operates on raw bytes and produces [`Token`]s. The lexer tracks internal
+/// state to skip MACRO bodies and EXPORTS clauses, which are not needed
+/// by the parser.
+///
+/// Can be used as an [`Iterator`] (yields tokens until EOF) or consumed
+/// all at once via [`tokenize`](Lexer::tokenize).
 pub struct Lexer<'src, 'cfg> {
     source: &'src [u8],
     pos: usize,
@@ -25,6 +38,7 @@ pub struct Lexer<'src, 'cfg> {
 }
 
 impl<'src, 'cfg> Lexer<'src, 'cfg> {
+    /// Create a new lexer over the given source bytes.
     pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
         Lexer {
             source,
@@ -51,6 +65,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 
     /// Advance the lexer and return the next token.
+    ///
+    /// Returns [`TokenKind::Eof`] when the input is exhausted. Unlike the
+    /// [`Iterator`] impl, this always returns a token (never `None`).
     pub fn next_token(&mut self) -> Token {
         loop {
             match self.state {
@@ -548,7 +565,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         }
     }
 
-    /// Returns diagnostics accumulated during tokenization.
+    /// Returns diagnostics accumulated so far during tokenization.
     pub fn diagnostics(&self) -> &[SpanDiagnostic] {
         &self.diagnostics
     }

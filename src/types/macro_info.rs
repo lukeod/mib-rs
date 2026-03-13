@@ -1,12 +1,23 @@
-/// Describes an SMI macro keyword.
+/// Describes an SMI macro keyword (e.g. OBJECT-TYPE, MODULE-IDENTITY).
+///
+/// See [`macro_description`] to look up a macro by name.
 pub struct MacroInfo {
+    /// The macro keyword (e.g. "OBJECT-TYPE").
     pub name: &'static str,
+    /// The defining module (e.g. "SNMPv2-SMI").
     pub module: &'static str,
+    /// The defining RFC (e.g. "RFC 2578").
     pub rfc: &'static str,
+    /// Brief description of what the macro defines.
     pub description: &'static str,
 }
 
-/// Returns info about an SMI macro keyword, if known.
+/// Returns info about an SMI macro keyword, or `None` if the name is not recognized.
+///
+/// Covers the 10 standard macros across SMIv1 and SMIv2: OBJECT-TYPE,
+/// MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE, TEXTUAL-CONVENTION,
+/// TRAP-TYPE, OBJECT-GROUP, NOTIFICATION-GROUP, MODULE-COMPLIANCE, and
+/// AGENT-CAPABILITIES.
 pub fn macro_description(name: &str) -> Option<&'static MacroInfo> {
     MACRO_INFO_TABLE.iter().find(|info| info.name == name)
 }

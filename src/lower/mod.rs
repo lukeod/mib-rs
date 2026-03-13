@@ -1,3 +1,11 @@
+//! Lowering pass: transforms an [`ast::Module`] into an
+//! [`ir::Module`].
+//!
+//! Lowering normalizes SMIv1 and SMIv2 constructs into a unified IR,
+//! detects the source language, flattens grouped imports into individual
+//! entries, and runs validation checks (date formats, missing
+//! MODULE-IDENTITY, required macro imports).
+
 pub mod base_modules;
 mod dates;
 
@@ -8,7 +16,8 @@ use crate::ir;
 use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Span, Status};
 use tracing::{debug, debug_span, info_span};
 
-/// LoweringContext tracks state accumulated during the lowering pass.
+/// Tracks state accumulated during the lowering pass: diagnostics,
+/// detected language, and the line table for span-to-line conversion.
 pub(crate) struct LoweringContext<'cfg> {
     pub diagnostics: Vec<Diagnostic>,
     pub language: Language,
@@ -46,9 +55,11 @@ impl<'cfg> LoweringContext<'cfg> {
     }
 }
 
-/// Transforms an AST module into a normalized Module IR. The AST is not
-/// needed after lowering. Source is the original source text used to compute
-/// diagnostic line/column from byte offset spans.
+/// Transforms an AST module into a normalized [`ir::Module`].
+///
+/// Lowering unifies SMIv1/SMIv2 constructs, flattens imports, and runs
+/// validation checks. The `source` bytes are used to compute line/column
+/// positions for diagnostics. The AST is not needed after this returns.
 pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticConfig) -> ir::Module {
     let module_name = ast_module
         .name

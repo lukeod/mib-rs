@@ -1,3 +1,5 @@
+//! AST types for SYNTAX clauses, constraints, indexes, and DEFVAL.
+
 use super::common::{Ident, NamedNumber, QuotedString};
 use super::oid::OidComponent;
 use crate::types::{Access, AccessKeyword, Span, Status};
@@ -55,6 +57,7 @@ pub enum TypeSyntax {
 }
 
 impl TypeSyntax {
+    /// Returns the source span of this type expression.
     pub fn span(&self) -> Span {
         match self {
             TypeSyntax::TypeRef(ident) => ident.span,
@@ -89,6 +92,7 @@ pub enum Constraint {
 }
 
 impl Constraint {
+    /// Returns the source span of this constraint.
     pub fn span(&self) -> Span {
         match self {
             Constraint::Size { span, .. } | Constraint::Range { span, .. } => *span,
@@ -105,11 +109,14 @@ pub struct Range {
     pub span: Span,
 }
 
-/// An endpoint in a range (numeric literal or MIN/MAX).
+/// An endpoint in a range constraint.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RangeValue {
+    /// Signed integer literal.
     Signed(i64),
+    /// Unsigned integer literal.
     Unsigned(u64),
+    /// Named reference (MIN or MAX keyword).
     Named(Ident),
 }
 
@@ -157,29 +164,38 @@ pub struct DefValClause {
     pub span: Span,
 }
 
-/// The typed content within a DEFVAL { ... } clause.
+/// The typed content within a `DEFVAL { ... }` clause.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DefVal {
+    /// Signed integer literal, e.g. `DEFVAL { -1 }`.
     Integer(i64),
+    /// Unsigned integer literal, e.g. `DEFVAL { 0 }`.
     Unsigned(u64),
+    /// Quoted string literal, e.g. `DEFVAL { "default" }`.
     String(QuotedString),
+    /// Named value reference (enum label or object name).
     Identifier(Ident),
+    /// BITS value, e.g. `DEFVAL { { flag1, flag2 } }`.
     Bits {
         labels: Vec<Ident>,
         span: Span,
     },
+    /// Hex string literal, e.g. `DEFVAL { 'FF00'H }`.
     HexString {
         content: String,
         span: Span,
     },
+    /// Binary string literal, e.g. `DEFVAL { '0101'B }`.
     BinaryString {
         content: String,
         span: Span,
     },
+    /// OID value, e.g. `DEFVAL { { 0 0 } }`.
     ObjectIdentifier {
         components: Vec<OidComponent>,
         span: Span,
     },
+    /// Value that could not be parsed; content was skipped.
     Unparsed {
         span: Span,
     },

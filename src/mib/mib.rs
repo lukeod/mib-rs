@@ -21,8 +21,13 @@ use super::types::*;
 
 /// Top-level container for all resolved MIB data.
 ///
-/// Holds the OID tree, all entity arenas, lookup indices, and diagnostics.
-/// Built once during resolution and safe for concurrent reads.
+/// Holds the OID tree, all entity arenas, lookup indices, and diagnostics
+/// produced during resolution. Built once and then immutable, so it is safe
+/// for concurrent reads behind `&Mib`.
+///
+/// Use the handle-oriented methods ([`Mib::node`], [`Mib::object`],
+/// [`Mib::module`], etc.) for most queries. For lower-level arena access,
+/// see [`Mib::raw`].
 pub struct Mib {
     pub(crate) tree: OidTree,
 
@@ -75,10 +80,10 @@ impl Mib {
         &self.tree
     }
 
-    /// Return the explicit low-level raw view of this MIB.
+    /// Return a low-level view of this MIB.
     ///
-    /// This exposes arena-backed ids and data structures. Most library users
-    /// should prefer the high-level borrowed handles instead.
+    /// Exposes arena-backed ids and data structures. Most callers should
+    /// prefer the high-level borrowed handles instead.
     pub fn raw(&self) -> RawMib<'_> {
         RawMib::new(self)
     }
@@ -87,6 +92,7 @@ impl Mib {
         self.tree.get(id)
     }
 
+    /// Return a handle to the synthetic root of the OID tree.
     #[must_use]
     pub fn root_node(&self) -> Node<'_> {
         Node::new(self, self.tree.root())
@@ -150,7 +156,10 @@ impl Mib {
         None
     }
 
-    /// Look up a node by name. Prefers nodes with objects, then notifications.
+    /// Look up a node by name, returning the [`NodeId`].
+    ///
+    /// When multiple nodes share the same name, prefers the one with an
+    /// attached object, then notifications, then any remaining node.
     #[must_use]
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         let nodes = self.name_to_nodes.get(name)?;
@@ -167,95 +176,97 @@ impl Mib {
         nodes.first().copied()
     }
 
-    /// Look up an object by name.
+    /// Look up an object by name, returning the [`ObjectId`].
     #[must_use]
     pub fn object_by_name(&self, name: &str) -> Option<ObjectId> {
         self.find_in_nodes(name, |n| n.object)
     }
 
-    /// Look up an object by name and return a borrowed handle.
+    /// Look up an object by name and return an [`Object`] handle.
     #[must_use]
     pub fn object(&self, name: &str) -> Option<Object<'_>> {
         self.object_by_name(name).map(|id| Object::new(self, id))
     }
 
-    /// Look up a type by name.
+    /// Look up a type by name, returning the [`TypeId`].
     #[must_use]
     pub fn type_by_name(&self, name: &str) -> Option<TypeId> {
         self.type_by_name.get(name).copied()
     }
 
-    /// Look up a type by name and return a borrowed handle.
+    /// Look up a type by name and return a [`Type`] handle.
     #[must_use]
     pub fn r#type(&self, name: &str) -> Option<Type<'_>> {
         self.type_by_name(name).map(|id| Type::new(self, id))
     }
 
-    /// Look up a notification by name.
+    /// Look up a notification by name, returning the [`NotificationId`].
     #[must_use]
     pub fn notification_by_name(&self, name: &str) -> Option<NotificationId> {
         self.find_in_nodes(name, |n| n.notification)
     }
 
-    /// Look up a notification by name and return a borrowed handle.
+    /// Look up a notification by name and return a [`Notification`] handle.
     #[must_use]
     pub fn notification(&self, name: &str) -> Option<Notification<'_>> {
         self.notification_by_name(name)
             .map(|id| Notification::new(self, id))
     }
 
-    /// Look up a group by name.
+    /// Look up a group by name, returning the [`GroupId`].
     #[must_use]
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
         self.find_in_nodes(name, |n| n.group)
     }
 
-    /// Look up a group by name and return a borrowed handle.
+    /// Look up a group by name and return a [`Group`] handle.
     #[must_use]
     pub fn group(&self, name: &str) -> Option<Group<'_>> {
         self.group_by_name(name).map(|id| Group::new(self, id))
     }
 
-    /// Look up a compliance by name.
+    /// Look up a compliance statement by name, returning the [`ComplianceId`].
     #[must_use]
     pub fn compliance_by_name(&self, name: &str) -> Option<ComplianceId> {
         self.find_in_nodes(name, |n| n.compliance)
     }
 
-    /// Look up a compliance statement by name and return a borrowed handle.
+    /// Look up a compliance statement by name and return a [`Compliance`] handle.
     #[must_use]
     pub fn compliance(&self, name: &str) -> Option<Compliance<'_>> {
         self.compliance_by_name(name)
             .map(|id| Compliance::new(self, id))
     }
 
-    /// Look up a capability by name.
+    /// Look up a capability statement by name, returning the [`CapabilityId`].
     #[must_use]
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
         self.find_in_nodes(name, |n| n.capability)
     }
 
-    /// Look up a capability statement by name and return a borrowed handle.
+    /// Look up a capability statement by name and return a [`Capability`] handle.
     #[must_use]
     pub fn capability(&self, name: &str) -> Option<Capability<'_>> {
         self.capability_by_name(name)
             .map(|id| Capability::new(self, id))
     }
 
-    /// Look up a module by name.
+    /// Look up a module by name, returning the [`ModuleId`].
     #[must_use]
     pub fn module_by_name(&self, name: &str) -> Option<ModuleId> {
         self.module_by_name.get(name).copied()
     }
 
-    /// Look up a module by name and return a borrowed handle.
+    /// Look up a module by name and return a [`Module`] handle.
     #[must_use]
     pub fn module(&self, name: &str) -> Option<Module<'_>> {
         self.module_by_name(name).map(|id| Module::new(self, id))
     }
 
-    /// Look up a symbol by name. Priority: objects, notifications, groups,
-    /// compliances, capabilities, plain nodes, then types.
+    /// Look up a symbol by name, returning a [`Symbol`] variant.
+    ///
+    /// Priority: objects, notifications, groups, compliances, capabilities,
+    /// plain nodes, then types.
     #[must_use]
     pub fn symbol_by_name(&self, name: &str) -> Option<Symbol> {
         if let Some(nodes) = self.name_to_nodes.get(name) {
@@ -301,14 +312,16 @@ impl Mib {
 
     // --- OID lookups ---
 
-    /// Look up a node at an exact numeric OID.
+    /// Look up a node at an exact numeric [`Oid`], returning the [`NodeId`].
+    ///
+    /// Returns `None` if no tree node exists at that exact OID.
     #[must_use]
     pub fn node_by_oid(&self, oid: &Oid) -> Option<NodeId> {
         let (id, exact) = self.tree.walk_oid(self.tree.root(), oid);
         if exact { Some(id) } else { None }
     }
 
-    /// Look up a node by name and return a borrowed handle.
+    /// Look up a node by name and return a [`Node`] handle.
     #[must_use]
     pub fn node(&self, name: &str) -> Option<Node<'_>> {
         self.node_by_name(name).map(|id| Node::new(self, id))
@@ -329,16 +342,16 @@ impl Mib {
         self.tree.longest_prefix(oid)
     }
 
-    /// Look up the deepest node matching a numeric OID prefix.
+    /// Look up the deepest node matching a numeric OID prefix as a [`Node`] handle.
     ///
     /// This is the handle-oriented entry point for instance OIDs such as
-    /// `ifIndex.5`.
+    /// `ifIndex.5`. Always returns a node (at minimum the root).
     #[must_use]
     pub fn lookup_oid(&self, oid: &Oid) -> Node<'_> {
         Node::new(self, self.longest_prefix_by_oid(oid))
     }
 
-    /// Depth-first iterator over a subtree rooted at `id`.
+    /// Depth-first iterator over a subtree rooted at `id`, yielding [`NodeId`]s.
     pub fn subtree(&self, id: NodeId) -> super::node::SubtreeIter<'_> {
         self.tree.subtree(id)
     }
@@ -349,8 +362,10 @@ impl Mib {
         self.tree.longest_prefix_from(start, oid)
     }
 
-    /// Returns the effective module for a node, using entity priority:
-    /// object > notification > group > compliance > capability > base module.
+    /// Return the effective owning module for a node.
+    ///
+    /// Uses entity priority: object > notification > group > compliance >
+    /// capability > base module assignment.
     #[must_use]
     pub fn effective_module(&self, id: NodeId) -> Option<ModuleId> {
         let node = self.tree.get(id);
@@ -372,7 +387,10 @@ impl Mib {
         node.module
     }
 
-    /// Format a numeric OID as "MODULE::name.suffix".
+    /// Format a numeric OID as `MODULE::name.suffix`.
+    ///
+    /// Uses longest-prefix matching to find the deepest named node, then
+    /// appends any remaining arcs as a dotted numeric suffix.
     pub fn format_oid(&self, oid: &Oid) -> String {
         if oid.is_empty() {
             return String::new();
@@ -470,8 +488,9 @@ impl Mib {
         append_suffix(base, suffix)
     }
 
-    /// Returns all symbols defined across all modules.
-    /// Iterates modules in order, yielding each module's definitions.
+    /// Return all symbols defined across all modules.
+    ///
+    /// Iterates modules in load order, yielding each module's definitions.
     pub fn all_symbols(&self) -> Vec<Symbol> {
         let mut result = Vec::new();
         for module in &self.modules {
@@ -480,9 +499,11 @@ impl Mib {
         result
     }
 
-    /// Returns all symbols available in a module's scope: own definitions
-    /// first, then imported symbols resolved from their source modules.
-    /// Names that are also own definitions are yielded only once.
+    /// Return all symbols available in a module's scope.
+    ///
+    /// Own definitions come first, then imported symbols resolved from their
+    /// source modules. A name that is both defined and imported is yielded
+    /// only once (the own definition wins).
     pub fn available_symbols(&self, mod_id: ModuleId) -> Vec<Symbol> {
         let module = self.module_data(mod_id);
         let mut result = Vec::new();
@@ -516,7 +537,7 @@ impl Mib {
 
     // --- Collection accessors ---
 
-    /// Iterate all resolved modules as borrowed handles.
+    /// Iterate all resolved modules as [`Module`] handles.
     pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
         HandleIter::new(
             self,
@@ -524,7 +545,7 @@ impl Mib {
         )
     }
 
-    /// Iterate all resolved objects as borrowed handles.
+    /// Iterate all resolved objects as [`Object`] handles.
     pub fn objects(&self) -> HandleIter<'_, Object<'_>, impl Iterator<Item = ObjectId>> {
         HandleIter::new(
             self,
@@ -532,12 +553,12 @@ impl Mib {
         )
     }
 
-    /// Iterate all resolved types as borrowed handles.
+    /// Iterate all resolved types as [`Type`] handles.
     pub fn types(&self) -> HandleIter<'_, Type<'_>, impl Iterator<Item = TypeId>> {
         HandleIter::new(self, (0..self.types.len()).map(|i| TypeId::new(i as u32)))
     }
 
-    /// Iterate all OID tree nodes (excluding root) as borrowed handles.
+    /// Iterate all OID tree nodes (excluding root) as [`Node`] handles.
     pub fn nodes(&self) -> HandleIter<'_, Node<'_>, impl Iterator<Item = NodeId>> {
         HandleIter::new(self, self.tree.all_nodes())
     }
@@ -577,7 +598,7 @@ impl Mib {
         &self.capabilities
     }
 
-    /// Returns all modules that define a symbol with the given name (non-base only).
+    /// Return all non-base modules that define a symbol with the given name.
     pub fn modules_defining(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -587,7 +608,7 @@ impl Mib {
             .collect()
     }
 
-    /// Returns all modules that import a symbol with the given name (non-base only).
+    /// Return all non-base modules that import a symbol with the given name.
     pub fn modules_importing(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -597,7 +618,7 @@ impl Mib {
             .collect()
     }
 
-    /// Returns objects filtered by node kind.
+    /// Return all objects whose OID tree node has the given [`Kind`].
     pub fn objects_by_kind(&self, kind: Kind) -> Vec<ObjectId> {
         self.objects
             .iter()
@@ -611,39 +632,47 @@ impl Mib {
             .collect()
     }
 
+    /// Return all table [`ObjectId`]s.
     pub fn tables(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Table)
     }
 
+    /// Iterate all table objects as [`Object`] handles.
     pub fn table_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
         self.tables().into_iter().map(|id| Object::new(self, id))
     }
 
+    /// Return all scalar [`ObjectId`]s.
     pub fn scalars(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Scalar)
     }
 
+    /// Iterate all scalar objects as [`Object`] handles.
     pub fn scalar_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
         self.scalars().into_iter().map(|id| Object::new(self, id))
     }
 
+    /// Return all column [`ObjectId`]s.
     pub fn columns(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Column)
     }
 
+    /// Iterate all column objects as [`Object`] handles.
     pub fn column_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
         self.columns().into_iter().map(|id| Object::new(self, id))
     }
 
+    /// Return all row (entry) [`ObjectId`]s.
     pub fn rows(&self) -> Vec<ObjectId> {
         self.objects_by_kind(Kind::Row)
     }
 
+    /// Iterate all row objects as [`Object`] handles.
     pub fn row_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
         self.rows().into_iter().map(|id| Object::new(self, id))
     }
 
-    /// Returns all objects whose resolved type has the given name.
+    /// Return all objects whose resolved type has the given name.
     pub fn objects_by_type_name(&self, type_name: &str) -> Vec<ObjectId> {
         self.objects
             .iter()
@@ -656,7 +685,7 @@ impl Mib {
             .collect()
     }
 
-    /// Returns all objects whose effective base type matches.
+    /// Return all objects whose effective [`BaseType`] matches.
     pub fn objects_by_base_type(&self, base: BaseType) -> Vec<ObjectId> {
         self.objects
             .iter()
@@ -753,7 +782,7 @@ impl Mib {
         cols
     }
 
-    /// Returns INDEX entries for a row, following AUGMENTS if the row has none.
+    /// Return [`IndexEntry`] items for a row, following the AUGMENTS chain if needed.
     pub fn effective_indexes(&self, id: ObjectId) -> Vec<IndexEntry> {
         let mut visited = Vec::new();
         self.effective_indexes_inner(id, &mut visited)
@@ -812,27 +841,27 @@ impl Mib {
 
     // --- Object kind predicates ---
 
-    /// Returns true if the object is a table.
+    /// Return `true` if the object is a table.
     pub fn is_table(&self, id: ObjectId) -> bool {
         self.object_kind(id) == Kind::Table
     }
 
-    /// Returns true if the object is a table row (entry).
+    /// Return `true` if the object is a table row (entry).
     pub fn is_row(&self, id: ObjectId) -> bool {
         self.object_kind(id) == Kind::Row
     }
 
-    /// Returns true if the object is a table column.
+    /// Return `true` if the object is a table column.
     pub fn is_column(&self, id: ObjectId) -> bool {
         self.object_kind(id) == Kind::Column
     }
 
-    /// Returns true if the object is a scalar.
+    /// Return `true` if the object is a scalar.
     pub fn is_scalar(&self, id: ObjectId) -> bool {
         self.object_kind(id) == Kind::Scalar
     }
 
-    /// Returns true if a column appears in its parent row's effective indexes.
+    /// Return `true` if a column appears in its parent row's effective indexes.
     pub fn is_index(&self, id: ObjectId) -> bool {
         if self.object_kind(id) != Kind::Column {
             return false;
@@ -869,7 +898,7 @@ impl Mib {
         &self.unresolved
     }
 
-    /// Return true if any diagnostic has error severity or higher.
+    /// Return `true` if any diagnostic has error severity or higher.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
@@ -986,20 +1015,33 @@ fn append_suffix(base: Oid, suffix: &str) -> Result<Oid, ResolveOidError> {
     Ok(base.child_oid(&extra))
 }
 
+/// Error returned by [`Mib::resolve_oid`] when a query cannot be resolved.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ResolveOidError {
+    /// The query string was empty.
     #[error("empty query")]
     EmptyQuery,
+    /// The query looked numeric but could not be parsed as a valid OID.
     #[error("invalid OID: {0}")]
     InvalidOid(#[source] ParseOidError),
+    /// The module part of a qualified name was not found.
     #[error("module not found: {0}")]
     ModuleNotFound(String),
+    /// The plain name was not found in any loaded module.
     #[error("node not found: {0}")]
     NodeNotFound(String),
+    /// The name was not found within the specified module.
     #[error("node not found: {module}::{name}")]
-    QualifiedNodeNotFound { module: String, name: String },
+    QualifiedNodeNotFound {
+        /// Module name from the query.
+        module: String,
+        /// Node name from the query.
+        name: String,
+    },
+    /// The trailing instance suffix could not be parsed as numeric arcs.
     #[error("invalid instance suffix {suffix:?}: {source}")]
     InvalidSuffix {
+        /// The suffix string that failed to parse.
         suffix: String,
         #[source]
         source: ParseOidError,

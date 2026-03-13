@@ -1,5 +1,7 @@
 use crate::types::Language;
 
+/// Return a numeric rank for SMI language version. Higher is preferred when
+/// multiple modules define the same OID.
 pub(super) fn language_rank(lang: Language) -> u8 {
     match lang {
         Language::SMIv2 => 2,

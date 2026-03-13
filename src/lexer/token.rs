@@ -1,145 +1,262 @@
 use crate::types::Span;
 
-/// A lexed unit with its classification and source location.
+/// A single lexed token with its classification and source location.
+///
+/// Use [`TokenKind`] to determine what the token represents, and
+/// [`Span`] to index back into the original source bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
+    /// What kind of token this is (keyword, identifier, literal, etc.).
     pub kind: TokenKind,
+    /// Byte range in the source text that produced this token.
     pub span: Span,
 }
 
-/// Classifies a token (punctuation, keyword, literal, etc.).
+/// Classification of a [`Token`].
+///
+/// Variants are grouped into special tokens, identifiers, literals,
+/// punctuation, and several keyword categories (structural, clause,
+/// macro, type, tag, status/access).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum TokenKind {
     // -- Special --
+    /// Unrecognized or malformed input.
     Error,
+    /// End of input. Always the last token in a stream.
     Eof,
+    /// A reserved ASN.1 keyword (e.g. `TRUE`, `FALSE`, `NULL`) that must
+    /// not appear as an identifier in MIB files.
     ForbiddenKeyword,
+    /// An `--`-delimited comment.
     Comment,
 
     // -- Identifiers --
+    /// An identifier starting with an uppercase letter (type or module name).
     UppercaseIdent,
+    /// An identifier starting with a lowercase letter (value reference).
     LowercaseIdent,
 
     // -- Literals --
+    /// A non-negative decimal integer, e.g. `42`.
     Number,
+    /// A negative decimal integer, e.g. `-1`.
     NegativeNumber,
+    /// A double-quoted string literal, e.g. `"hello"`.
     QuotedString,
+    /// A hex string literal, e.g. `'0A1B'H`.
     HexString,
+    /// A binary string literal, e.g. `'01010101'B`.
     BinString,
 
     // -- Single-character punctuation --
+    /// `[`
     LBracket,
+    /// `]`
     RBracket,
+    /// `{`
     LBrace,
+    /// `}`
     RBrace,
+    /// `(`
     LParen,
+    /// `)`
     RParen,
+    /// `:`
     Colon,
+    /// `;`
     Semicolon,
+    /// `,`
     Comma,
+    /// `.`
     Dot,
+    /// `|`
     Pipe,
+    /// `-` (standalone, not part of a negative number)
     Minus,
 
     // -- Multi-character operators --
+    /// `..` (range separator in SIZE/value constraints)
     DotDot,
+    /// `::=` (assignment operator)
     ColonColonEqual,
 
     // -- Structural keywords (first keyword range) --
+    /// `DEFINITIONS`
     KwDefinitions,
+    /// `BEGIN`
     KwBegin,
+    /// `END`
     KwEnd,
+    /// `IMPORTS`
     KwImports,
+    /// `EXPORTS` - triggers body-skipping in the lexer.
     KwExports,
+    /// `FROM`
     KwFrom,
+    /// `OBJECT`
     KwObject,
+    /// `IDENTIFIER`
     KwIdentifier,
+    /// `SEQUENCE`
     KwSequence,
+    /// `OF`
     KwOf,
+    /// `CHOICE`
     KwChoice,
+    /// `MACRO` - triggers body-skipping in the lexer.
     KwMacro,
 
     // -- Clause keywords --
+    /// `SYNTAX`
     KwSyntax,
+    /// `MAX-ACCESS`
     KwMaxAccess,
+    /// `MIN-ACCESS`
     KwMinAccess,
+    /// `ACCESS` (SMIv1)
     KwAccess,
+    /// `STATUS`
     KwStatus,
+    /// `DESCRIPTION`
     KwDescription,
+    /// `REFERENCE`
     KwReference,
+    /// `INDEX`
     KwIndex,
+    /// `DEFVAL`
     KwDefval,
+    /// `AUGMENTS`
     KwAugments,
+    /// `UNITS`
     KwUnits,
+    /// `DISPLAY-HINT`
     KwDisplayHint,
+    /// `OBJECTS`
     KwObjects,
+    /// `NOTIFICATIONS`
     KwNotifications,
+    /// `MODULE`
     KwModule,
+    /// `MANDATORY-GROUPS`
     KwMandatoryGroups,
+    /// `GROUP`
     KwGroup,
+    /// `WRITE-SYNTAX`
     KwWriteSyntax,
+    /// `PRODUCT-RELEASE`
     KwProductRelease,
+    /// `SUPPORTS`
     KwSupports,
+    /// `INCLUDES`
     KwIncludes,
+    /// `VARIATION`
     KwVariation,
+    /// `CREATION-REQUIRES`
     KwCreationRequires,
+    /// `REVISION`
     KwRevision,
+    /// `LAST-UPDATED`
     KwLastUpdated,
+    /// `ORGANIZATION`
     KwOrganization,
+    /// `CONTACT-INFO`
     KwContactInfo,
+    /// `IMPLIED`
     KwImplied,
+    /// `SIZE`
     KwSize,
+    /// `ENTERPRISE` (SMIv1 TRAP-TYPE)
     KwEnterprise,
+    /// `VARIABLES` (SMIv1 TRAP-TYPE)
     KwVariables,
 
     // -- MACRO invocation keywords --
+    /// `MODULE-IDENTITY` (SMIv2)
     KwModuleIdentity,
+    /// `MODULE-COMPLIANCE` (SMIv2)
     KwModuleCompliance,
+    /// `OBJECT-GROUP` (SMIv2)
     KwObjectGroup,
+    /// `NOTIFICATION-GROUP` (SMIv2)
     KwNotificationGroup,
+    /// `AGENT-CAPABILITIES` (SMIv2)
     KwAgentCapabilities,
+    /// `OBJECT-TYPE` (SMIv1/v2)
     KwObjectType,
+    /// `OBJECT-IDENTITY` (SMIv2)
     KwObjectIdentity,
+    /// `NOTIFICATION-TYPE` (SMIv2)
     KwNotificationType,
+    /// `TEXTUAL-CONVENTION` (SMIv2)
     KwTextualConvention,
+    /// `TRAP-TYPE` (SMIv1)
     KwTrapType,
 
     // -- Type keywords --
+    /// `INTEGER` or `Integer`
     KwInteger,
+    /// `Unsigned32`
     KwUnsigned32,
+    /// `Counter32`
     KwCounter32,
+    /// `Counter64`
     KwCounter64,
+    /// `Gauge32`
     KwGauge32,
+    /// `IpAddress`
     KwIpAddress,
+    /// `Opaque`
     KwOpaque,
+    /// `TimeTicks`
     KwTimeTicks,
+    /// `BITS`
     KwBits,
+    /// `OCTET` (first half of `OCTET STRING`)
     KwOctet,
+    /// `STRING` (second half of `OCTET STRING`)
     KwString,
 
     // -- SMIv1 type aliases --
+    /// `Counter` (SMIv1 alias for Counter32)
     KwCounter,
+    /// `Gauge` (SMIv1 alias for Gauge32)
     KwGauge,
+    /// `NetworkAddress` (SMIv1)
     KwNetworkAddress,
 
     // -- ASN.1 tag keywords --
+    /// `APPLICATION`
     KwApplication,
+    /// `IMPLICIT`
     KwImplicit,
+    /// `UNIVERSAL`
     KwUniversal,
 
     // -- Status/Access value keywords (last keyword range) --
+    /// `current`
     KwCurrent,
+    /// `deprecated`
     KwDeprecated,
+    /// `obsolete`
     KwObsolete,
+    /// `mandatory` (SMIv1)
     KwMandatory,
+    /// `optional` (SMIv1)
     KwOptional,
+    /// `read-only`
     KwReadOnly,
+    /// `read-write`
     KwReadWrite,
+    /// `read-create`
     KwReadCreate,
+    /// `write-only` (deprecated)
     KwWriteOnly,
+    /// `not-accessible`
     KwNotAccessible,
+    /// `accessible-for-notify`
     KwAccessibleForNotify,
+    /// `not-implemented` (AGENT-CAPABILITIES)
     KwNotImplemented,
 }
 
@@ -427,6 +544,7 @@ impl TokenKind {
     }
 }
 
+/// Displays the [`libsmi_name`](TokenKind::libsmi_name) for this token kind.
 impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.libsmi_name())

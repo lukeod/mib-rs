@@ -1,7 +1,11 @@
 use super::token::TokenKind;
 
-/// Resolves a keyword string to its token kind.
-/// Case-sensitive: "INTEGER" and "Integer" are both valid but "integer" is not.
+/// Look up a keyword string, returning its [`TokenKind`] if recognized.
+///
+/// Matching is case-sensitive. For example, `"INTEGER"` and `"Integer"`
+/// both map to [`TokenKind::KwInteger`], but `"integer"` returns `None`.
+/// Hyphenated keywords like `"OBJECT-TYPE"` and `"read-only"` are matched
+/// as single strings.
 pub fn lookup_keyword(text: &str) -> Option<TokenKind> {
     match text {
         "ACCESS" => Some(TokenKind::KwAccess),
@@ -91,8 +95,8 @@ pub fn lookup_keyword(text: &str) -> Option<TokenKind> {
     }
 }
 
-/// Reports whether text is a reserved ASN.1 keyword that must not appear
-/// as an identifier in MIB files.
+/// Returns true if `text` is a reserved ASN.1 keyword that must not appear
+/// as an identifier in MIB files (e.g. `TRUE`, `FALSE`, `NULL`, `OPTIONAL`).
 pub fn is_forbidden_keyword(text: &str) -> bool {
     matches!(
         text,

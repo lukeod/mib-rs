@@ -1,3 +1,10 @@
+//! JSON export of a resolved [`Mib`] as a schema v1 payload.
+//!
+//! The entry point is [`export_v1`], which converts a resolved [`Mib`] into an
+//! [`ExportPayload`]. All types are `Serialize`-able and produce a
+//! deterministic, sorted JSON representation suitable for golden-file
+//! comparison tests.
+
 use std::cmp::Ordering;
 
 use serde::Serialize;
@@ -9,6 +16,8 @@ use crate::mib::types::*;
 use crate::types::{Access, BaseType, Kind, Language, ResolverStrictness, Severity, Status};
 
 /// Top-level payload for the schema v1 resolved-mib export.
+///
+/// Built by [`export_v1`] from a resolved [`Mib`].
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportPayload {
@@ -27,6 +36,7 @@ pub struct ExportPayload {
     pub diagnostics: Vec<ExportDiagnostic>,
 }
 
+/// Identifies the exporter implementation, version, and commit.
 #[derive(Serialize)]
 pub struct Exporter {
     pub implementation: &'static str,
@@ -34,6 +44,7 @@ pub struct Exporter {
     pub commit: String,
 }
 
+/// A loaded MIB module with its MODULE-IDENTITY metadata.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportModule {
@@ -47,12 +58,14 @@ pub struct ExportModule {
     pub revisions: Vec<ExportRevision>,
 }
 
+/// A REVISION entry from MODULE-IDENTITY.
 #[derive(Serialize)]
 pub struct ExportRevision {
     pub date: String,
     pub description: String,
 }
 
+/// A resolved type definition (TEXTUAL-CONVENTION or type assignment).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportType {
@@ -69,6 +82,7 @@ pub struct ExportType {
     pub constraints: ExportConstraints,
 }
 
+/// Collected SIZE, range, enum, and BITS constraints for a type or object.
 #[derive(Serialize)]
 pub struct ExportConstraints {
     pub sizes: Vec<ExportRange>,
@@ -77,24 +91,28 @@ pub struct ExportConstraints {
     pub bits: Vec<ExportBit>,
 }
 
+/// A min/max range element (SIZE or value range), serialized as strings.
 #[derive(Serialize)]
 pub struct ExportRange {
     pub min: String,
     pub max: String,
 }
 
+/// A named enum value, e.g. `up(1)`.
 #[derive(Serialize)]
 pub struct ExportEnum {
     pub name: String,
     pub value: i64,
 }
 
+/// A named bit position, e.g. `flag1(0)`.
 #[derive(Serialize)]
 pub struct ExportBit {
     pub name: String,
     pub position: i64,
 }
 
+/// Effective (fully resolved) syntax for an object or compliance refinement.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEffectiveSyntax {
@@ -104,6 +122,7 @@ pub struct ExportEffectiveSyntax {
     pub constraints: ExportConstraints,
 }
 
+/// A reference to a named OID node (name, defining module, and numeric OID).
 #[derive(Serialize)]
 pub struct ExportOidRef {
     pub name: String,
@@ -111,6 +130,7 @@ pub struct ExportOidRef {
     pub oid: String,
 }
 
+/// An OID tree node that is not an object, notification, group, compliance, or capability.
 #[derive(Serialize)]
 pub struct ExportNode {
     pub key: String,
@@ -123,6 +143,7 @@ pub struct ExportNode {
     pub reference: Option<String>,
 }
 
+/// A resolved OBJECT-TYPE with its effective syntax, indexes, and table relationships.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportObject {
@@ -147,6 +168,7 @@ pub struct ExportObject {
     pub columns: Vec<ExportOidRef>,
 }
 
+/// A resolved DEFVAL with its kind, typed value, and raw text.
 #[derive(Serialize)]
 pub struct ExportDefVal {
     pub kind: String,
@@ -154,13 +176,18 @@ pub struct ExportDefVal {
     pub raw: String,
 }
 
+/// An INDEX entry, either object-backed or type-backed.
 #[derive(Serialize)]
 pub struct ExportIndex {
+    /// The index object reference, if resolved.
     pub object: Option<ExportOidRef>,
+    /// Whether this index is IMPLIED (variable-length last index).
     pub implied: bool,
+    /// Effective syntax when the index is type-backed (no resolved object).
     pub syntax: Option<ExportEffectiveSyntax>,
 }
 
+/// A resolved NOTIFICATION-TYPE or TRAP-TYPE.
 #[derive(Serialize)]
 pub struct ExportNotification {
     pub key: String,
@@ -175,6 +202,7 @@ pub struct ExportNotification {
     pub objects: Vec<ExportOidRef>,
 }
 
+/// SMIv1 TRAP-TYPE specific fields (enterprise OID and trap number).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportTrap {
@@ -182,6 +210,7 @@ pub struct ExportTrap {
     pub trap_number: u32,
 }
 
+/// A resolved OBJECT-GROUP or NOTIFICATION-GROUP.
 #[derive(Serialize)]
 pub struct ExportGroup {
     pub key: String,
@@ -195,6 +224,7 @@ pub struct ExportGroup {
     pub members: Vec<ExportOidRef>,
 }
 
+/// A resolved MODULE-COMPLIANCE definition.
 #[derive(Serialize)]
 pub struct ExportCompliance {
     pub key: String,
@@ -207,6 +237,7 @@ pub struct ExportCompliance {
     pub modules: Vec<ExportComplianceModule>,
 }
 
+/// A MODULE clause within a MODULE-COMPLIANCE export.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportComplianceModule {
@@ -217,12 +248,14 @@ pub struct ExportComplianceModule {
     pub objects: Vec<ExportComplianceObject>,
 }
 
+/// A conditionally required GROUP within MODULE-COMPLIANCE.
 #[derive(Serialize)]
 pub struct ExportComplianceGroup {
     pub group: ExportOidRef,
     pub description: Option<String>,
 }
 
+/// An OBJECT refinement within MODULE-COMPLIANCE.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportComplianceObject {
@@ -233,6 +266,7 @@ pub struct ExportComplianceObject {
     pub description: Option<String>,
 }
 
+/// A resolved AGENT-CAPABILITIES definition.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportCapability {
@@ -247,6 +281,7 @@ pub struct ExportCapability {
     pub supports: Vec<ExportCapabilitySupports>,
 }
 
+/// A SUPPORTS clause within AGENT-CAPABILITIES.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportCapabilitySupports {
@@ -256,6 +291,7 @@ pub struct ExportCapabilitySupports {
     pub notification_variations: Vec<ExportNotificationVariation>,
 }
 
+/// A VARIATION clause for an object within AGENT-CAPABILITIES.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportObjectVariation {
@@ -268,6 +304,7 @@ pub struct ExportObjectVariation {
     pub description: Option<String>,
 }
 
+/// A VARIATION clause for a notification within AGENT-CAPABILITIES.
 #[derive(Serialize)]
 pub struct ExportNotificationVariation {
     pub notification: ExportOidRef,
@@ -275,6 +312,7 @@ pub struct ExportNotificationVariation {
     pub description: Option<String>,
 }
 
+/// A diagnostic message from parsing, lowering, or resolution.
 #[derive(Serialize)]
 pub struct ExportDiagnostic {
     pub phase: String,
@@ -621,7 +659,10 @@ where
     })
 }
 
-/// Build the complete schema v1 export payload from a resolved Mib.
+/// Builds the complete schema v1 export payload from a resolved [`Mib`].
+///
+/// All collections are sorted deterministically (modules and types by name,
+/// objects/notifications/groups by OID) for reproducible output.
 pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let tree = mib.tree();
 

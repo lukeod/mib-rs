@@ -1,3 +1,12 @@
+//! System MIB path discovery for net-snmp and libsmi.
+//!
+//! Probes standard config files (`/etc/snmp/snmp.conf`, `~/.snmp/snmp.conf`,
+//! `/etc/smi.conf`, `~/.smirc`) and environment variables (`MIBDIRS`,
+//! `SMIPATH`) to locate MIB directories installed on the system.
+//!
+//! Typically used via [`Loader::system_paths`](crate::Loader::system_paths)
+//! rather than called directly.
+
 use std::collections::HashSet;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -7,15 +16,21 @@ use tracing::debug;
 
 use crate::source::{self, Source};
 
-/// Discover MIB directories from net-snmp and libsmi configuration,
-/// deduplicated and filtered to directories that exist.
+/// Discover MIB directories from net-snmp and libsmi configuration.
+///
+/// Reads config files and environment variables, deduplicates paths, and
+/// filters to directories that actually exist on disk.
 pub fn discover_system_paths() -> Vec<String> {
     let mut all = discover_netsnmp_paths();
     all.extend(discover_libsmi_paths());
     filter_existing_dirs(dedup(all))
 }
 
-/// Create Source instances for all discovered system MIB directories.
+/// Create [`Source`] instances for all discovered system MIB directories.
+///
+/// Calls [`discover_system_paths`] and wraps each directory with
+/// [`source::dir`]. Directories that fail to index
+/// are silently skipped (logged at debug level).
 pub fn discover_system_sources() -> Vec<Box<dyn Source>> {
     let dirs = discover_system_paths();
     let mut sources = Vec::new();

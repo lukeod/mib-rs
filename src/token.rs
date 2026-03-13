@@ -6,15 +6,18 @@
 pub use crate::lexer::token::{Token, TokenKind};
 use crate::types::{DiagnosticConfig, SpanDiagnostic};
 
-/// Tokenize MIB source bytes, returning all tokens and any diagnostics.
+/// Tokenize MIB source bytes with default [`DiagnosticConfig`] settings.
 ///
-/// This is the public entry point for callers who want raw token output
-/// without parsing. Uses default diagnostic settings.
+/// Returns all tokens (always ending with [`TokenKind::Eof`]) and any
+/// diagnostics produced during lexing. For custom diagnostic settings,
+/// use [`tokenize_with_config`].
 pub fn tokenize(source: &[u8]) -> (Vec<Token>, Vec<SpanDiagnostic>) {
     tokenize_with_config(source, &DiagnosticConfig::default())
 }
 
-/// Tokenize with a specific diagnostic configuration.
+/// Tokenize MIB source bytes with a specific [`DiagnosticConfig`].
+///
+/// See [`tokenize`] for the default-config convenience wrapper.
 pub fn tokenize_with_config(
     source: &[u8],
     diag_config: &DiagnosticConfig,

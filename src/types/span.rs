@@ -1,20 +1,29 @@
 /// A byte position in source text.
+///
+/// Wraps a `u32` offset. The sentinel value [`ByteOffset::SYNTHETIC`] marks
+/// positions that do not correspond to real source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct ByteOffset(pub u32);
 
 impl ByteOffset {
+    /// Sentinel value for positions not backed by source text (e.g. base modules).
     pub const SYNTHETIC: ByteOffset = ByteOffset(u32::MAX);
 }
 
-/// Represents a range in source text.
+/// A half-open byte range `[start, end)` in source text.
+///
+/// Used throughout the lexer, parser, and lowering stages to track where
+/// constructs originate. See [`ByteOffset`] for the underlying offset type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
+    /// Start of the range (inclusive).
     pub start: ByteOffset,
+    /// End of the range (exclusive).
     pub end: ByteOffset,
 }
 
 impl Span {
-    /// Zero-value span (default).
+    /// Zero-length span at the start of input.
     pub const ZERO: Span = Span {
         start: ByteOffset(0),
         end: ByteOffset(0),
@@ -26,10 +35,12 @@ impl Span {
         end: ByteOffset::SYNTHETIC,
     };
 
+    /// Creates a span from two [`ByteOffset`] values.
     pub fn new(start: ByteOffset, end: ByteOffset) -> Self {
         Span { start, end }
     }
 
+    /// Creates a span from raw `u32` offsets.
     pub fn from_offsets(start: u32, end: u32) -> Self {
         Span {
             start: ByteOffset(start),
@@ -37,8 +48,9 @@ impl Span {
         }
     }
 
-    /// Constructs a span from machine-sized offsets.
-    /// Returns synthetic span if offsets exceed representable byte offsets.
+    /// Creates a span from `usize` offsets.
+    ///
+    /// Returns [`Span::SYNTHETIC`] if either offset exceeds `u32::MAX`.
     pub fn from_usize_offsets(start: usize, end: usize) -> Self {
         match (u32::try_from(start), u32::try_from(end)) {
             (Ok(start), Ok(end)) => Self::from_offsets(start, end),
@@ -46,18 +58,25 @@ impl Span {
         }
     }
 
+    /// Returns `true` if this span is the [`Span::SYNTHETIC`] sentinel.
     pub fn is_synthetic(self) -> bool {
         self == Self::SYNTHETIC
     }
 }
 
-/// Internal diagnostic from the lexer or parser.
-/// Converted to Diagnostic during lowering with module name and line/column info.
+/// Diagnostic emitted by the lexer or parser, carrying a [`Span`] instead of line/column.
+///
+/// Converted to [`Diagnostic`](super::Diagnostic) during lowering when module name
+/// and a line table become available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpanDiagnostic {
+    /// Severity of the issue.
     pub severity: super::Severity,
+    /// Diagnostic code identifying the issue category.
     pub code: DiagCode,
+    /// Source location of the issue.
     pub span: Span,
+    /// Human-readable description of the issue.
     pub message: String,
 }
 

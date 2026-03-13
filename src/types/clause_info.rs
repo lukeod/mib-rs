@@ -1,12 +1,18 @@
-/// Describes an SMI clause keyword used within a macro definition.
+/// Describes an SMI clause keyword used within a macro definition (e.g. SYNTAX, STATUS, INDEX).
+///
+/// See [`clause_description`] to look up a clause by name.
 pub struct ClauseInfo {
+    /// The clause keyword (e.g. "SYNTAX", "MAX-ACCESS").
     pub name: &'static str,
+    /// Macro definitions that contain this clause.
     pub macros: &'static [&'static str],
+    /// The primary defining RFC.
     pub rfc: &'static str,
+    /// Brief description of the clause's purpose.
     pub description: &'static str,
 }
 
-/// Returns info about an SMI clause keyword, if known.
+/// Returns info about an SMI clause keyword, or `None` if the name is not recognized.
 pub fn clause_description(name: &str) -> Option<&'static ClauseInfo> {
     CLAUSE_INFO_TABLE.iter().find(|info| info.name == name)
 }

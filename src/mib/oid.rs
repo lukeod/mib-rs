@@ -2,8 +2,27 @@ use smallvec::SmallVec;
 use std::fmt;
 use std::str::FromStr;
 
-/// An SNMP OID (Object Identifier), stored as a sequence of arc values.
-/// Uses SmallVec for inline storage of OIDs with up to 16 arcs (covers most real OIDs).
+/// An SNMP Object Identifier (OID), stored as a sequence of `u32` arcs.
+///
+/// Uses `SmallVec` for inline storage of OIDs with up to 16 arcs, which
+/// covers most real-world OIDs without heap allocation.
+///
+/// Derefs to `[u32]`, so standard slice methods (`len`, `is_empty`,
+/// `starts_with`, indexing) work directly.
+///
+/// # Parsing
+///
+/// ```
+/// use mib_rs::mib::Oid;
+///
+/// let oid: Oid = "1.3.6.1.2.1".parse().unwrap();
+/// assert_eq!(oid.len(), 6);
+/// assert_eq!(oid[0], 1);
+///
+/// // Leading dot is accepted
+/// let oid2: Oid = ".1.3.6.1.2.1".parse().unwrap();
+/// assert_eq!(oid, oid2);
+/// ```
 #[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Oid(SmallVec<[u32; 16]>);
 
@@ -58,6 +77,9 @@ impl From<Vec<u32>> for Oid {
     }
 }
 
+/// Parses dotted-decimal notation, with or without a leading dot.
+///
+/// Accepts `"1.3.6.1"` and `".1.3.6.1"`.
 impl FromStr for Oid {
     type Err = ParseOidError;
 
@@ -101,8 +123,10 @@ impl fmt::Debug for Oid {
 /// Error parsing an OID string.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ParseOidError {
+    /// The input string was empty or contained only a dot.
     #[error("empty OID")]
     Empty,
+    /// An arc component could not be parsed as a u32.
     #[error("invalid arc: {0}")]
     InvalidArc(String),
 }

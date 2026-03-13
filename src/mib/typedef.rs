@@ -5,8 +5,12 @@ use super::types::*;
 const MAX_TYPE_CHAIN_DEPTH: usize = 1000;
 
 /// A named type definition, either a TEXTUAL-CONVENTION or an inline type
-/// refinement. Types form chains via parent; the chain terminates at a base
-/// SMI type.
+/// refinement.
+///
+/// Types form parent chains via [`TypeData::parent`]; the chain terminates at
+/// a base SMI type. The `effective_*` methods walk this chain to find the
+/// first non-empty value. Access through [`TypeData`] methods or the
+/// [`Type`](super::handle::Type) handle.
 #[derive(Debug, Clone)]
 pub struct TypeData {
     pub(crate) name: String,
@@ -49,76 +53,94 @@ impl TypeData {
 }
 
 impl TypeData {
+    /// Return the type name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Return the source span.
     pub fn span(&self) -> Span {
         self.span
     }
 
+    /// Return the source span of the SYNTAX clause.
     pub fn syntax_span(&self) -> Span {
         self.syntax_span
     }
 
+    /// Return the defining module id.
     pub fn module(&self) -> Option<ModuleId> {
         self.module
     }
 
+    /// Return the directly assigned base type.
     pub fn base(&self) -> BaseType {
         self.base
     }
 
+    /// Return the parent type id, if this is a derived type.
     pub fn parent(&self) -> Option<TypeId> {
         self.parent
     }
 
+    /// Return the status (current, deprecated, obsolete).
     pub fn status(&self) -> Status {
         self.status
     }
 
+    /// Return this type's own DISPLAY-HINT string.
     pub fn display_hint(&self) -> &str {
         &self.hint
     }
 
+    /// Return the DESCRIPTION clause text.
     pub fn description(&self) -> &str {
         &self.description
     }
 
+    /// Return the REFERENCE clause text.
     pub fn reference(&self) -> &str {
         &self.reference
     }
 
+    /// Return this type's own SIZE constraints.
     pub fn sizes(&self) -> &[Range] {
         &self.sizes
     }
 
+    /// Return this type's own range constraints.
     pub fn ranges(&self) -> &[Range] {
         &self.ranges
     }
 
+    /// Return this type's own enumeration values.
     pub fn enums(&self) -> &[NamedValue] {
         &self.enums
     }
 
+    /// Return this type's own BITS definitions.
     pub fn bits(&self) -> &[NamedValue] {
         &self.bits
     }
 
+    /// Return `true` if defined as a TEXTUAL-CONVENTION.
     pub fn is_textual_convention(&self) -> bool {
         self.is_tc
     }
 
+    /// Look up an enumeration value by label.
     pub fn enum_by_label(&self, label: &str) -> Option<&NamedValue> {
         find_named_value(&self.enums, label)
     }
 
+    /// Look up a BITS value by label.
     pub fn bit_by_label(&self, label: &str) -> Option<&NamedValue> {
         find_named_value(&self.bits, label)
     }
 }
 
-/// Methods that walk the type chain. These require access to the type arena.
+/// Methods that walk the parent type chain. These require access to the
+/// full type arena slice.
 impl TypeData {
     /// Walk the parent type chain and return the first non-default base type.
     pub fn effective_base(&self, types: &[TypeData]) -> BaseType {
@@ -178,24 +200,29 @@ impl TypeData {
         .unwrap_or(&[])
     }
 
+    /// Return `true` if the effective base type is Counter32 or Counter64.
     pub fn is_counter(&self, types: &[TypeData]) -> bool {
         let b = self.effective_base(types);
         b == BaseType::Counter32 || b == BaseType::Counter64
     }
 
+    /// Return `true` if the effective base type is Gauge32.
     pub fn is_gauge(&self, types: &[TypeData]) -> bool {
         self.effective_base(types) == BaseType::Gauge32
     }
 
+    /// Return `true` if the effective base type is OCTET STRING.
     pub fn is_string(&self, types: &[TypeData]) -> bool {
         self.effective_base(types) == BaseType::OctetString
     }
 
+    /// Return `true` if this is an Integer32 with enumeration values.
     pub fn is_enumeration(&self, types: &[TypeData]) -> bool {
         self.effective_base(types) == BaseType::Integer32
             && walk_type_chain_has_slice(self, types, |t| &t.enums)
     }
 
+    /// Return `true` if this type has BITS definitions in the chain.
     pub fn is_bits(&self, types: &[TypeData]) -> bool {
         walk_type_chain_has_slice(self, types, |t| &t.bits)
     }

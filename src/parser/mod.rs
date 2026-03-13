@@ -1,3 +1,9 @@
+//! Recursive descent parser for SMI MIB modules.
+//!
+//! Parses SMIv1 and SMIv2 syntax (plus common vendor deviations) into
+//! [`ast::Module`](crate::ast::Module) nodes. Uses a 3-token lookahead
+//! buffer and recovers from errors by scanning to the next definition boundary.
+
 use std::borrow::Cow;
 
 use crate::ast::*;
@@ -17,8 +23,12 @@ type TcBody = (
 
 /// Recursive descent parser for SMI MIB modules.
 ///
-/// Consumes tokens from a lexer and produces AST modules with collected
-/// diagnostics. Handles both SMIv1 and SMIv2, plus common vendor deviations.
+/// Consumes tokens from a lexer and produces [`Module`] AST nodes
+/// with collected diagnostics. Handles both SMIv1 and SMIv2 syntax,
+/// plus common vendor deviations.
+///
+/// Uses a 3-token lookahead buffer and recovers from parse errors by
+/// scanning forward to the next definition boundary.
 pub struct Parser<'src, 'cfg> {
     source: &'src [u8],
     lexer: Lexer<'src, 'cfg>,
@@ -39,6 +49,9 @@ fn next_non_comment(lexer: &mut Lexer<'_, '_>) -> Token {
 }
 
 impl<'src, 'cfg> Parser<'src, 'cfg> {
+    /// Create a new parser over the given source bytes.
+    ///
+    /// Internally constructs a lexer and primes the lookahead buffer.
     pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
         let mut lexer = Lexer::new(source, diag_config);
         let eof_span = Span::from_usize_offsets(source.len(), source.len());
@@ -386,6 +399,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Module parsing ----
 
     /// Parse all MIB modules in the source.
+    ///
+    /// A single source file may contain multiple modules (e.g. concatenated
+    /// RFC MIB files). Each returned [`Module`] carries its own diagnostics.
+    /// Parsing stops early if a module header cannot be parsed.
     pub fn parse_modules(&mut self) -> Vec<Module> {
         let mut modules = Vec::new();
 
@@ -2293,7 +2310,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 }
 
 /// Strips surrounding quote characters from hex/binary string literals.
-/// Input: 'content'H or 'content'B, output: content
+///
+/// Input: `'content'H` or `'content'B`, output: `content`.
 fn strip_string_literal(s: &str) -> &str {
     let s = s.strip_prefix('\'').unwrap_or(s);
     if let Some(pos) = s.rfind('\'') {
@@ -2304,6 +2322,9 @@ fn strip_string_literal(s: &str) -> &str {
 }
 
 /// Parse source bytes into AST modules.
+///
+/// A single source file may contain multiple concatenated modules.
+/// Each returned [`Module`] carries its own diagnostics.
 pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
     let span = info_span!(
         target: "mib_rs::parser",

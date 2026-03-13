@@ -1,3 +1,17 @@
+//! Resolver: transforms IR modules into a fully resolved [`Mib`].
+//!
+//! Resolution runs six sequential, single-threaded phases:
+//!
+//! - **Registration** - Index modules, create resolved module shells, seed base modules.
+//! - **Imports** - Resolve cross-module symbol references, handle forwarding and aliases.
+//! - **Types** - Build type graph, resolve parent chains, inherit base types and constraints.
+//! - **OIDs** - Build OID trie from symbolic references in topological order.
+//! - **Semantics** - Infer node kinds, create Objects/Notifications/Groups, resolve indexes.
+//! - **Checks** - Post-resolution validation (access rules, naming conventions, etc.).
+//!
+//! All phases are infallible: errors are collected as diagnostics rather than causing
+//! early termination, so the output contains as much useful data as possible.
+
 mod checks;
 mod context;
 mod imports;
@@ -14,9 +28,9 @@ use tracing::{debug, debug_span, info, info_span, warn};
 use super::mib::Mib;
 use context::ResolverContext;
 
-/// Resolve a set of parsed IR modules into a fully resolved Mib.
+/// Resolve a set of parsed IR modules into a fully resolved [`Mib`].
 ///
-/// Runs five sequential phases: registration, imports, types, OIDs, semantics.
+/// Runs six sequential phases: registration, imports, types, OIDs, semantics, checks.
 /// All phases are single-threaded and infallible (errors become diagnostics).
 pub fn resolve(
     modules: Vec<ir::Module>,

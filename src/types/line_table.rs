@@ -1,7 +1,10 @@
 use super::ByteOffset;
 
-/// Scans source bytes and returns a table mapping line numbers to byte offsets.
-/// Entry i is the byte offset where line i+1 starts. Line 1 always starts at offset 0.
+/// Builds a line table from source bytes.
+///
+/// Returns a `Vec` where entry `i` is the byte offset where line `i+1` starts.
+/// Line 1 always starts at offset 0. Use with [`line_col_from_table`] to convert
+/// a [`ByteOffset`] to line/column numbers.
 pub fn build_line_table(source: &[u8]) -> Vec<usize> {
     let n = 1 + source.iter().filter(|&&b| b == b'\n').count();
     let mut table = Vec::with_capacity(n);
@@ -14,8 +17,11 @@ pub fn build_line_table(source: &[u8]) -> Vec<usize> {
     table
 }
 
-/// Converts a byte offset to 1-based line and column numbers using a precomputed
-/// line table. Returns (0, 0) if the table is empty or the offset is synthetic.
+/// Converts a [`ByteOffset`] to 1-based (line, column) using a line table from
+/// [`build_line_table`].
+///
+/// Returns `(0, 0)` if the table is empty or the offset is
+/// [`ByteOffset::SYNTHETIC`].
 pub fn line_col_from_table(table: &[usize], offset: ByteOffset) -> (usize, usize) {
     if table.is_empty() || offset == ByteOffset::SYNTHETIC {
         return (0, 0);

@@ -850,6 +850,9 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
     }
 }
 
+/// Determine whether a new IR module should take ownership of a node over the
+/// current owner. Prefers base modules, then SMIv2 over SMIv1, then newer
+/// LAST-UPDATED timestamps, then lexicographic module name as a final tiebreaker.
 pub(super) fn should_prefer_module(
     ctx: &ResolverContext,
     current_resolved: Option<ModuleId>,

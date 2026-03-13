@@ -114,6 +114,7 @@ pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     }
 }
 
+/// Map a well-known type name to its base type, or `Unknown` if not recognized.
 pub(crate) fn base_type_from_name(name: &str) -> BaseType {
     match name {
         "INTEGER" | "Integer32" => BaseType::Integer32,
@@ -175,6 +176,7 @@ fn extract_constraint(constraint: &ir::Constraint, td: &mut TypeData) {
     }
 }
 
+/// Convert an IR range constraint to the resolved Range type.
 pub(super) fn resolve_range(r: &ir::syntax::Range) -> Option<Range> {
     let min = range_value_to_i64(&r.min)?;
     let max = match &r.max {

@@ -1,7 +1,15 @@
-/// Scan raw MIB file bytes for module names by finding identifiers
-/// that precede "DEFINITIONS ::=". This is a lightweight scan, not a
-/// full parse. ASN.1 comments are skipped so that commented-out module
-/// headers are not indexed.
+//! Heuristic scanning of raw MIB file bytes.
+//!
+//! Provides fast, pre-parse detection of module names and content checks
+//! used by the loading pipeline to filter and index MIB files without
+//! invoking the full parser.
+
+/// Scans raw MIB file bytes for module names.
+///
+/// Finds identifiers that precede `DEFINITIONS ::=` without performing
+/// a full parse. ASN.1 line comments (`--`) are recognized so that
+/// commented-out module headers are not returned. Module names must
+/// start with an uppercase letter per ASN.1 conventions.
 pub fn scan_module_names(content: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
     let mut offset = 0;
@@ -95,8 +103,11 @@ fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
 
-/// Heuristic check: does this content look like it could be a MIB file?
-/// Rejects binary content and requires "DEFINITIONS" + "::=" signatures.
+/// Heuristic check for whether content looks like a MIB file.
+///
+/// Returns `false` for empty input, binary content (contains null bytes),
+/// or content missing the `DEFINITIONS` and `::=` signatures. Only the
+/// first 128 KB is probed.
 pub fn looks_like_mib_content(content: &[u8]) -> bool {
     if content.is_empty() {
         return false;

@@ -1,30 +1,50 @@
+//! AST types for each kind of MIB module definition.
+
 use super::common::{Ident, QuotedString};
 use super::oid::OidAssignment;
 use super::syntax::*;
 use crate::types::Span;
 
 /// A top-level construct in a MIB module body.
+///
+/// Each variant corresponds to an SMI macro invocation, type/value
+/// assignment, or a recovered parse error.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Definition {
+    /// OBJECT-TYPE macro (SMIv1/v2).
     ObjectType(ObjectTypeDef),
+    /// MODULE-IDENTITY macro (SMIv2).
     ModuleIdentity(ModuleIdentityDef),
+    /// OBJECT-IDENTITY macro (SMIv2).
     ObjectIdentity(ObjectIdentityDef),
+    /// NOTIFICATION-TYPE macro (SMIv2).
     NotificationType(NotificationTypeDef),
+    /// TRAP-TYPE macro (SMIv1).
     TrapType(TrapTypeDef),
+    /// TEXTUAL-CONVENTION definition (SMIv2).
     TextualConvention(TextualConventionDef),
+    /// Plain type assignment (`TypeName ::= TypeSyntax`).
     TypeAssignment(TypeAssignmentDef),
+    /// OID value assignment (`name OBJECT IDENTIFIER ::= { ... }`).
     ValueAssignment(ValueAssignmentDef),
+    /// OBJECT-GROUP macro (SMIv2).
     ObjectGroup(ObjectGroupDef),
+    /// NOTIFICATION-GROUP macro (SMIv2).
     NotificationGroup(NotificationGroupDef),
+    /// MODULE-COMPLIANCE macro (SMIv2).
     ModuleCompliance(ModuleComplianceDef),
+    /// AGENT-CAPABILITIES macro (SMIv2).
     AgentCapabilities(AgentCapabilitiesDef),
+    /// MACRO definition (body skipped).
     MacroDefinition(MacroDefinitionDef),
+    /// Recovered parse error placeholder.
     Error(ErrorDef),
 }
 
 macro_rules! delegate_def {
     (name: $($variant:ident),+ ; no_name: $($no_name:ident),+) => {
         impl Definition {
+            /// Returns the definition's name, or `None` for error placeholders.
             pub fn name(&self) -> Option<&Ident> {
                 match self {
                     $( Definition::$variant(d) => Some(&d.name), )+
@@ -35,6 +55,7 @@ macro_rules! delegate_def {
     };
     (span: $($variant:ident),+) => {
         impl Definition {
+            /// Returns the source span of this definition.
             pub fn span(&self) -> Span {
                 match self {
                     $( Definition::$variant(d) => d.span, )+
@@ -198,10 +219,12 @@ pub struct ComplianceModule {
     pub span: Span,
 }
 
-/// A GROUP or OBJECT refinement in MODULE-COMPLIANCE.
+/// A GROUP or OBJECT refinement in a [`ModuleComplianceDef`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum Compliance {
+    /// A conditionally required group.
     Group(ComplianceGroup),
+    /// An object with refined syntax, access, or write-syntax.
     Object(ComplianceObject),
 }
 

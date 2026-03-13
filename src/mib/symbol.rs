@@ -3,19 +3,30 @@ use crate::types::{Span, Status};
 use super::types::*;
 
 /// A reference to any resolved MIB definition.
+///
+/// Returned by name-lookup methods on [`Mib`](super::mib::Mib) and
+/// [`ModuleData`](super::module::ModuleData). Each variant wraps the
+/// corresponding arena id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Symbol {
+    /// An OBJECT-TYPE definition.
     Object(ObjectId),
+    /// A NOTIFICATION-TYPE or TRAP-TYPE definition.
     Notification(NotificationId),
+    /// An OBJECT-GROUP or NOTIFICATION-GROUP definition.
     Group(GroupId),
+    /// A MODULE-COMPLIANCE definition.
     Compliance(ComplianceId),
+    /// An AGENT-CAPABILITIES definition.
     Capability(CapabilityId),
+    /// A type or TEXTUAL-CONVENTION definition.
     Type(TypeId),
+    /// A plain OID tree node with no entity attached.
     Node(NodeId),
 }
 
 impl Symbol {
-    /// Returns the name of this symbol, looking it up in the appropriate arena.
+    /// Return the name of this symbol by looking it up in the appropriate arena.
     #[must_use]
     pub fn name<'a>(&self, mib: &'a super::mib::Mib) -> &'a str {
         match self {
@@ -29,7 +40,7 @@ impl Symbol {
         }
     }
 
-    /// Returns the span of this symbol.
+    /// Return the source span of this symbol's definition.
     #[must_use]
     pub fn span(&self, mib: &super::mib::Mib) -> Span {
         match self {
@@ -43,7 +54,7 @@ impl Symbol {
         }
     }
 
-    /// Returns the module that defines this symbol.
+    /// Return the [`ModuleId`] that defines this symbol.
     #[must_use]
     pub fn module(&self, mib: &super::mib::Mib) -> Option<ModuleId> {
         match self {
@@ -57,7 +68,9 @@ impl Symbol {
         }
     }
 
-    /// Returns the OID tree node for this symbol, or None for Type symbols.
+    /// Return the OID tree [`NodeId`] for this symbol.
+    ///
+    /// Returns `None` for `Type` variants, which have no OID tree position.
     #[must_use]
     pub fn node(&self, mib: &super::mib::Mib) -> Option<NodeId> {
         match self {
@@ -71,7 +84,9 @@ impl Symbol {
         }
     }
 
-    /// Returns the status of this symbol.
+    /// Return the [`Status`] of this symbol.
+    ///
+    /// Plain nodes return `Status::default()` since they have no explicit status.
     #[must_use]
     pub fn status(&self, mib: &super::mib::Mib) -> Status {
         match self {
@@ -85,6 +100,7 @@ impl Symbol {
         }
     }
 
+    /// Return the ObjectId if this is an Object symbol.
     #[must_use]
     pub fn as_object(&self) -> Option<ObjectId> {
         match self {
@@ -93,6 +109,7 @@ impl Symbol {
         }
     }
 
+    /// Return the NotificationId if this is a Notification symbol.
     #[must_use]
     pub fn as_notification(&self) -> Option<NotificationId> {
         match self {
@@ -101,6 +118,7 @@ impl Symbol {
         }
     }
 
+    /// Return the GroupId if this is a Group symbol.
     #[must_use]
     pub fn as_group(&self) -> Option<GroupId> {
         match self {
@@ -109,6 +127,7 @@ impl Symbol {
         }
     }
 
+    /// Return the ComplianceId if this is a Compliance symbol.
     #[must_use]
     pub fn as_compliance(&self) -> Option<ComplianceId> {
         match self {
@@ -117,6 +136,7 @@ impl Symbol {
         }
     }
 
+    /// Return the CapabilityId if this is a Capability symbol.
     #[must_use]
     pub fn as_capability(&self) -> Option<CapabilityId> {
         match self {
@@ -125,6 +145,7 @@ impl Symbol {
         }
     }
 
+    /// Return the TypeId if this is a Type symbol.
     #[must_use]
     pub fn as_type(&self) -> Option<TypeId> {
         match self {

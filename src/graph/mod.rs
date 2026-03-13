@@ -1,3 +1,9 @@
+//! Dependency graph with topological ordering and cycle detection.
+//!
+//! Used by the resolver to order type and OID definitions so that
+//! dependencies are processed before dependents. Built on top of
+//! [`petgraph`] using Tarjan's SCC algorithm.
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -5,10 +11,14 @@ use petgraph::graph::DiGraph;
 pub use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-/// A symbol in the dependency graph.
+/// A module-qualified symbol in the dependency graph.
+///
+/// Displayed as `Module::Name` (e.g. `IF-MIB::ifIndex`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Symbol {
+    /// Module that defines this symbol.
     pub module: String,
+    /// Symbol name within the module.
     pub name: String,
 }
 
@@ -28,29 +38,35 @@ impl fmt::Display for Symbol {
     }
 }
 
-/// Result of computing the resolution order.
+/// Result of [`Graph::resolution_order`].
 pub struct ResolutionResult {
-    /// Symbols in topological (dependency) order (used by tests for validation).
+    /// Symbols in topological (dependency) order.
     #[cfg_attr(not(test), allow(dead_code))]
     pub order: Vec<Symbol>,
-    /// Node indices in topological (dependency) order (parallel to `order`).
+    /// Node indices in topological order, parallel to [`order`](Self::order).
     pub order_indices: Vec<NodeIndex>,
-    /// Cycles detected as strongly connected components.
+    /// Cycles detected as strongly connected components (each SCC with >1 node
+    /// or a self-loop).
     pub cycles: Vec<Vec<Symbol>>,
 }
 
-/// Dependency graph for topological ordering with cycle detection.
+/// Directed dependency graph for topological ordering with cycle detection.
+///
+/// Wraps a [`petgraph::DiGraph`] with a symbol-to-index map for deduplication.
+/// Edges represent "depends on" relationships: an edge from A to B means
+/// A depends on B and B should be resolved first.
 pub struct Graph {
     inner: DiGraph<Symbol, ()>,
     node_index: HashMap<Symbol, NodeIndex>,
 }
 
 impl Graph {
+    /// Creates an empty graph.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a graph with pre-allocated capacity for the given number of nodes.
+    /// Creates a graph with pre-allocated capacity for `nodes` nodes and edges.
     pub fn with_capacity(nodes: usize) -> Self {
         Graph {
             inner: DiGraph::with_capacity(nodes, nodes),
@@ -58,7 +74,10 @@ impl Graph {
         }
     }
 
-    /// Add a node to the graph. Returns the node index.
+    /// Adds a node to the graph, returning its index.
+    ///
+    /// If the symbol already exists, returns the existing index without
+    /// creating a duplicate.
     pub fn add_node(&mut self, sym: Symbol) -> NodeIndex {
         if let Some(&idx) = self.node_index.get(&sym) {
             return idx;
@@ -68,14 +87,19 @@ impl Graph {
         idx
     }
 
-    /// Add a directed edge from -> to.
+    /// Adds a directed edge from `from` to `to` (meaning `from` depends on `to`).
+    ///
+    /// Duplicate edges are silently ignored.
     pub fn add_edge(&mut self, from: NodeIndex, to: NodeIndex) {
         if !self.inner.edges(from).any(|e| e.target() == to) {
             self.inner.add_edge(from, to, ());
         }
     }
 
-    /// Compute resolution order using Tarjan's SCC algorithm.
+    /// Computes resolution order using Tarjan's SCC algorithm.
+    ///
+    /// Returns symbols in dependency order (leaves first) along with any
+    /// detected cycles. Within each SCC, symbols are sorted for determinism.
     pub fn resolution_order(&self) -> ResolutionResult {
         if self.inner.node_count() == 0 {
             return ResolutionResult {

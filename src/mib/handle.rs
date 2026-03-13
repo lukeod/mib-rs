@@ -66,11 +66,11 @@ define_handle!(Group, GroupId, GroupData, group_data);
 define_handle!(Compliance, ComplianceId, ComplianceData, compliance_data);
 define_handle!(Capability, CapabilityId, CapabilityData, capability_data);
 
-#[derive(Clone, Copy)]
 /// Borrowed handle to a resolved node in the OID tree.
 ///
 /// A node may represent a plain tree node or an entity-backed node such as an
 /// object or notification.
+#[derive(Clone, Copy)]
 pub struct Node<'a> {
     pub(crate) mib: &'a Mib,
     pub(crate) id: NodeId,
@@ -95,22 +95,27 @@ impl<'a> Node<'a> {
         self.data().name()
     }
 
+    /// Return the DESCRIPTION text for this node.
     pub fn description(self) -> &'a str {
         self.data().description()
     }
 
+    /// Return the REFERENCE text for this node, or empty if absent.
     pub fn reference(self) -> &'a str {
         self.data().reference()
     }
 
+    /// Return the status if set on this node.
     pub fn status(self) -> Option<Status> {
         self.data().status()
     }
 
+    /// Return the node kind (scalar, table, internal, etc.).
     pub fn kind(self) -> Kind {
         self.data().kind()
     }
 
+    /// Return the source span of this node's definition.
     pub fn span(self) -> Span {
         self.data().span()
     }
@@ -199,11 +204,12 @@ impl fmt::Debug for Node<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
 /// A resolved index component for a table row.
 ///
-/// Indexes may be object-backed, such as `INDEX { ifIndex }`, or bare-type
-/// indexes, such as `INDEX { INTEGER }`.
+/// Indexes may be object-backed (e.g. `INDEX { ifIndex }`) or bare-type
+/// indexes (e.g. `INDEX { INTEGER }`). Obtained from
+/// [`Object::effective_indexes`].
+#[derive(Clone, Copy)]
 pub struct Index<'a> {
     mib: &'a Mib,
     row_id: ObjectId,
@@ -238,6 +244,7 @@ impl<'a> Index<'a> {
         self.entry.type_id.map(|id| Type::new(self.mib, id))
     }
 
+    /// Return `true` if this index uses the IMPLIED keyword.
     pub fn implied(self) -> bool {
         self.entry.implied
     }
@@ -266,22 +273,27 @@ impl<'a> Module<'a> {
         self.data().name()
     }
 
+    /// Return the SMI language version (SMIv1 or SMIv2).
     pub fn language(self) -> Language {
         self.data().language()
     }
 
+    /// Return the file path this module was loaded from.
     pub fn source_path(self) -> &'a str {
         self.data().source_path()
     }
 
+    /// Return `true` if this is a synthetic base module (SNMPv2-SMI, etc.).
     pub fn is_base(self) -> bool {
         self.data().is_base()
     }
 
+    /// Return the module's registered OID from its MODULE-IDENTITY, if any.
     pub fn oid(self) -> Option<&'a super::oid::Oid> {
         self.data().oid()
     }
 
+    /// Convert a byte offset within this module's source to a line and column number.
     pub fn line_col(self, offset: ByteOffset) -> (usize, usize) {
         self.data().line_col(offset)
     }
@@ -307,24 +319,28 @@ impl<'a> Module<'a> {
             .map(|id| Node::new(self.mib, id))
     }
 
+    /// Look up a notification defined by this module.
     pub fn notification(self, name: &str) -> Option<Notification<'a>> {
         self.data()
             .notification_by_name(name)
             .map(|id| Notification::new(self.mib, id))
     }
 
+    /// Look up a group defined by this module.
     pub fn group(self, name: &str) -> Option<Group<'a>> {
         self.data()
             .group_by_name(name)
             .map(|id| Group::new(self.mib, id))
     }
 
+    /// Look up a compliance statement defined by this module.
     pub fn compliance(self, name: &str) -> Option<Compliance<'a>> {
         self.data()
             .compliance_by_name(name)
             .map(|id| Compliance::new(self.mib, id))
     }
 
+    /// Look up a capabilities statement defined by this module.
     pub fn capability(self, name: &str) -> Option<Capability<'a>> {
         self.data()
             .capability_by_name(name)
@@ -365,14 +381,17 @@ impl<'a> Object<'a> {
         self.data().name()
     }
 
+    /// Return the source span of this object definition.
     pub fn span(self) -> Span {
         self.data().span()
     }
 
+    /// Return the module that defines this object.
     pub fn module(self) -> Option<Module<'a>> {
         self.data().module().map(|id| Module::new(self.mib, id))
     }
 
+    /// Return the OID tree node for this object.
     pub fn node(self) -> Node<'a> {
         Node::new(
             self.mib,
@@ -380,14 +399,17 @@ impl<'a> Object<'a> {
         )
     }
 
+    /// Return the status (current, deprecated, obsolete).
     pub fn status(self) -> Status {
         self.data().status()
     }
 
+    /// Return the DESCRIPTION clause text.
     pub fn description(self) -> &'a str {
         self.data().description()
     }
 
+    /// Return the REFERENCE clause text, or empty if absent.
     pub fn reference(self) -> &'a str {
         self.data().reference()
     }
@@ -397,38 +419,47 @@ impl<'a> Object<'a> {
         self.data().type_id().map(|id| Type::new(self.mib, id))
     }
 
+    /// Return the access level (read-only, read-write, etc.).
     pub fn access(self) -> Access {
         self.data().access()
     }
 
+    /// Return the UNITS clause text, or empty if absent.
     pub fn units(self) -> &'a str {
         self.data().units()
     }
 
+    /// Return the DEFVAL clause, if present.
     pub fn default_value(self) -> Option<&'a DefVal> {
         self.data().default_value()
     }
 
+    /// Return the node kind (scalar, table, row, column).
     pub fn kind(self) -> Kind {
         self.data().kind(self.mib.tree())
     }
 
+    /// Return the effective display hint from the type chain.
     pub fn effective_display_hint(self) -> &'a str {
         self.data().effective_display_hint()
     }
 
+    /// Return the effective SIZE constraints from the type chain.
     pub fn effective_sizes(self) -> &'a [Range] {
         self.data().effective_sizes()
     }
 
+    /// Return the effective range constraints from the type chain.
     pub fn effective_ranges(self) -> &'a [Range] {
         self.data().effective_ranges()
     }
 
+    /// Return the effective enumeration values from the type chain.
     pub fn effective_enums(self) -> &'a [NamedValue] {
         self.data().effective_enums()
     }
 
+    /// Return the effective BITS definitions from the type chain.
     pub fn effective_bits(self) -> &'a [NamedValue] {
         self.data().effective_bits()
     }
@@ -525,18 +556,22 @@ impl<'a> Type<'a> {
         self.data().name()
     }
 
+    /// Return the source span of this type definition.
     pub fn span(self) -> Span {
         self.data().span()
     }
 
+    /// Return the source span of the SYNTAX clause.
     pub fn syntax_span(self) -> Span {
         self.data().syntax_span()
     }
 
+    /// Return the module that defines this type.
     pub fn module(self) -> Option<Module<'a>> {
         self.data().module().map(|id| Module::new(self.mib, id))
     }
 
+    /// Return the directly assigned base type.
     pub fn base(self) -> BaseType {
         self.data().base()
     }
@@ -546,38 +581,47 @@ impl<'a> Type<'a> {
         self.data().parent().map(|id| Type::new(self.mib, id))
     }
 
+    /// Return the status (current, deprecated, obsolete).
     pub fn status(self) -> Status {
         self.data().status()
     }
 
+    /// Return this type's own DISPLAY-HINT, or empty if absent.
     pub fn display_hint(self) -> &'a str {
         self.data().display_hint()
     }
 
+    /// Return the DESCRIPTION clause text.
     pub fn description(self) -> &'a str {
         self.data().description()
     }
 
+    /// Return the REFERENCE clause text, or empty if absent.
     pub fn reference(self) -> &'a str {
         self.data().reference()
     }
 
+    /// Return this type's own SIZE constraints (not inherited).
     pub fn sizes(self) -> &'a [Range] {
         self.data().sizes()
     }
 
+    /// Return this type's own range constraints (not inherited).
     pub fn ranges(self) -> &'a [Range] {
         self.data().ranges()
     }
 
+    /// Return this type's own enumeration values (not inherited).
     pub fn enums(self) -> &'a [NamedValue] {
         self.data().enums()
     }
 
+    /// Return this type's own BITS definitions (not inherited).
     pub fn bits(self) -> &'a [NamedValue] {
         self.data().bits()
     }
 
+    /// Return `true` if this type was defined as a TEXTUAL-CONVENTION.
     pub fn is_textual_convention(self) -> bool {
         self.data().is_textual_convention()
     }
@@ -592,38 +636,47 @@ impl<'a> Type<'a> {
         self.data().effective_display_hint(self.mib.types_slice())
     }
 
+    /// Return the effective SIZE constraints from the type chain.
     pub fn effective_sizes(self) -> &'a [Range] {
         self.data().effective_sizes(self.mib.types_slice())
     }
 
+    /// Return the effective range constraints from the type chain.
     pub fn effective_ranges(self) -> &'a [Range] {
         self.data().effective_ranges(self.mib.types_slice())
     }
 
+    /// Return the effective enumeration values from the type chain.
     pub fn effective_enums(self) -> &'a [NamedValue] {
         self.data().effective_enums(self.mib.types_slice())
     }
 
+    /// Return the effective BITS definitions from the type chain.
     pub fn effective_bits(self) -> &'a [NamedValue] {
         self.data().effective_bits(self.mib.types_slice())
     }
 
+    /// Return `true` if the effective base type is Counter32 or Counter64.
     pub fn is_counter(self) -> bool {
         self.data().is_counter(self.mib.types_slice())
     }
 
+    /// Return `true` if the effective base type is Gauge32.
     pub fn is_gauge(self) -> bool {
         self.data().is_gauge(self.mib.types_slice())
     }
 
+    /// Return `true` if the effective base type is OCTET STRING.
     pub fn is_string(self) -> bool {
         self.data().is_string(self.mib.types_slice())
     }
 
+    /// Return `true` if this is an Integer32 type with enumeration values.
     pub fn is_enumeration(self) -> bool {
         self.data().is_enumeration(self.mib.types_slice())
     }
 
+    /// Return `true` if this type has BITS definitions.
     pub fn is_bits(self) -> bool {
         self.data().is_bits(self.mib.types_slice())
     }
@@ -632,34 +685,42 @@ impl<'a> Type<'a> {
 macro_rules! entity_handle_impl {
     ($name:ident) => {
         impl<'a> $name<'a> {
+            /// Return the definition name.
             pub fn name(self) -> &'a str {
                 self.data().name()
             }
 
+            /// Return the source span.
             pub fn span(self) -> Span {
                 self.data().span()
             }
 
+            /// Return the defining module.
             pub fn module(self) -> Option<Module<'a>> {
                 self.data().module().map(|id| Module::new(self.mib, id))
             }
 
+            /// Return the OID tree node, if resolved.
             pub fn node(self) -> Option<Node<'a>> {
                 self.data().node().map(|id| Node::new(self.mib, id))
             }
 
+            /// Return the status.
             pub fn status(self) -> Status {
                 self.data().status()
             }
 
+            /// Return the DESCRIPTION clause text.
             pub fn description(self) -> &'a str {
                 self.data().description()
             }
 
+            /// Return the REFERENCE clause text.
             pub fn reference(self) -> &'a str {
                 self.data().reference()
             }
 
+            /// Return the symbolic OID references from the definition.
             pub fn oid_refs(self) -> &'a [OidRef] {
                 self.data().oid_refs()
             }
@@ -673,6 +734,7 @@ entity_handle_impl!(Compliance);
 entity_handle_impl!(Capability);
 
 impl<'a> Notification<'a> {
+    /// Iterate the OBJECTS clause entries.
     pub fn objects(self) -> impl Iterator<Item = Object<'a>> + 'a {
         self.data()
             .objects()
@@ -681,12 +743,14 @@ impl<'a> Notification<'a> {
             .map(|id| Object::new(self.mib, id))
     }
 
+    /// Return SMIv1 TRAP-TYPE fields (enterprise, trap number), if this is a trap.
     pub fn trap_info(self) -> Option<&'a TrapInfo> {
         self.data().trap_info()
     }
 }
 
 impl<'a> Group<'a> {
+    /// Iterate the group's member nodes.
     pub fn members(self) -> impl Iterator<Item = Node<'a>> + 'a {
         self.data()
             .members()
@@ -695,27 +759,35 @@ impl<'a> Group<'a> {
             .map(|id| Node::new(self.mib, id))
     }
 
+    /// Return `true` if this is a NOTIFICATION-GROUP (vs OBJECT-GROUP).
     pub fn is_notification_group(self) -> bool {
         self.data().is_notification_group()
     }
 }
 
 impl<'a> Compliance<'a> {
+    /// Return the MODULE clauses in this compliance statement.
     pub fn modules(self) -> &'a [ComplianceModule] {
         self.data().modules()
     }
 }
 
 impl<'a> Capability<'a> {
+    /// Return the PRODUCT-RELEASE string.
     pub fn product_release(self) -> &'a str {
         self.data().product_release()
     }
 
+    /// Return the SUPPORTS clauses.
     pub fn supports(self) -> &'a [CapabilitiesModule] {
         self.data().supports()
     }
 }
 
+/// Iterator that wraps arena id iteration and yields borrowed handle types.
+///
+/// Returned by collection methods on [`Mib`] such as [`Mib::modules`],
+/// [`Mib::objects`], [`Mib::types`], and [`Mib::nodes`].
 pub struct HandleIter<'a, H, I> {
     mib: &'a Mib,
     ids: I,

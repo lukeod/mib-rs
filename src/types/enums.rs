@@ -17,12 +17,19 @@ macro_rules! impl_display {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Severity {
+    /// Unrecoverable failure that halts processing.
     Fatal = 0,
+    /// Serious issue that likely produces incorrect results.
     Severe = 1,
+    /// Standard error in the MIB definition.
     Error = 2,
+    /// Minor issue that may indicate a problem.
     Minor = 3,
+    /// Stylistic deviation from best practice.
     Style = 4,
+    /// Potential issue worth noting.
     Warning = 5,
+    /// Informational message.
     Info = 6,
 }
 
@@ -43,13 +50,18 @@ impl_display!(Severity {
     Info => "info",
 });
 
-/// ResolverStrictness controls resolver fallback behavior.
+/// Controls resolver fallback behavior.
+///
 /// Ordered from strictest (fewest fallbacks) to most permissive.
+/// See also [`ReportingLevel`] which controls diagnostic output separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ResolverStrictness {
+    /// No fallbacks. Unresolved references produce errors.
     Strict = 0,
+    /// Tier-2 constrained fallbacks enabled (e.g. searching related modules).
     Normal = 1,
+    /// All fallbacks enabled, including global symbol search.
     Permissive = 2,
 }
 
@@ -71,13 +83,19 @@ impl_display!(ResolverStrictness {
     Permissive => "permissive",
 });
 
-/// ReportingLevel controls diagnostic reporting verbosity.
+/// Controls diagnostic reporting verbosity.
+///
+/// See also [`ResolverStrictness`] which controls resolver fallback behavior separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ReportingLevel {
+    /// Suppress all diagnostics except fatal errors.
     Silent = 0,
+    /// Report errors and above only.
     Quiet = 1,
+    /// Report minor issues and above.
     Default = 2,
+    /// Report all diagnostics including style and info.
     Verbose = 3,
 }
 
@@ -88,23 +106,36 @@ impl_display!(ReportingLevel {
     Verbose => "verbose",
 });
 
-/// Kind identifies what an OID node represents.
+/// Identifies what an OID node represents in the MIB tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Kind {
+    /// Kind not yet determined.
     #[default]
     Unknown = 0,
+    /// Synthetic internal node (e.g. root of the OID tree).
     Internal = 1,
+    /// Plain OID registration (OBJECT IDENTIFIER value assignment).
     Node = 2,
+    /// Scalar OBJECT-TYPE (single-instance managed object).
     Scalar = 3,
+    /// Table OBJECT-TYPE (SEQUENCE OF).
     Table = 4,
+    /// Row OBJECT-TYPE (conceptual row / SEQUENCE entry).
     Row = 5,
+    /// Column OBJECT-TYPE (leaf within a row).
     Column = 6,
+    /// NOTIFICATION-TYPE or TRAP-TYPE definition.
     Notification = 7,
+    /// OBJECT-GROUP or NOTIFICATION-GROUP.
     Group = 8,
+    /// MODULE-COMPLIANCE definition.
     Compliance = 9,
+    /// AGENT-CAPABILITIES definition.
     Capability = 10,
+    /// MODULE-IDENTITY definition.
     ModuleIdentity = 11,
+    /// OBJECT-IDENTITY definition.
     ObjectIdentity = 12,
 }
 
@@ -144,17 +175,26 @@ impl_display!(Kind {
     ObjectIdentity => "object-identity",
 });
 
-/// Access represents the access level for OBJECT-TYPE definitions.
+/// Access level for OBJECT-TYPE definitions.
+///
+/// Covers both SMIv1 ACCESS and SMIv2 MAX-ACCESS values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Access {
+    /// Object cannot be read or written.
     #[default]
     NotAccessible = 0,
+    /// Object is only accessible via notifications.
     AccessibleForNotify = 1,
+    /// Object can be read but not written.
     ReadOnly = 2,
+    /// Object can be read and written.
     ReadWrite = 3,
+    /// Object can be read, written, and used in row creation.
     ReadCreate = 4,
+    /// Object can only be written (SMIv1 only, deprecated in SMIv2).
     WriteOnly = 5,
+    /// Object is not implemented (AGENT-CAPABILITIES variation).
     NotImplemented = 6,
 }
 
@@ -168,15 +208,23 @@ impl_display!(Access {
     NotImplemented => "not-implemented",
 });
 
-/// Status represents the lifecycle state of a MIB definition.
+/// Lifecycle state of a MIB definition.
+///
+/// SMIv2 uses `Current`, `Deprecated`, and `Obsolete`. SMIv1 additionally uses
+/// `Mandatory` and `Optional`. Values are not normalized across versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Status {
+    /// Active and valid (SMIv2).
     #[default]
     Current = 0,
+    /// Still usable but being phased out.
     Deprecated = 1,
+    /// No longer in use.
     Obsolete = 2,
+    /// Required for compliance (SMIv1 only).
     Mandatory = 3,
+    /// Not required (SMIv1 only).
     Optional = 4,
 }
 
@@ -195,14 +243,18 @@ impl_display!(Status {
     Optional => "optional",
 });
 
-/// Language identifies the SMI version of a module.
+/// SMI language version of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Language {
+    /// Version not yet determined.
     #[default]
     Unknown = 0,
+    /// RFC 1155/1212 (Structure of Management Information v1).
     SMIv1 = 1,
+    /// RFC 2578 (Structure of Management Information v2).
     SMIv2 = 2,
+    /// RFC 3159 (Structure of Policy Provisioning Information).
     SPPI = 3,
 }
 
@@ -213,25 +265,40 @@ impl_display!(Language {
     SPPI => "SPPI",
 });
 
-/// BaseType identifies the fundamental SMI type.
+/// Fundamental SMI type that a textual convention or object ultimately resolves to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum BaseType {
+    /// Base type not yet resolved.
     #[default]
     Unknown = 0,
+    /// 32-bit signed integer (INTEGER, Integer32).
     Integer32 = 1,
+    /// 32-bit unsigned integer (Unsigned32).
     Unsigned32 = 2,
+    /// 32-bit monotonically increasing counter.
     Counter32 = 3,
+    /// 64-bit monotonically increasing counter.
     Counter64 = 4,
+    /// 32-bit non-negative integer that can increase or decrease.
     Gauge32 = 5,
+    /// Hundredths of a second since an epoch.
     TimeTicks = 6,
+    /// IPv4 address (4 octets).
     IpAddress = 7,
+    /// Arbitrary binary or text data.
     OctetString = 8,
+    /// ASN.1 OBJECT IDENTIFIER value.
     ObjectIdentifier = 9,
+    /// Named bit set.
     Bits = 10,
+    /// Opaque data (wraps arbitrary ASN.1).
     Opaque = 11,
+    /// SEQUENCE type used for table row definitions.
     Sequence = 12,
+    /// 64-bit signed integer (SPPI).
     Integer64 = 13,
+    /// 64-bit unsigned integer (SPPI).
     Unsigned64 = 14,
 }
 
@@ -253,17 +320,22 @@ impl_display!(BaseType {
     Unsigned64 => "Unsigned64",
 });
 
-/// IndexEncoding classifies how an INDEX component maps to instance-identifier
-/// sub-identifiers per RFC 2578 s7.7.
+/// How an INDEX component maps to instance-identifier sub-identifiers (RFC 2578 s7.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum IndexEncoding {
+    /// Encoding not yet determined.
     #[default]
     Unknown = 0,
+    /// Single sub-identifier for integer-valued indexes.
     Integer = 1,
+    /// Fixed number of sub-identifiers (SIZE-constrained OCTET STRING).
     FixedString = 2,
+    /// Length prefix followed by that many sub-identifiers.
     LengthPrefixed = 3,
+    /// Like `FixedString` but length is implied from the end of the OID.
     Implied = 4,
+    /// Four sub-identifiers encoding an IPv4 address.
     IpAddress = 5,
 }
 
@@ -276,13 +348,18 @@ impl_display!(IndexEncoding {
     IpAddress => "ip-address",
 });
 
-/// AccessKeyword records which keyword was used (ACCESS, MAX-ACCESS, etc.).
+/// Records which access keyword was used in the source MIB.
+///
+/// SMIv1 uses `ACCESS`, SMIv2 uses `MAX-ACCESS`, and compliance statements use `MIN-ACCESS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum AccessKeyword {
+    /// SMIv1 `ACCESS` clause.
     #[default]
     Access = 0,
+    /// SMIv2 `MAX-ACCESS` clause.
     MaxAccess = 1,
+    /// `MIN-ACCESS` clause in MODULE-COMPLIANCE refinements.
     MinAccess = 2,
 }
 

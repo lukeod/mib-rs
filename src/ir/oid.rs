@@ -1,10 +1,14 @@
+//! IR types for OID assignments and their components.
+
 use crate::types::Span;
 
 /// An unresolved OID assignment. Components remain as symbolic references
 /// until the resolver phase.
 #[derive(Debug, Clone)]
 pub struct OidAssignment {
+    /// Ordered list of OID components (symbolic or numeric).
     pub components: Vec<OidComponent>,
+    /// Source span covering the entire `{ ... }` assignment.
     pub span: Span,
 }
 
@@ -37,6 +41,7 @@ pub enum OidComponent {
 }
 
 impl OidComponent {
+    /// Returns the source span of this component.
     pub fn span(&self) -> Span {
         match self {
             OidComponent::Name { span, .. }

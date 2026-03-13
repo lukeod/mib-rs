@@ -9,14 +9,23 @@ use super::super::types::*;
 /// Reason an imported or referenced symbol could not be resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnresolvedReason {
+    /// The source module was not found in the loaded module set.
     ModuleNotFound,
+    /// The source module exists but does not export the requested symbol.
     SymbolNotExported,
+    /// A type reference could not be resolved.
     TypeNotFound,
+    /// A dependency cycle prevented resolution.
     DependencyCycle,
+    /// An OID component's named parent could not be found.
     ComponentNotFound,
+    /// A TRAP-TYPE's ENTERPRISE reference could not be resolved.
     EnterpriseNotFound,
+    /// An AUGMENTS target row object could not be found.
     AugmentsTargetNotFound,
+    /// An INDEX object reference could not be resolved.
     IndexObjectNotFound,
+    /// A generic object reference could not be resolved.
     ObjectNotFound,
 }
 
@@ -101,15 +110,21 @@ pub(super) struct ResolverContext {
     pub diag_config: DiagnosticConfig,
 }
 
-/// Tracks an unresolved reference during resolution.
+/// Tracks an unresolved reference during resolution, before conversion to the
+/// public [`UnresolvedRef`] type.
 pub(super) struct UnresolvedTracking {
+    /// Category of the unresolved reference (import, type, OID, etc.).
     pub kind: UnresolvedKind,
+    /// Name of the symbol that could not be resolved.
     pub symbol: String,
+    /// Module where the unresolved reference originated.
     pub module: String,
+    /// Why the reference could not be resolved.
     pub reason: UnresolvedReason,
 }
 
 impl ResolverContext {
+    /// Create a new resolver context from parsed IR modules.
     pub fn new(
         modules: Vec<ir::Module>,
         strictness: ResolverStrictness,
@@ -430,6 +445,7 @@ impl ResolverContext {
         );
     }
 
+    /// Record an unresolved type reference and emit a diagnostic.
     pub fn record_unresolved_type(
         &mut self,
         referrer: impl AsRef<str>,
@@ -458,6 +474,7 @@ impl ResolverContext {
         );
     }
 
+    /// Record an unresolved OID component and emit a diagnostic.
     pub fn record_unresolved_oid(
         &mut self,
         def_name: impl AsRef<str>,
@@ -492,6 +509,7 @@ impl ResolverContext {
         );
     }
 
+    /// Record an unresolved INDEX object reference and emit a diagnostic.
     pub fn record_unresolved_index(
         &mut self,
         row: impl AsRef<str>,
@@ -520,6 +538,7 @@ impl ResolverContext {
         );
     }
 
+    /// Record an unresolved NOTIFICATION-TYPE OBJECTS reference and emit a diagnostic.
     pub fn record_unresolved_notification_object(
         &mut self,
         notification: impl AsRef<str>,

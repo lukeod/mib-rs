@@ -1,11 +1,21 @@
+//! Synthetic base module definitions for the seven SMI foundation modules.
+//!
+//! These modules (SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI,
+//! RFC1065-SMI, RFC-1212, RFC-1215) are built programmatically rather than
+//! parsed from files. They provide the core OID tree roots, base types
+//! (Counter32, Gauge32, etc.), and standard textual conventions
+//! (DisplayString, TruthValue, RowStatus, etc.).
+
 use std::sync::LazyLock;
 
 use crate::ir;
 use crate::types::{BaseType, Language, Span, Status};
 
-/// Base module metadata for lookup.
+/// Metadata for a recognized base module.
 pub struct BaseModuleInfo {
+    /// Canonical module name, e.g. `"SNMPv2-SMI"`.
     pub name: &'static str,
+    /// SMI language version of this base module.
     pub language: Language,
 }
 

@@ -1,25 +1,40 @@
+//! IR definition types for all MIB constructs.
+
 use crate::types::{Access, AccessKeyword, BaseType, Span, Status};
 
 use super::oid::OidAssignment;
 use super::syntax::{DefVal, TypeSyntax};
 
-/// A normalized MIB definition. SMIv1 and SMIv2 forms are unified where
-/// appropriate (e.g. TRAP-TYPE and NOTIFICATION-TYPE become Notification).
+/// A normalized MIB definition.
+///
+/// SMIv1 and SMIv2 forms are unified where appropriate (e.g. TRAP-TYPE
+/// and NOTIFICATION-TYPE both become [`Notification`]).
 #[derive(Debug, Clone)]
 pub enum Definition {
+    /// OBJECT-TYPE definition.
     ObjectType(ObjectType),
+    /// MODULE-IDENTITY definition.
     ModuleIdentity(ModuleIdentity),
+    /// OBJECT-IDENTITY definition.
     ObjectIdentity(ObjectIdentity),
+    /// NOTIFICATION-TYPE (SMIv2) or TRAP-TYPE (SMIv1).
     Notification(Notification),
+    /// TEXTUAL-CONVENTION or plain type assignment.
     TypeDef(TypeDef),
+    /// OID value assignment.
     ValueAssignment(ValueAssignment),
+    /// OBJECT-GROUP definition.
     ObjectGroup(ObjectGroup),
+    /// NOTIFICATION-GROUP definition.
     NotificationGroup(NotificationGroup),
+    /// MODULE-COMPLIANCE definition.
     ModuleCompliance(ModuleCompliance),
+    /// AGENT-CAPABILITIES definition.
     AgentCapabilities(AgentCapabilities),
 }
 
 impl Definition {
+    /// Returns the definition's name.
     pub fn name(&self) -> &str {
         match self {
             Definition::ObjectType(d) => &d.name,
@@ -35,6 +50,7 @@ impl Definition {
         }
     }
 
+    /// Returns the source span of this definition.
     pub fn span(&self) -> Span {
         match self {
             Definition::ObjectType(d) => d.span,
@@ -50,6 +66,10 @@ impl Definition {
         }
     }
 
+    /// Returns the OID assignment, if this definition has one.
+    ///
+    /// [`TypeDef`] definitions have no OID. [`Notification`] OIDs are
+    /// optional (TRAP-TYPE derives its OID from enterprise + trap number).
     pub fn oid(&self) -> Option<&OidAssignment> {
         match self {
             Definition::ObjectType(d) => Some(&d.oid),
@@ -74,12 +94,15 @@ pub struct ObjectType {
     pub syntax: TypeSyntax,
     pub units: String,
     pub access: Access,
+    /// Which keyword was used: ACCESS, MAX-ACCESS, or MIN-ACCESS.
     pub access_keyword: AccessKeyword,
     pub status: Status,
     pub description: String,
+    /// True if the DESCRIPTION clause was present (even if empty).
     pub has_description: bool,
     pub reference: String,
     pub index: Vec<IndexItem>,
+    /// Name of the table row this object augments, if any.
     pub augments: String,
     pub defval: Option<DefVal>,
     pub oid: OidAssignment,
@@ -98,7 +121,9 @@ pub struct ObjectType {
 /// An entry in an OBJECT-TYPE INDEX clause.
 #[derive(Debug, Clone)]
 pub struct IndexItem {
+    /// True if this index object uses the IMPLIED keyword.
     pub implied: bool,
+    /// Name of the index object.
     pub object: String,
     pub span: Span,
 }
@@ -140,9 +165,11 @@ pub struct ObjectIdentity {
 pub struct Notification {
     pub name: String,
     pub span: Span,
+    /// OBJECTS (SMIv2) or VARIABLES (SMIv1) associated with this notification.
     pub objects: Vec<String>,
     pub status: Status,
     pub description: String,
+    /// True if the DESCRIPTION clause was present (even if empty).
     pub has_description: bool,
     pub reference: String,
     /// SMIv1 TRAP-TYPE fields. None for NOTIFICATION-TYPE.
@@ -154,7 +181,9 @@ pub struct Notification {
 /// Fields specific to SMIv1 TRAP-TYPE definitions.
 #[derive(Debug, Clone)]
 pub struct TrapInfo {
+    /// Name of the ENTERPRISE object.
     pub enterprise: String,
+    /// Numeric trap identifier assigned via `::= number`.
     pub trap_number: u32,
 }
 
@@ -164,7 +193,7 @@ pub struct TypeDef {
     pub name: String,
     pub span: Span,
     pub syntax: TypeSyntax,
-    /// Overrides the base type derived from Syntax. Some SMI base types
+    /// Overrides the base type derived from syntax. Some SMI base types
     /// like IpAddress are syntactically OCTET STRING (SIZE 4) but have
     /// distinct semantic base types.
     pub base_type: Option<BaseType>,
@@ -172,6 +201,7 @@ pub struct TypeDef {
     pub status: Status,
     pub description: String,
     pub reference: String,
+    /// True if this was defined using the TEXTUAL-CONVENTION macro.
     pub is_textual_convention: bool,
 
     pub syntax_span: Span,
@@ -250,8 +280,11 @@ pub struct ComplianceGroup {
 #[derive(Debug, Clone)]
 pub struct ComplianceObject {
     pub object: String,
+    /// Refined SYNTAX, if specified.
     pub syntax: Option<TypeSyntax>,
+    /// Refined WRITE-SYNTAX, if specified.
     pub write_syntax: Option<TypeSyntax>,
+    /// Minimum required access level, if specified.
     pub min_access: Option<Access>,
     pub description: String,
     pub span: Span,
@@ -282,10 +315,15 @@ pub struct SupportsModule {
 /// A VARIATION clause in AGENT-CAPABILITIES.
 #[derive(Debug, Clone)]
 pub struct Variation {
+    /// Name of the varied object or notification.
     pub name: String,
+    /// Restricted SYNTAX, if specified.
     pub syntax: Option<TypeSyntax>,
+    /// Restricted WRITE-SYNTAX, if specified.
     pub write_syntax: Option<TypeSyntax>,
+    /// Restricted access level, if specified.
     pub access: Option<Access>,
+    /// Objects required for row creation.
     pub creation_requires: Vec<String>,
     pub defval: Option<DefVal>,
     pub description: String,

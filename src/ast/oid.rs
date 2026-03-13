@@ -1,3 +1,5 @@
+//! AST types for OBJECT IDENTIFIER value assignments and their components.
+
 use super::common::Ident;
 use crate::types::Span;
 
@@ -34,6 +36,7 @@ pub enum OidComponent {
 }
 
 impl OidComponent {
+    /// Returns the source span of this component.
     pub fn span(&self) -> Span {
         match self {
             OidComponent::Name(ident) => ident.span,

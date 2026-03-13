@@ -3,18 +3,29 @@ use std::fmt;
 
 use super::{DiagCode, ReportingLevel, Severity};
 
-/// Represents an issue found during parsing or resolution.
+/// An issue found during parsing or resolution.
+///
+/// Created from [`SpanDiagnostic`](super::SpanDiagnostic) during lowering, or
+/// directly by the resolver. Use [`DiagnosticConfig::should_report`] to filter
+/// which diagnostics to display.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    /// Severity of this diagnostic.
     pub severity: Severity,
+    /// Diagnostic code identifying the issue category.
     pub code: DiagCode,
+    /// Human-readable description of the issue.
     pub message: String,
+    /// Module name where the issue was found, if applicable.
     pub module: Option<String>,
+    /// 1-based source line number, if available.
     pub line: Option<usize>,
+    /// 1-based source column number, if available.
     pub column: Option<usize>,
 }
 
 impl fmt::Display for Diagnostic {
+    /// Formats as `[severity] module:line:col: message`, omitting location fields when absent.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}]", self.severity)?;
         if let Some(module) = &self.module {
@@ -33,13 +44,17 @@ impl fmt::Display for Diagnostic {
 
 /// Controls diagnostic reporting and failure policy.
 ///
-/// This is purely about reporting - it does NOT control resolver behavior.
-/// Resolver fallback behavior is controlled by `ResolverStrictness`.
+/// This is purely about reporting. It does NOT control resolver behavior.
+/// Resolver fallback behavior is controlled by [`ResolverStrictness`](crate::types::ResolverStrictness).
 #[derive(Debug, Clone)]
 pub struct DiagnosticConfig {
+    /// Which severity levels are reported. See [`ReportingLevel`].
     pub reporting: ReportingLevel,
+    /// Diagnostics at this severity or above cause loading to fail.
     pub fail_at: Severity,
+    /// Per-code severity overrides (e.g. promote a warning to error).
     pub overrides: HashMap<DiagCode, Severity>,
+    /// Glob patterns for [`DiagCode`] strings to suppress (supports `*` and `?`).
     pub ignore: Vec<String>,
 }
 
@@ -55,7 +70,7 @@ impl Default for DiagnosticConfig {
 }
 
 impl DiagnosticConfig {
-    /// Returns the diagnostic configuration preset for the given reporting level.
+    /// Returns a preset configuration for the given [`ReportingLevel`].
     pub fn for_reporting(level: ReportingLevel) -> Self {
         match level {
             ReportingLevel::Verbose => Self::verbose(),
@@ -65,7 +80,7 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Verbose reporting profile - report all diagnostics.
+    /// Verbose preset: report all diagnostics including style and info.
     pub fn verbose() -> Self {
         DiagnosticConfig {
             reporting: ReportingLevel::Verbose,
@@ -75,7 +90,7 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Low-noise reporting profile.
+    /// Quiet preset: report errors and above only.
     pub fn quiet() -> Self {
         DiagnosticConfig {
             reporting: ReportingLevel::Quiet,
@@ -85,8 +100,7 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Silent configuration that suppresses all diagnostics.
-    /// Only fatal errors that prevent parsing are reported.
+    /// Silent preset: suppress all diagnostics. Only fatal errors cause failure.
     pub fn silent() -> Self {
         DiagnosticConfig {
             reporting: ReportingLevel::Silent,
@@ -96,7 +110,8 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Returns true if a diagnostic with the given code should be reported.
+    /// Returns `true` if a diagnostic with the given code should be reported
+    /// at the current reporting level, accounting for overrides and ignore patterns.
     pub fn should_report(&self, code: DiagCode) -> bool {
         let default_sev = code.severity();
         let effective_sev = self.overrides.get(&code).copied().unwrap_or(default_sev);
@@ -122,7 +137,7 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Returns true if a diagnostic with the given severity should cause loading to fail.
+    /// Returns `true` if the given severity meets or exceeds the [`fail_at`](Self::fail_at) threshold.
     pub fn should_fail(&self, sev: Severity) -> bool {
         sev <= self.fail_at
     }

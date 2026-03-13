@@ -7,6 +7,10 @@ use super::symbol::Symbol;
 use super::types::*;
 
 /// A loaded and resolved MIB module.
+///
+/// Contains module-level metadata (organization, description, revisions),
+/// import declarations, and per-entity name indices. Access through the
+/// public accessor methods or the [`Module`](super::handle::Module) handle.
 pub struct ModuleData {
     pub(crate) name: String,
     pub(crate) language: Language,
@@ -76,106 +80,132 @@ impl ModuleData {
         }
     }
 
+    /// Return the module name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Return the SMI language version.
     pub fn language(&self) -> Language {
         self.language
     }
 
+    /// Return the file path this module was loaded from.
     pub fn source_path(&self) -> &str {
         &self.source_path
     }
 
+    /// Return `true` if this is a synthetic base module.
     pub fn is_base(&self) -> bool {
         self.is_base
     }
 
+    /// Convert a byte offset to a line and column number.
     pub fn line_col(&self, offset: crate::types::ByteOffset) -> (usize, usize) {
         crate::types::line_col_from_table(&self.line_table, offset)
     }
 
+    /// Return the module's MODULE-IDENTITY OID, if any.
     pub fn oid(&self) -> Option<&Oid> {
         self.oid.as_ref()
     }
 
+    /// Return the ORGANIZATION clause text.
     pub fn organization(&self) -> &str {
         &self.organization
     }
 
+    /// Return the CONTACT-INFO clause text.
     pub fn contact_info(&self) -> &str {
         &self.contact_info
     }
 
+    /// Return the DESCRIPTION clause text.
     pub fn description(&self) -> &str {
         &self.description
     }
 
+    /// Return the LAST-UPDATED timestamp string.
     pub fn last_updated(&self) -> &str {
         &self.last_updated
     }
 
+    /// Return the REVISION entries.
     pub fn revisions(&self) -> &[Revision] {
         &self.revisions
     }
 
+    /// Return the IMPORTS declarations.
     pub fn imports(&self) -> &[Import] {
         &self.imports
     }
 
+    /// Return the object ids defined by this module.
     pub fn objects(&self) -> &[ObjectId] {
         &self.objects
     }
 
+    /// Return the type ids defined by this module.
     pub fn types(&self) -> &[TypeId] {
         &self.types
     }
 
+    /// Return the notification ids defined by this module.
     pub fn notifications(&self) -> &[NotificationId] {
         &self.notifications
     }
 
+    /// Return the group ids defined by this module.
     pub fn groups(&self) -> &[GroupId] {
         &self.groups
     }
 
+    /// Return the compliance ids defined by this module.
     pub fn compliances(&self) -> &[ComplianceId] {
         &self.compliances
     }
 
+    /// Return the capability ids defined by this module.
     pub fn capabilities(&self) -> &[CapabilityId] {
         &self.capabilities
     }
 
+    /// Return the node ids defined by this module.
     pub fn nodes(&self) -> &[NodeId] {
         &self.nodes
     }
 
+    /// Look up an object by name within this module.
     pub fn object_by_name(&self, name: &str) -> Option<ObjectId> {
         self.objects_by_name.get(name).copied()
     }
 
+    /// Look up a type by name within this module.
     pub fn type_by_name(&self, name: &str) -> Option<TypeId> {
         self.types_by_name.get(name).copied()
     }
 
+    /// Look up a notification by name within this module.
     pub fn notification_by_name(&self, name: &str) -> Option<NotificationId> {
         self.notifications_by_name.get(name).copied()
     }
 
+    /// Look up a group by name within this module.
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
         self.groups_by_name.get(name).copied()
     }
 
+    /// Look up a compliance statement by name within this module.
     pub fn compliance_by_name(&self, name: &str) -> Option<ComplianceId> {
         self.compliances_by_name.get(name).copied()
     }
 
+    /// Look up a capability statement by name within this module.
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
         self.capabilities_by_name.get(name).copied()
     }
 
+    /// Look up a node by name within this module.
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         self.nodes_by_name.get(name).copied()
     }
@@ -207,20 +237,24 @@ impl ModuleData {
         None
     }
 
+    /// Return `true` if this module defines a symbol with the given name.
     pub fn defines_symbol(&self, name: &str) -> bool {
         self.symbol(name).is_some()
     }
 
+    /// Return `true` if this module imports a symbol with the given name.
     pub fn imports_symbol(&self, name: &str) -> bool {
         self.imports
             .iter()
             .any(|imp| imp.symbols.iter().any(|s| s.name == name))
     }
 
+    /// Return `true` if the named import was actually used during resolution.
     pub fn is_import_used(&self, name: &str) -> bool {
         self.used_import_names.contains(name)
     }
 
+    /// Return the resolved source module for an imported name.
     pub fn import_source(&self, name: &str) -> Option<ModuleId> {
         self.resolved_imports.get(name).copied()
     }

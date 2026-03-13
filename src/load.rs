@@ -1,3 +1,9 @@
+//! MIB loading pipeline: source discovery, parallel parsing, and resolution.
+//!
+//! The main entry point is [`Loader`], a builder that configures sources,
+//! module restrictions, diagnostics, and strictness, then runs the full
+//! pipeline via [`Loader::load`]. The free function [`load`] is equivalent.
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,6 +30,32 @@ use crate::types::{DiagnosticConfig, ResolverStrictness};
 ///
 /// If no module list is provided, all modules visible from the configured
 /// sources are loaded.
+///
+/// # Examples
+///
+/// Load a specific module from a directory:
+///
+/// ```no_run
+/// use mib_rs::Loader;
+///
+/// let mib = Loader::new()
+///     .source(mib_rs::source::dir("/usr/share/snmp/mibs").unwrap())
+///     .modules(["IF-MIB"])
+///     .load()
+///     .expect("load failed");
+/// ```
+///
+/// Load from an in-memory source:
+///
+/// ```no_run
+/// use mib_rs::Loader;
+///
+/// let src = mib_rs::source::memory("MY-MIB", b"MY-MIB DEFINITIONS ::= BEGIN END".as_slice());
+/// let mib = Loader::new()
+///     .source(src)
+///     .load()
+///     .expect("load failed");
+/// ```
 pub struct Loader {
     sources: Vec<Box<dyn Source>>,
     modules: Option<Vec<String>>,
@@ -39,8 +71,9 @@ impl Default for Loader {
 }
 
 impl Loader {
-    /// Create a loader with no sources, normal resolver strictness, and the
-    /// default diagnostic configuration.
+    /// Create a new loader with no sources.
+    ///
+    /// Uses [`ResolverStrictness::Normal`] and the default [`DiagnosticConfig`].
     pub fn new() -> Self {
         Loader {
             sources: Vec::new(),
@@ -68,28 +101,33 @@ impl Loader {
         self
     }
 
-    /// Restrict loading to the named modules and their dependencies.
-    /// Omit to load all modules from the configured sources.
+    /// Restrict loading to the named modules and their transitive dependencies.
+    ///
+    /// When omitted, all modules from the configured sources are loaded.
     pub fn modules(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
         let names: Vec<String> = names.into_iter().map(|n| n.into()).collect();
         self.modules = Some(names);
         self
     }
 
-    /// Set the diagnostic reporting and failure policy used during load.
+    /// Set the [`DiagnosticConfig`] controlling which diagnostics are
+    /// reported and which severity triggers a [`LoadError::DiagnosticThreshold`].
     pub fn diagnostic_config(mut self, config: DiagnosticConfig) -> Self {
         self.diag_config = config;
         self
     }
 
-    /// Set the semantic resolver strictness level.
+    /// Set the [`ResolverStrictness`] level used during resolution.
     pub fn resolver_strictness(mut self, strictness: ResolverStrictness) -> Self {
         self.resolver_strictness = strictness;
         self
     }
 
-    /// Enable automatic system path discovery (net-snmp + libsmi).
-    /// Discovered paths are appended after any explicit sources.
+    /// Enable automatic discovery of system MIB directories.
+    ///
+    /// Probes net-snmp and libsmi config files and environment variables.
+    /// Discovered paths are appended after any explicitly added sources.
+    /// See [`searchpath::discover_system_paths`] for details.
     pub fn system_paths(mut self) -> Self {
         self.system_paths = true;
         self
@@ -98,7 +136,9 @@ impl Loader {
 
 /// Load MIB modules from configured sources and resolve them.
 ///
-/// This is equivalent to calling [`Loader::load`] on the same builder.
+/// This is the free-function form of [`Loader::load`]. It consumes the
+/// builder, runs the full pipeline (scan, parse, lower, resolve), and
+/// returns the resolved [`Mib`] or a [`LoadError`].
 pub fn load(options: Loader) -> Result<Mib, LoadError> {
     let requested_module_count = options.modules.as_ref().map_or(0, Vec::len);
     let load_mode = if options.modules.is_some() {
@@ -169,7 +209,11 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
 }
 
 impl Loader {
-    /// Execute the configured load pipeline and return the resolved [`Mib`].
+    /// Execute the full load pipeline and return the resolved [`Mib`].
+    ///
+    /// Runs source discovery, parallel parsing, lowering, and resolution.
+    /// Returns [`LoadError`] if no sources are configured, requested modules
+    /// are missing, or diagnostics exceed the configured threshold.
     pub fn load(self) -> Result<Mib, LoadError> {
         load(self)
     }

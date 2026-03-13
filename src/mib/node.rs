@@ -8,7 +8,10 @@ use super::types::*;
 
 /// A single node in the OID tree.
 ///
-/// All fields are pub(crate) - external access goes through the Mib API.
+/// Each node corresponds to one arc in the OID hierarchy. Nodes may have
+/// attached entities (object, notification, group, compliance, capability).
+/// Access fields through the public accessor methods or the [`Node`](super::handle::Node)
+/// handle type.
 #[derive(Debug)]
 pub struct NodeData {
     pub(crate) arc: u32,
@@ -57,62 +60,77 @@ impl NodeData {
 }
 
 impl NodeData {
+    /// Return the node's numeric OID arc relative to its parent.
     pub fn arc(&self) -> u32 {
         self.arc
     }
 
+    /// Return the node's local symbolic name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Return the DESCRIPTION text for this node.
     pub fn description(&self) -> &str {
         &self.description
     }
 
+    /// Return the REFERENCE text for this node.
     pub fn reference(&self) -> &str {
         &self.reference
     }
 
+    /// Return the status, if set on this node.
     pub fn status(&self) -> Option<Status> {
         self.status
     }
 
+    /// Return the node kind (scalar, table, internal, etc.).
     pub fn kind(&self) -> Kind {
         self.kind
     }
 
+    /// Return the source span of this node's definition.
     pub fn span(&self) -> Span {
         self.span
     }
 
+    /// Return the parent node id, or `None` for the root.
     pub fn parent(&self) -> Option<NodeId> {
         self.parent
     }
 
+    /// Return the child map (arc -> NodeId) in arc order.
     pub fn children(&self) -> &BTreeMap<u32, NodeId> {
         &self.children
     }
 
+    /// Return the owning module id, if set.
     pub fn module(&self) -> Option<ModuleId> {
         self.module
     }
 
+    /// Return the attached object id, if any.
     pub fn object(&self) -> Option<ObjectId> {
         self.object
     }
 
+    /// Return the attached notification id, if any.
     pub fn notification(&self) -> Option<NotificationId> {
         self.notification
     }
 
+    /// Return the attached group id, if any.
     pub fn group(&self) -> Option<GroupId> {
         self.group
     }
 
+    /// Return the attached compliance id, if any.
     pub fn compliance(&self) -> Option<ComplianceId> {
         self.compliance
     }
 
+    /// Return the attached capability id, if any.
     pub fn capability(&self) -> Option<CapabilityId> {
         self.capability
     }
@@ -125,9 +143,9 @@ impl NodeData {
 
 /// Arena-allocated OID tree.
 ///
-/// All nodes are stored in a contiguous Vec. The tree is built during
-/// resolution via get_or_create_child / set_name / attach_* methods,
-/// then accessed read-only through the Mib API.
+/// Nodes are stored in a contiguous `Vec` indexed by [`NodeId`]. The tree
+/// is built during resolution and then accessed read-only through the
+/// [`Mib`](super::mib::Mib) API.
 #[derive(Debug)]
 pub struct OidTree {
     nodes: Vec<NodeData>,
@@ -135,6 +153,7 @@ pub struct OidTree {
 }
 
 impl OidTree {
+    /// Create an empty tree with a synthetic root node.
     pub fn new() -> Self {
         Self {
             nodes: vec![NodeData::root()],
@@ -142,18 +161,22 @@ impl OidTree {
         }
     }
 
+    /// Return the root node id.
     pub fn root(&self) -> NodeId {
         self.root
     }
 
+    /// Return the total number of nodes in the tree.
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    /// Return `true` if the tree contains no nodes.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
+    /// Look up a node by id.
     pub fn get(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
     }
@@ -223,7 +246,9 @@ impl OidTree {
     }
 
     /// Walk the tree from `start` following arcs in `oid`.
-    /// Returns (last_matched_node, whether_full_oid_matched).
+    ///
+    /// Returns `(last_matched_node, true)` if all arcs matched, or
+    /// `(deepest_matched_node, false)` if the walk stopped early.
     pub fn walk_oid(&self, start: NodeId, oid: &Oid) -> (NodeId, bool) {
         let mut current = start;
         for &arc in oid.iter() {
@@ -297,7 +322,7 @@ impl Default for OidTree {
     }
 }
 
-/// Depth-first iterator over an OID subtree.
+/// Depth-first iterator over an OID subtree, yielding [`NodeId`]s.
 pub struct SubtreeIter<'a> {
     tree: &'a OidTree,
     stack: Vec<NodeId>,

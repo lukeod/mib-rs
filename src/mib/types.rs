@@ -6,22 +6,29 @@ use crate::types::{Access, BaseType, IndexEncoding, Span};
 /// A single imported symbol with its source location.
 #[derive(Debug, Clone)]
 pub struct ImportSymbol {
+    /// The symbol name as it appears in the IMPORTS clause.
     pub name: String,
+    /// Source location of this symbol reference.
     pub span: Span,
 }
 
 /// A group of symbols imported from a single source module.
 #[derive(Debug, Clone)]
 pub struct Import {
+    /// Name of the module being imported from.
     pub module: String,
+    /// Symbols imported from this module.
     pub symbols: Vec<ImportSymbol>,
 }
 
 /// A min..max constraint for sizes or values.
 #[derive(Debug, Clone, Copy)]
 pub struct Range {
+    /// Lower bound (inclusive).
     pub min: i64,
+    /// Upper bound (inclusive). Equal to `min` for single-value ranges.
     pub max: i64,
+    /// Source location of this constraint.
     pub span: Span,
 }
 
@@ -38,8 +45,11 @@ impl fmt::Display for Range {
 /// A labeled integer from an enum or BITS definition.
 #[derive(Debug, Clone)]
 pub struct NamedValue {
+    /// The textual label.
     pub label: String,
+    /// The integer value associated with this label.
     pub value: i64,
+    /// Source location of this named value.
     pub span: Span,
 }
 
@@ -54,23 +64,32 @@ pub(crate) fn find_named_value<'a>(
 /// A module revision entry.
 #[derive(Debug, Clone)]
 pub struct Revision {
+    /// Revision timestamp string.
     pub date: String,
+    /// Free-text description of what changed.
     pub description: String,
+    /// Source location of this revision clause.
     pub span: Span,
 }
 
 /// An index component for a table row.
 #[derive(Debug, Clone)]
 pub struct IndexEntry {
+    /// Name of the index object.
     pub name: String,
+    /// Resolved object id, if found.
     pub object: Option<ObjectId>,
+    /// Resolved type of the index object, if found.
     pub type_id: Option<TypeId>,
+    /// True if this index uses the IMPLIED keyword.
     pub implied: bool,
+    /// Wire encoding inferred from the index object's type.
     pub encoding: IndexEncoding,
+    /// Source location of this index entry.
     pub span: Span,
 }
 
-/// Classifies the index encoding from the object's resolved type and effective constraints.
+/// Classify the index encoding from the object's resolved base type and size constraints.
 pub(crate) fn classify_index_encoding(
     base: BaseType,
     implied: bool,
@@ -108,17 +127,25 @@ fn is_fixed_size(sizes: &[Range]) -> bool {
     sizes.len() == 1 && sizes[0].min == sizes[0].max && sizes[0].min > 0
 }
 
-/// Identifies the type of default value.
+/// Discriminant for the kind of value in a [`DefVal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DefValKind {
+    /// No default value specified.
     Unset = 0,
+    /// Signed integer value.
     Int = 1,
+    /// Unsigned integer value.
     Uint = 2,
+    /// Quoted string value.
     String = 3,
+    /// Raw byte sequence (hex string).
     Bytes = 4,
+    /// Enumeration label.
     Enum = 5,
+    /// Set of BITS labels.
     Bits = 6,
+    /// Object identifier value.
     Oid = 7,
 }
 
@@ -137,7 +164,9 @@ impl fmt::Display for DefValKind {
     }
 }
 
-/// A default value with both interpreted value and raw MIB syntax.
+/// A DEFVAL clause value with both the interpreted value and the raw MIB syntax string.
+///
+/// Constructed via the named constructors ([`DefVal::int`], [`DefVal::string`], etc.).
 #[derive(Debug, Clone)]
 pub struct DefVal {
     pub(crate) kind: DefValKind,
@@ -146,19 +175,30 @@ pub struct DefVal {
 }
 
 /// The interpreted value of a DEFVAL clause.
+///
+/// Each variant corresponds to a [`DefValKind`] discriminant.
 #[derive(Debug, Clone)]
 pub enum DefValValue {
+    /// No value (corresponds to `DefValKind::Unset`).
     None,
+    /// Signed integer.
     Int(i64),
+    /// Unsigned integer.
     Uint(u64),
+    /// Quoted string.
     String(String),
+    /// Raw byte sequence.
     Bytes(Vec<u8>),
+    /// Enumeration label.
     Enum(String),
+    /// Set of BITS labels.
     Bits(Vec<String>),
+    /// Object identifier.
     Oid(Oid),
 }
 
 impl DefVal {
+    /// Create a default value indicating no value was specified.
     pub fn unset() -> Self {
         DefVal {
             kind: DefValKind::Unset,
@@ -167,6 +207,7 @@ impl DefVal {
         }
     }
 
+    /// Create a signed integer default value.
     pub fn int(v: i64, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Int,
@@ -175,6 +216,7 @@ impl DefVal {
         }
     }
 
+    /// Create an unsigned integer default value.
     pub fn uint(v: u64, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Uint,
@@ -183,6 +225,7 @@ impl DefVal {
         }
     }
 
+    /// Create a quoted string default value.
     pub fn string(v: String, raw: String) -> Self {
         DefVal {
             kind: DefValKind::String,
@@ -191,6 +234,7 @@ impl DefVal {
         }
     }
 
+    /// Create a raw byte sequence default value (from a hex string).
     pub fn bytes(v: Vec<u8>, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Bytes,
@@ -199,6 +243,7 @@ impl DefVal {
         }
     }
 
+    /// Create an enumeration label default value.
     pub fn enumeration(label: String, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Enum,
@@ -207,6 +252,7 @@ impl DefVal {
         }
     }
 
+    /// Create a BITS set default value.
     pub fn bits(labels: Vec<String>, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Bits,
@@ -215,6 +261,7 @@ impl DefVal {
         }
     }
 
+    /// Create an OID default value.
     pub fn oid(oid: Oid, raw: String) -> Self {
         DefVal {
             kind: DefValKind::Oid,
@@ -223,18 +270,22 @@ impl DefVal {
         }
     }
 
+    /// Return the [`DefValKind`] discriminant.
     pub fn kind(&self) -> DefValKind {
         self.kind
     }
 
+    /// Return the raw MIB syntax string as written in the source.
     pub fn raw(&self) -> &str {
         &self.raw
     }
 
+    /// Return the interpreted [`DefValValue`].
     pub fn value(&self) -> &DefValValue {
         &self.value
     }
 
+    /// Return `true` if no default value was specified.
     pub fn is_unset(&self) -> bool {
         self.kind == DefValKind::Unset
     }
@@ -282,79 +333,117 @@ impl fmt::Display for DefVal {
 /// A MODULE clause within a MODULE-COMPLIANCE definition.
 #[derive(Debug, Clone)]
 pub struct ComplianceModule {
+    /// Name of the module this clause applies to.
     pub module_name: String,
+    /// Groups required for conformance.
     pub mandatory_groups: Vec<String>,
+    /// Optional GROUP refinements.
     pub groups: Vec<ComplianceGroup>,
+    /// Optional OBJECT refinements.
     pub objects: Vec<ComplianceObject>,
+    /// Source location of this MODULE clause.
     pub span: Span,
 }
 
 /// A GROUP clause within MODULE-COMPLIANCE.
 #[derive(Debug, Clone)]
 pub struct ComplianceGroup {
+    /// Name of the conditionally required group.
     pub group: String,
+    /// Description of when this group is required.
     pub description: String,
+    /// Source location of this GROUP clause.
     pub span: Span,
 }
 
 /// An OBJECT refinement within MODULE-COMPLIANCE.
 #[derive(Debug, Clone)]
 pub struct ComplianceObject {
+    /// Name of the refined object.
     pub object: String,
+    /// Restricted SYNTAX, if any.
     pub syntax: Option<SyntaxConstraints>,
+    /// Restricted WRITE-SYNTAX, if any.
     pub write_syntax: Option<SyntaxConstraints>,
+    /// Minimum required access level, if specified.
     pub min_access: Option<Access>,
+    /// Description of the refinement.
     pub description: String,
+    /// Source location of this OBJECT clause.
     pub span: Span,
 }
 
 /// A SUPPORTS clause within an AGENT-CAPABILITIES definition.
 #[derive(Debug, Clone)]
 pub struct CapabilitiesModule {
+    /// Name of the supported module.
     pub module_name: String,
+    /// Groups included from this module.
     pub includes: Vec<String>,
+    /// Object VARIATION clauses.
     pub object_variations: Vec<ObjectVariation>,
+    /// Notification VARIATION clauses.
     pub notification_variations: Vec<NotificationVariation>,
+    /// Source location of this SUPPORTS clause.
     pub span: Span,
 }
 
 /// An object VARIATION within AGENT-CAPABILITIES.
 #[derive(Debug, Clone)]
 pub struct ObjectVariation {
+    /// Name of the varied object.
     pub object: String,
+    /// Restricted SYNTAX, if any.
     pub syntax: Option<SyntaxConstraints>,
+    /// Restricted WRITE-SYNTAX, if any.
     pub write_syntax: Option<SyntaxConstraints>,
+    /// Overridden access level, if any.
     pub access: Option<Access>,
+    /// Objects required for row creation.
     pub creation_requires: Vec<String>,
+    /// Implementation-specific default value, if any.
     pub def_val: Option<DefVal>,
+    /// Description of this variation.
     pub description: String,
+    /// Source location of this VARIATION clause.
     pub span: Span,
 }
 
 /// A notification VARIATION within AGENT-CAPABILITIES.
 #[derive(Debug, Clone)]
 pub struct NotificationVariation {
+    /// Name of the varied notification.
     pub notification: String,
+    /// Overridden access level, if any.
     pub access: Option<Access>,
+    /// Description of this variation.
     pub description: String,
+    /// Source location of this VARIATION clause.
     pub span: Span,
 }
 
-/// A resolved type reference with any inline constraints from a VARIATION
-/// SYNTAX/WRITE-SYNTAX clause or MODULE-COMPLIANCE OBJECT refinement.
+/// Inline syntax constraints from a VARIATION SYNTAX/WRITE-SYNTAX clause
+/// or a MODULE-COMPLIANCE OBJECT refinement.
 #[derive(Debug, Clone)]
 pub struct SyntaxConstraints {
+    /// Resolved type, if any.
     pub type_id: Option<TypeId>,
+    /// SIZE constraints.
     pub sizes: Vec<Range>,
+    /// Value range constraints.
     pub ranges: Vec<Range>,
+    /// Restricted enumeration values.
     pub enums: Vec<NamedValue>,
+    /// Restricted BITS values.
     pub bits: Vec<NamedValue>,
 }
 
 /// SMIv1 TRAP-TYPE fields.
 #[derive(Debug, Clone)]
 pub struct TrapInfo {
+    /// ENTERPRISE OID name.
     pub enterprise: String,
+    /// Numeric trap identifier.
     pub trap_number: u32,
 }
 
@@ -362,10 +451,15 @@ pub struct TrapInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum UnresolvedKind {
+    /// An unresolved IMPORTS symbol.
     Import = 0,
+    /// An unresolved type reference.
     Type = 1,
+    /// An unresolved OID component.
     Oid = 2,
+    /// An unresolved INDEX object.
     Index = 3,
+    /// An unresolved OBJECTS member of a notification.
     NotificationObject = 4,
 }
 
@@ -381,19 +475,27 @@ impl fmt::Display for UnresolvedKind {
     }
 }
 
-/// An unresolved symbol reference.
+/// An unresolved symbol reference collected during resolution.
+///
+/// Available via [`Mib::unresolved`](super::mib::Mib::unresolved).
 #[derive(Debug, Clone)]
 pub struct UnresolvedRef {
+    /// What kind of reference failed to resolve.
     pub kind: UnresolvedKind,
+    /// The symbol name that could not be resolved.
     pub symbol: String,
+    /// The module where the reference was used.
     pub module: String,
+    /// Human-readable explanation of why resolution failed.
     pub reason: String,
 }
 
 /// A named symbolic reference from an OID assignment with its source span.
 #[derive(Debug, Clone)]
 pub struct OidRef {
+    /// The symbolic name referenced in the OID assignment.
     pub name: String,
+    /// Source location of this reference.
     pub span: Span,
 }
 
@@ -409,6 +511,7 @@ macro_rules! define_id {
                 Self(index)
             }
 
+            /// Return the raw arena index as a `u32`.
             pub fn index(self) -> u32 {
                 self.0
             }

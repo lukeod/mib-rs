@@ -1,8 +1,14 @@
+//! ExtUTCTime date validation for MODULE-IDENTITY dates and revisions.
+
 use crate::types::{DiagCode, Span};
 
 use super::LoweringContext;
 
-/// Validates date formats and revision ordering for a MODULE-IDENTITY definition.
+/// Validates date formats and revision ordering for a MODULE-IDENTITY.
+///
+/// Checks each date for valid ExtUTCTime format, ensures revisions are
+/// in reverse chronological order, and warns if any revision is after
+/// LAST-UPDATED.
 pub(super) fn check_module_identity_dates(
     ctx: &mut LoweringContext,
     last_updated: &str,

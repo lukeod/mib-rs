@@ -2,22 +2,25 @@ use super::Severity;
 
 macro_rules! diag_codes {
     ( $( $phase:ident, $variant:ident, $code:literal, $severity:ident; )* ) => {
-        /// Diagnostic code identifying a specific diagnostic condition.
-        /// Each code has a fixed severity and belongs to a pipeline phase.
+        /// Identifies a specific diagnostic condition.
+        ///
+        /// Each code has a fixed [`Severity`] and belongs to a pipeline phase
+        /// (lexer, parser, lower, or resolver). Use [`DiagCode::as_code`] for the
+        /// stable kebab-case string representation.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum DiagCode {
             $( $variant, )*
         }
 
         impl DiagCode {
-            /// Returns the stable kebab-case string code for fixture comparison and output.
+            /// Returns the stable kebab-case string representation (e.g. `"parse-error"`).
             pub fn as_code(self) -> &'static str {
                 match self {
                     $( DiagCode::$variant => $code, )*
                 }
             }
 
-            /// Parse a kebab-case code string into a DiagCode.
+            /// Parses a kebab-case code string into a [`DiagCode`], returning `None` if unrecognized.
             pub fn from_code(s: &str) -> Option<DiagCode> {
                 match s {
                     $( $code => Some(DiagCode::$variant), )*
@@ -25,14 +28,14 @@ macro_rules! diag_codes {
                 }
             }
 
-            /// Returns the fixed severity for this diagnostic code.
+            /// Returns the fixed [`Severity`] for this diagnostic code.
             pub fn severity(self) -> Severity {
                 match self {
                     $( DiagCode::$variant => Severity::$severity, )*
                 }
             }
 
-            /// Returns the pipeline phase that emits this diagnostic.
+            /// Returns the pipeline phase that emits this diagnostic (e.g. `"lexer"`, `"resolver"`).
             pub fn phase(self) -> &'static str {
                 match self {
                     $( DiagCode::$variant => stringify!($phase), )*
@@ -240,12 +243,13 @@ diag_codes! {
 }
 
 impl std::fmt::Display for DiagCode {
+    /// Formats as the kebab-case code string (same as [`DiagCode::as_code`]).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_code())
     }
 }
 
-/// Returns all known diagnostic codes.
+/// Returns all known diagnostic codes in declaration order.
 pub fn all_diagnostic_codes() -> &'static [DiagCode] {
     ALL_CODES
 }

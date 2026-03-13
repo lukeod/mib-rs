@@ -2,7 +2,11 @@ use crate::types::{Access, Kind, Span};
 
 use super::types::*;
 
-/// Common fields for all OID-bearing entity definitions.
+/// Common fields shared by all OID-bearing entity definitions.
+///
+/// Used as an embedded struct in [`ObjectData`], [`NotificationData`](super::notification::NotificationData),
+/// [`GroupData`](super::group::GroupData), [`ComplianceData`](super::compliance::ComplianceData),
+/// and [`CapabilityData`](super::capability::CapabilityData).
 #[derive(Debug, Clone)]
 pub struct EntityData {
     pub(crate) name: String,
@@ -37,6 +41,10 @@ impl EntityData {
 }
 
 /// An OBJECT-TYPE definition from an SMIv1 or SMIv2 module.
+///
+/// Contains both the raw definition fields and effective (inherited) values
+/// computed during resolution. Access through [`ObjectData`] methods or the
+/// [`Object`](super::handle::Object) handle type.
 #[derive(Debug, Clone)]
 pub struct ObjectData {
     pub(crate) entity: EntityData,
@@ -86,64 +94,79 @@ impl ObjectData {
     }
 }
 
-/// Accessor methods for ObjectData, used through the Mib.
+/// Public accessor methods for [`ObjectData`].
 impl ObjectData {
+    /// Return the object name.
     pub fn name(&self) -> &str {
         &self.entity.name
     }
 
+    /// Return the source span.
     pub fn span(&self) -> Span {
         self.entity.span
     }
 
+    /// Return the OID tree node id, if resolved.
     pub fn node(&self) -> Option<NodeId> {
         self.entity.node
     }
 
+    /// Return the defining module id.
     pub fn module(&self) -> Option<ModuleId> {
         self.entity.module
     }
 
+    /// Return the status (current, deprecated, obsolete).
     pub fn status(&self) -> crate::types::Status {
         self.entity.status
     }
 
+    /// Return the DESCRIPTION clause text.
     pub fn description(&self) -> &str {
         &self.entity.description
     }
 
+    /// Return the REFERENCE clause text.
     pub fn reference(&self) -> &str {
         &self.entity.reference
     }
 
+    /// Return symbolic OID references from the definition.
     pub fn oid_refs(&self) -> &[OidRef] {
         &self.entity.oid_refs
     }
 
+    /// Return the resolved type id, if any.
     pub fn type_id(&self) -> Option<TypeId> {
         self.typ
     }
 
+    /// Return the access level.
     pub fn access(&self) -> Access {
         self.access
     }
 
+    /// Return the UNITS clause text.
     pub fn units(&self) -> &str {
         &self.units
     }
 
+    /// Return the DEFVAL clause, if present.
     pub fn default_value(&self) -> Option<&DefVal> {
         self.def_val.as_ref()
     }
 
+    /// Return the AUGMENTS target row id, if this row augments another.
     pub fn augments(&self) -> Option<ObjectId> {
         self.augments
     }
 
+    /// Return rows that augment this row.
     pub fn augmented_by(&self) -> &[ObjectId] {
         &self.augmented_by
     }
 
+    /// Return the node kind by looking up the OID tree.
     pub fn kind(&self, tree: &super::node::OidTree) -> Kind {
         match self.entity.node {
             Some(id) => tree.get(id).kind,
@@ -151,58 +174,72 @@ impl ObjectData {
         }
     }
 
+    /// Return the effective display hint.
     pub fn effective_display_hint(&self) -> &str {
         &self.hint
     }
 
+    /// Return the effective SIZE constraints.
     pub fn effective_sizes(&self) -> &[Range] {
         &self.sizes
     }
 
+    /// Return the effective range constraints.
     pub fn effective_ranges(&self) -> &[Range] {
         &self.ranges
     }
 
+    /// Return the effective enumeration values.
     pub fn effective_enums(&self) -> &[NamedValue] {
         &self.enums
     }
 
+    /// Return the effective BITS definitions.
     pub fn effective_bits(&self) -> &[NamedValue] {
         &self.bits
     }
 
+    /// Return the SEQUENCE type name from the table definition.
     pub fn sequence_type_name(&self) -> &str {
         &self.sequence_type_name
     }
 
+    /// Return the INDEX clause entries.
     pub fn index(&self) -> &[IndexEntry] {
         &self.index
     }
 
+    /// Return the source span of the SYNTAX clause.
     pub fn syntax_span(&self) -> Span {
         self.syntax_span
     }
 
+    /// Return the source span of the ACCESS/MAX-ACCESS clause.
     pub fn access_span(&self) -> Span {
         self.access_span
     }
 
+    /// Return the source span of the UNITS clause.
     pub fn units_span(&self) -> Span {
         self.units_span
     }
 
+    /// Return the source span of the AUGMENTS clause.
     pub fn augments_span(&self) -> Span {
         self.augments_span
     }
 
+    /// Return the source span of the DEFVAL clause.
     pub fn default_value_span(&self) -> Span {
         self.def_val_span
     }
 
+    /// Look up an enumeration value by label name.
     pub fn enum_by_label(&self, label: &str) -> Option<&NamedValue> {
         find_named_value(&self.enums, label)
     }
 
+    /// Look up a BITS value by label name.
     pub fn bit_by_label(&self, label: &str) -> Option<&NamedValue> {
         find_named_value(&self.bits, label)
     }

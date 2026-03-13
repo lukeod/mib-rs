@@ -1,9 +1,13 @@
+//! IR type syntax and constraint types.
+
 use crate::types::Span;
 
 use super::oid::OidComponent;
 
-/// An unresolved type representation. Type references remain as strings
-/// until the resolver phase.
+/// An unresolved type expression.
+///
+/// Type references remain as strings until the resolver phase builds
+/// the type graph and resolves parent chains.
 #[derive(Debug, Clone)]
 pub enum TypeSyntax {
     /// Reference to a named type, e.g. Integer32.
@@ -39,6 +43,8 @@ pub enum TypeSyntax {
 }
 
 impl TypeSyntax {
+    /// Returns the source span, or [`Span::ZERO`] for spanless variants
+    /// ([`OctetString`](Self::OctetString), [`ObjectIdentifier`](Self::ObjectIdentifier)).
     pub fn span(&self) -> Span {
         match self {
             TypeSyntax::TypeRef { span, .. }
@@ -79,11 +85,14 @@ pub struct SequenceField {
 /// A subtype constraint (SIZE or value range).
 #[derive(Debug, Clone)]
 pub enum Constraint {
+    /// `SIZE(...)` constraint on string/sequence length.
     Size { ranges: Vec<Range>, span: Span },
+    /// Value range constraint, e.g. `(0..65535)`.
     Range { ranges: Vec<Range>, span: Span },
 }
 
 impl Constraint {
+    /// Returns the source span of this constraint.
     pub fn span(&self) -> Span {
         match self {
             Constraint::Size { span, .. } | Constraint::Range { span, .. } => *span,
@@ -100,27 +109,42 @@ pub struct Range {
     pub span: Span,
 }
 
-/// An endpoint in a range (signed, unsigned, MIN, or MAX).
+/// An endpoint in a range constraint.
 #[derive(Debug, Clone)]
 pub enum RangeValue {
+    /// Signed integer literal.
     Signed(i64),
+    /// Unsigned integer literal.
     Unsigned(u64),
+    /// The `MIN` keyword (smallest possible value for the type).
     Min,
+    /// The `MAX` keyword (largest possible value for the type).
     Max,
 }
 
-/// An unresolved DEFVAL clause value. Symbol references remain
-/// unresolved until the semantic phase.
+/// An unresolved DEFVAL clause value.
+///
+/// Symbol references remain unresolved until the semantic resolver phase.
 #[derive(Debug, Clone)]
 pub enum DefVal {
+    /// Signed integer literal.
     Integer(i64),
+    /// Unsigned integer literal.
     Unsigned(u64),
+    /// Quoted string literal.
     String(String),
+    /// Hex string literal (`'DEADBEEF'H`).
     HexString(String),
+    /// Binary string literal (`'0101'B`).
     BinaryString(String),
+    /// Named enum value (label only, not yet resolved to numeric).
     Enum(String),
+    /// BITS value with named bit labels.
     Bits { labels: Vec<String> },
+    /// Single-name OID reference.
     OidRef(String),
+    /// Multi-component OID value.
     OidValue { components: Vec<OidComponent> },
+    /// Value that could not be parsed.
     Unparsed,
 }

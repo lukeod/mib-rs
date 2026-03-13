@@ -1,3 +1,9 @@
+//! MIB source implementations for the loading pipeline.
+//!
+//! A [`Source`] provides access to MIB file content by module name. The library
+//! ships with directory-tree, in-memory, and chained multi-source
+//! implementations.
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -5,27 +11,42 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 
 /// Default file extensions recognized as MIB files.
-/// Empty string matches files with no extension (e.g., "IF-MIB").
+///
+/// The empty string matches files with no extension (e.g., `IF-MIB`).
 pub const DEFAULT_EXTENSIONS: &[&str] = &["", ".mib", ".smi", ".txt", ".my"];
 
 /// The content and location of a found MIB file.
+///
+/// Returned by [`Source::find`] when a module is located.
 pub struct FindResult {
+    /// Raw file content (bytes, not necessarily UTF-8).
     pub content: Vec<u8>,
     /// Path used in diagnostic messages to identify the source.
+    ///
+    /// For on-disk sources this is the absolute file path. For in-memory
+    /// sources it is a synthetic label like `<memory:MY-MIB>`.
     pub path: PathBuf,
 }
 
 /// Provides access to MIB files for the loading pipeline.
+///
+/// Implementations must be `Send + Sync` to support parallel loading.
+/// The library ships with [`dir`], [`dirs()`], [`memory`], [`memory_modules`],
+/// and [`chain`] constructors.
 pub trait Source: Send + Sync {
-    /// Find returns the MIB content for the named module,
-    /// or Ok(None) if the module is not available.
+    /// Return the content and path for the named module, or `Ok(None)` if
+    /// this source does not contain it.
     fn find(&self, name: &str) -> io::Result<Option<FindResult>>;
 
-    /// List all module names known to this source.
+    /// List all module names available from this source.
     fn list_modules(&self) -> io::Result<Vec<String>>;
 }
 
-/// Configuration for source implementations.
+/// Configuration for directory-based [`Source`] file matching.
+///
+/// Controls which file extensions are recognized as MIB files during
+/// directory indexing. Use [`SourceConfig::default`] for the standard
+/// set ([`DEFAULT_EXTENSIONS`]).
 #[derive(Clone)]
 pub struct SourceConfig {
     extensions: Vec<String>,
@@ -66,14 +87,26 @@ struct DirSource {
     index: HashMap<String, PathBuf>,
 }
 
-/// Create a Source that recursively indexes a directory tree.
-/// Module names are derived from file content (scanning for DEFINITIONS headers),
-/// not from filenames. First match wins for duplicate names.
+/// Create a [`Source`] that recursively indexes a directory tree.
+///
+/// Module names are derived from file content (scanning for `DEFINITIONS`
+/// headers), not from filenames. When duplicate module names appear, the
+/// first file encountered wins.
+///
+/// Uses [`DEFAULT_EXTENSIONS`] for file matching. For custom extensions,
+/// use [`dir_with_config`].
+///
+/// # Examples
+///
+/// ```no_run
+/// let src = mib_rs::source::dir("/usr/share/snmp/mibs").unwrap();
+/// let modules = src.list_modules().unwrap();
+/// ```
 pub fn dir(root: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
     dir_with_config(root, SourceConfig::default())
 }
 
-/// Create a Source with custom configuration.
+/// Create a [`Source`] backed by a directory tree with custom [`SourceConfig`].
 pub fn dir_with_config(
     root: impl AsRef<Path>,
     config: SourceConfig,
@@ -93,7 +126,8 @@ pub fn dir_with_config(
     }))
 }
 
-/// Create a Source that chains multiple directory trees.
+/// Create a [`Source`] that chains multiple directory trees.
+///
 /// Equivalent to calling [`dir`] on each root and combining with [`chain`].
 pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
     let mut sources = Vec::new();
@@ -130,9 +164,10 @@ struct MultiSource {
     sources: Vec<Box<dyn Source>>,
 }
 
-/// Combine multiple sources into one.
-/// Find() tries each source in order, returning the first match.
-/// ListModules() aggregates from all sources, deduplicating.
+/// Combine multiple [`Source`]s into one.
+///
+/// [`Source::find`] tries each source in order, returning the first match.
+/// [`Source::list_modules`] aggregates all sources, deduplicating by name.
 pub fn chain(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
     Box::new(MultiSource { sources })
 }
@@ -166,12 +201,27 @@ struct MemorySource {
     modules: HashMap<String, (PathBuf, Vec<u8>)>,
 }
 
-/// Create a Source backed by a single in-memory MIB module.
+/// Create a [`Source`] backed by a single in-memory MIB module.
+///
+/// Useful for testing or embedding MIB text directly in code.
+///
+/// # Examples
+///
+/// ```
+/// let src = mib_rs::source::memory(
+///     "MY-MIB",
+///     b"MY-MIB DEFINITIONS ::= BEGIN END".as_slice(),
+/// );
+/// assert_eq!(src.list_modules().unwrap(), vec!["MY-MIB"]);
+/// ```
 pub fn memory(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Box<dyn Source> {
     memory_modules([(name.into(), bytes.into())])
 }
 
-/// Create a Source backed by multiple in-memory MIB modules.
+/// Create a [`Source`] backed by multiple in-memory MIB modules.
+///
+/// Each entry is a `(name, bytes)` pair. Module names must match the
+/// `DEFINITIONS` header inside the corresponding content.
 pub fn memory_modules(
     modules: impl IntoIterator<Item = (impl Into<String>, impl Into<Vec<u8>>)>,
 ) -> Box<dyn Source> {
