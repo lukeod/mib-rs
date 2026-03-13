@@ -176,29 +176,18 @@ pub enum DefVal {
     /// Named value reference (enum label or object name).
     Identifier(Ident),
     /// BITS value, e.g. `DEFVAL { { flag1, flag2 } }`.
-    Bits {
-        labels: Vec<Ident>,
-        span: Span,
-    },
+    Bits { labels: Vec<Ident>, span: Span },
     /// Hex string literal, e.g. `DEFVAL { 'FF00'H }`.
-    HexString {
-        content: String,
-        span: Span,
-    },
+    HexString { content: String, span: Span },
     /// Binary string literal, e.g. `DEFVAL { '0101'B }`.
-    BinaryString {
-        content: String,
-        span: Span,
-    },
+    BinaryString { content: String, span: Span },
     /// OID value, e.g. `DEFVAL { { 0 0 } }`.
     ObjectIdentifier {
         components: Vec<OidComponent>,
         span: Span,
     },
     /// Value that could not be parsed; content was skipped.
-    Unparsed {
-        span: Span,
-    },
+    Unparsed { span: Span },
 }
 
 /// A REVISION clause within MODULE-IDENTITY.
