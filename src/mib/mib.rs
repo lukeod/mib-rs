@@ -423,7 +423,7 @@ impl Mib {
     /// returning a [`Node`] handle.
     ///
     /// Symbolic and numeric instance OIDs resolve to the deepest matching node
-    /// rather than requiring an exact tree match. See [`Mib::resolve`] for the
+    /// rather than requiring an exact tree match. See [`Mib::resolve_oid`] for the
     /// accepted query forms.
     pub fn resolve_node(&self, query: &str) -> Option<Node<'_>> {
         self.resolve(query).map(|id| Node::new(self, id))

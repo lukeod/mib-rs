@@ -1,116 +1,221 @@
-//! Low-level raw data access using arena IDs and the RawMib view.
+//! Low-level raw data access for tooling: arena IDs, sub-clause spans,
+//! import metadata, OID references, symbol tables, and OID tree traversal.
 //!
-//! The raw API is useful for tooling that needs stable IDs, direct
-//! arena access, or the OID tree structure.
+//! The raw API (`mib.raw()`) is designed for tools that need capabilities
+//! beyond the handle API: linters, language servers, exporters, and editor
+//! integrations. This example demonstrates what it offers that the handle
+//! API does not.
 
 use mib_rs::Loader;
+use mib_rs::types::Span;
 
 fn main() {
+    // Use a MIB with a deliberately unused import (NoSuchThing) and
+    // a used-but-from-wrong-module pattern to show import analysis.
     let source = mib_rs::source::memory(
-        "DOC-EXAMPLE-MIB",
-        include_bytes!("../tests/data/doc-example-mib.txt").as_slice(),
+        "RAW-EXAMPLE-MIB",
+        br#"RAW-EXAMPLE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString, TruthValue
+        FROM SNMPv2-TC;
+
+rawMib MODULE-IDENTITY
+    LAST-UPDATED "202603120000Z"
+    ORGANIZATION "Example Corp"
+    CONTACT-INFO "support@example.com"
+    DESCRIPTION "Example module for raw API demo."
+    ::= { enterprises 99990 }
+
+RawName ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS current
+    DESCRIPTION "A name string."
+    SYNTAX DisplayString (SIZE (1..64))
+
+rawScalars OBJECT IDENTIFIER ::= { rawMib 1 }
+
+rawDeviceName OBJECT-TYPE
+    SYNTAX RawName
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "The device name."
+    ::= { rawScalars 1 }
+
+rawEnabled OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "Whether the device is enabled."
+    DEFVAL { true }
+    ::= { rawScalars 2 }
+
+rawCount OBJECT-TYPE
+    SYNTAX Integer32 (0..1000)
+    UNITS "items"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Item count."
+    ::= { rawScalars 3 }
+
+END
+"#
+        .as_slice(),
     );
 
     let mib = Loader::new()
         .source(source)
-        .modules(["DOC-EXAMPLE-MIB"])
+        .modules(["RAW-EXAMPLE-MIB"])
         .load()
         .expect("should load");
 
-    // -- Get a raw view --
     let raw = mib.raw();
 
-    // -- Arena sizes via slices --
-    println!("=== Arena sizes ===");
-    println!("  Modules:       {}", raw.modules_slice().len());
-    println!("  Objects:       {}", raw.objects_slice().len());
-    println!("  Types:         {}", raw.types_slice().len());
-    println!("  Notifications: {}", raw.notifications_slice().len());
-    println!("  Groups:        {}", raw.groups_slice().len());
-    println!("  Compliances:   {}", raw.compliances_slice().len());
-    println!("  Node count:    {}", mib.node_count());
+    // ---------------------------------------------------------------
+    // 1. Sub-clause spans
+    //
+    // ObjectData exposes per-clause source locations: syntax_span(),
+    // access_span(), units_span(), augments_span(), default_value_span().
+    // These let a linter or language server point diagnostics at the
+    // specific clause that's wrong, not the whole definition.
+    // ---------------------------------------------------------------
+    println!("=== Sub-clause spans ===");
 
-    // -- Access object data through arena slices --
-    // ObjectData, TypeData, etc. expose the same accessor methods
-    // that the high-level handles delegate to.
-    println!("\n=== Objects (via slice) ===");
-    for obj_data in raw.objects_slice() {
-        println!(
-            "  {:<24} node={:<10?} type={:<10?}",
-            obj_data.name(),
-            obj_data.node(),
-            obj_data.type_id(),
-        );
+    let mod_data = raw.module(mib.module_by_name("RAW-EXAMPLE-MIB").unwrap());
+
+    // Helper: absent clauses produce Span::ZERO or Span::SYNTHETIC.
+    let has_span = |s: Span| s != Span::ZERO && !s.is_synthetic();
+
+    for &obj_id in mod_data.objects() {
+        let obj = raw.object(obj_id);
+        println!("  {}:", obj.name());
+
+        // Definition span covers the whole OBJECT-TYPE.
+        let def = obj.span();
+        let (def_line, _) = mod_data.line_col(def.start);
+        println!("    definition:    line {def_line}");
+
+        // SYNTAX clause span.
+        let syn = obj.syntax_span();
+        if has_span(syn) {
+            let (line, col) = mod_data.line_col(syn.start);
+            println!("    SYNTAX:        line {line}, col {col}");
+        }
+
+        // MAX-ACCESS clause span.
+        let acc = obj.access_span();
+        if has_span(acc) {
+            let (line, col) = mod_data.line_col(acc.start);
+            println!("    MAX-ACCESS:    line {line}, col {col}");
+        }
+
+        // UNITS clause span (only present on some objects).
+        let units = obj.units_span();
+        if has_span(units) {
+            let (line, col) = mod_data.line_col(units.start);
+            println!("    UNITS:         line {line}, col {col}");
+        }
+
+        // DEFVAL clause span (only present on some objects).
+        let defval = obj.default_value_span();
+        if has_span(defval) {
+            let (line, col) = mod_data.line_col(defval.start);
+            println!("    DEFVAL:        line {line}, col {col}");
+        }
     }
 
-    // -- Type data --
-    println!("\n=== Types (via slice) ===");
-    for type_data in raw.types_slice() {
-        println!(
-            "  {:<24} base={:?}  parent={:?}",
-            type_data.name(),
-            type_data.base(),
-            type_data.parent(),
-        );
+    // TypeData also has syntax_span() for the SYNTAX clause in TCs.
+    for &type_id in mod_data.types() {
+        let ty = raw.type_(type_id);
+        let syn = ty.syntax_span();
+        if has_span(syn) {
+            let (line, col) = mod_data.line_col(syn.start);
+            println!("  {} (type):", ty.name());
+            println!("    SYNTAX:        line {line}, col {col}");
+        }
     }
 
-    // -- Access data by arena ID (obtained from lookups) --
-    // IDs come from name lookups, symbol enumeration, or cross-references
-    // in data records. You can then use raw.object(id), raw.node(id), etc.
-    println!("\n=== Raw lookup by ID ===");
-    let obj_id = mib.object_by_name("docDeviceName").unwrap();
-    let obj_data = raw.object(obj_id);
-    println!("  Object: {}", obj_data.name());
-    println!("  Status: {:?}", obj_data.status());
-    println!("  Access: {:?}", obj_data.access());
+    // ---------------------------------------------------------------
+    // 2. Import resolution metadata
+    //
+    // ModuleData tracks which imports were actually used during
+    // resolution, and where each imported symbol was resolved from.
+    // This is the data a linter needs for "unused import" warnings.
+    // ---------------------------------------------------------------
+    println!("\n=== Import analysis ===");
 
-    // Follow the type reference.
-    if let Some(type_id) = obj_data.type_id() {
-        let type_data = raw.type_(type_id);
-        println!(
-            "  Type:   {} (base={:?})",
-            type_data.name(),
-            type_data.base()
-        );
+    for imp in mod_data.imports() {
+        println!("  FROM {}:", imp.module);
+        for sym in &imp.symbols {
+            let used = mod_data.is_import_used(&sym.name);
+            let resolved_from = mod_data.import_source(&sym.name);
+
+            let status = if !used {
+                "UNUSED".to_string()
+            } else if let Some(source_id) = resolved_from {
+                let source_mod = raw.module(source_id);
+                if source_mod.name() != imp.module {
+                    // Resolved from a different module than declared.
+                    format!("resolved from {}", source_mod.name())
+                } else {
+                    "ok".to_string()
+                }
+            } else {
+                "unresolved".to_string()
+            };
+
+            // ImportSymbol carries a span for "go to definition" on imports.
+            let (line, col) = mod_data.line_col(sym.span.start);
+            println!("    {:<24} line {}:{:<4} {}", sym.name, line, col, status);
+        }
     }
 
-    // Follow the node reference.
-    if let Some(node_id) = obj_data.node() {
-        let node_data = raw.node(node_id);
-        println!("  Node:   {} (arc={})", node_data.name(), node_data.arc());
+    // ---------------------------------------------------------------
+    // 3. OID references (oid_refs)
+    //
+    // Entity definitions record the symbolic names referenced in their
+    // OID value assignments. For example, { enterprises 99990 } produces
+    // an OidRef for "enterprises" with its span. A language server uses
+    // these for "go to definition" on OID components and for reference
+    // highlighting.
+    // ---------------------------------------------------------------
+    println!("\n=== OID references ===");
+
+    for &obj_id in mod_data.objects() {
+        let obj = raw.object(obj_id);
+        let refs = obj.oid_refs();
+        if !refs.is_empty() {
+            println!("  {}:", obj.name());
+            for r in refs {
+                let (line, col) = mod_data.line_col(r.span.start);
+                println!("    ref {:?} at line {}:{}", r.name, line, col);
+            }
+        }
     }
 
-    // -- OID tree direct access --
-    println!("\n=== OID tree ===");
-    let root_id = raw.root();
-    let root_data = raw.node(root_id);
-    println!("  Root children: {}", root_data.children().len());
+    // ---------------------------------------------------------------
+    // 4. Symbol tables and available_symbols
+    //
+    // Mib::available_symbols(mod_id) returns everything visible in a
+    // module's scope: own definitions first, then resolved imports.
+    // This is what a completion engine would use to suggest names.
+    // ---------------------------------------------------------------
+    println!("\n=== Available symbols in RAW-EXAMPLE-MIB ===");
 
-    // Walk to a specific OID
-    let target_oid: mib_rs::Oid = "1.3.6.1.4.1.99999".parse().unwrap();
-    if let Some(node_id) = raw.node_by_oid(&target_oid) {
-        let data = raw.node(node_id);
-        println!("  Exact OID {target_oid}: name={}", data.name());
-    }
+    let mod_id = mib.module_by_name("RAW-EXAMPLE-MIB").unwrap();
+    let symbols = mib.available_symbols(mod_id);
 
-    // Longest prefix match
-    let instance_oid: mib_rs::Oid = "1.3.6.1.4.1.99999.2.1.1.2.42".parse().unwrap();
-    let prefix_id = raw.longest_prefix_by_oid(&instance_oid);
-    let prefix_data = raw.node(prefix_id);
+    // Show own definitions vs imported symbols.
+    let own_count = mod_data.definitions().count();
     println!(
-        "  Longest prefix for {instance_oid}: name={}",
-        prefix_data.name()
+        "  {} own definitions, {} total (including imports)",
+        own_count,
+        symbols.len()
     );
 
-    // -- Symbol enumeration --
-    println!("\n=== Symbols in DOC-EXAMPLE-MIB ===");
-    let symbols = mib.all_symbols();
-    for sym in &symbols {
-        let name = sym.name(&mib);
-        let mod_id = sym.module(&mib);
-        let mod_name = mod_id
-            .map(|id| raw.module(id).name().to_string())
-            .unwrap_or_default();
+    println!("\n  Own definitions:");
+    for sym in symbols.iter().take(own_count) {
         let kind = match sym {
             mib_rs::raw::Symbol::Object(_) => "object",
             mib_rs::raw::Symbol::Type(_) => "type",
@@ -120,31 +225,202 @@ fn main() {
             mib_rs::raw::Symbol::Compliance(_) => "compliance",
             mib_rs::raw::Symbol::Capability(_) => "capability",
         };
-        if mod_name == "DOC-EXAMPLE-MIB" {
-            println!("  {:<24} {:<14} {}", name, kind, mod_name);
+        println!("    {:<24} {}", sym.name(&mib), kind);
+    }
+
+    println!("\n  Imported symbols (first 10):");
+    for sym in symbols.iter().skip(own_count).take(10) {
+        let source_mod = sym
+            .module(&mib)
+            .map(|id| raw.module(id).name().to_string())
+            .unwrap_or_default();
+        println!("    {:<24} from {}", sym.name(&mib), source_mod);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. ID-only workflows
+    //
+    // Both tiers share the same arena IDs (ObjectId, NodeId, etc.).
+    // Handles expose theirs via .id(), so you can always get an ID.
+    // The raw tier lets you work entirely in IDs: follow cross-refs
+    // like obj_data.type_id(), look up data with raw.object(id),
+    // and iterate arenas - all without constructing handles. IDs are
+    // Copy + Eq + Hash + Ord, so they work as map keys or can be
+    // sent across channels.
+    // ---------------------------------------------------------------
+    println!("\n=== ID-only workflows ===");
+
+    // Get an ID from a handle, or directly from Mib.
+    let handle = mib.object("rawDeviceName").unwrap();
+    let obj_id = handle.id(); // same as mib.object_by_name("rawDeviceName")
+    println!("  ObjectId index: {}", obj_id.index());
+
+    // Follow cross-references without handles.
+    let obj_data = raw.object(obj_id);
+    if let Some(type_id) = obj_data.type_id() {
+        let type_data = raw.type_(type_id);
+        println!(
+            "  {} -> type {} (no handles needed)",
+            obj_data.name(),
+            type_data.name()
+        );
+    }
+
+    // IDs can be collected into sets for deduplication.
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    seen.insert(obj_id);
+    println!("  IDs are hashable: {}", seen.contains(&obj_id));
+
+    // ---------------------------------------------------------------
+    // 6. Bulk arena access
+    //
+    // raw.*_slice() gives direct &[Data] access to the arena backing
+    // stores. No iterator adapters, no handle wrapping. Useful for
+    // exporters, batch analysis, or building secondary indices.
+    // ---------------------------------------------------------------
+    println!("\n=== Arena slices ===");
+    println!("  Modules:       {}", raw.modules_slice().len());
+    println!("  Objects:       {}", raw.objects_slice().len());
+    println!("  Types:         {}", raw.types_slice().len());
+    println!("  Notifications: {}", raw.notifications_slice().len());
+
+    // Build a quick index: type name -> list of objects using it.
+    use std::collections::HashMap;
+    let mut type_usage: HashMap<&str, Vec<&str>> = HashMap::new();
+    for obj_data in raw.objects_slice() {
+        if let Some(type_id) = obj_data.type_id() {
+            let type_name = raw.type_(type_id).name();
+            type_usage
+                .entry(type_name)
+                .or_default()
+                .push(obj_data.name());
         }
     }
 
-    // -- ID round-trip: name -> ID -> raw data, vs name -> handle --
-    let obj_id = mib.object_by_name("docDeviceName").unwrap();
-    let obj_raw = raw.object(obj_id);
-    let obj_handle = mib.object("docDeviceName").unwrap();
-    assert_eq!(obj_raw.name(), obj_handle.name());
+    println!("\n  Type usage index:");
+    let mut entries: Vec<_> = type_usage.iter().collect();
+    entries.sort_by_key(|(name, _)| *name);
+    for (type_name, objects) in &entries {
+        if objects.iter().any(|o| o.starts_with("raw")) {
+            println!("    {:<20} used by {}", type_name, objects.join(", "));
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 7. OID tree direct access
+    //
+    // raw.tree() gives access to the OidTree with walk_oid(),
+    // subtree(), all_nodes(), and longest_prefix_from(). The node
+    // BTreeMap<u32, NodeId> children are in arc order, which matters
+    // for ordered tree walks in an OID browser.
+    // ---------------------------------------------------------------
+    println!("\n=== OID tree ===");
+
+    // Walk to a subtree and enumerate children with their arcs.
+    let scalars_id = raw.resolve("rawScalars").unwrap();
+    let scalars = raw.node(scalars_id);
+    println!("  Children of {} (arc order):", scalars.name());
+    for (arc, &child_id) in scalars.children() {
+        let child = raw.node(child_id);
+        let kind = child.kind();
+        println!("    arc {arc}: {:<20} [{kind:?}]", child.name());
+    }
+
+    // Longest prefix match (for instance OID resolution).
+    let instance_oid: mib_rs::Oid = "1.3.6.1.4.1.99990.1.1.42".parse().unwrap();
+    let prefix_id = raw.longest_prefix_by_oid(&instance_oid);
+    let prefix = raw.node(prefix_id);
     println!(
-        "\n  ID round-trip: {} (raw) == {} (handle)",
-        obj_raw.name(),
-        obj_handle.name()
+        "\n  Longest prefix for {}: {}",
+        instance_oid,
+        prefix.name()
     );
 
-    // Arena IDs expose their raw index for serialization or external storage.
-    println!("  ObjectId index: {}", obj_id.index());
+    // Effective module ownership for a node.
+    if let Some(mod_id) = raw.effective_module(prefix_id) {
+        println!("  Effective owner: {}", raw.module(mod_id).name());
+    }
 
-    // -- Node children via raw data --
-    let entry_node_id = raw.resolve("docEntry").unwrap();
-    let entry_data = raw.node(entry_node_id);
-    println!("\n=== Children of {} (via raw) ===", entry_data.name());
-    for (arc, &child_id) in entry_data.children() {
-        let child = raw.node(child_id);
-        println!("  arc={}: {}", arc, child.name());
+    // Depth-first subtree iteration via the tree.
+    let tree = raw.tree();
+    let subtree_count = tree.subtree(scalars_id).count();
+    println!(
+        "\n  Subtree size of {}: {} nodes",
+        scalars.name(),
+        subtree_count
+    );
+
+    // ---------------------------------------------------------------
+    // 8. Cross-reference queries
+    //
+    // Mib-level queries that return IDs rather than handles, useful
+    // for building reference indices.
+    // ---------------------------------------------------------------
+    println!("\n=== Cross-references ===");
+
+    // Which modules define a given symbol?
+    let definers = mib.modules_defining("rawDeviceName");
+    println!("  'rawDeviceName' defined in:");
+    for mod_id in &definers {
+        println!("    {}", raw.module(*mod_id).name());
+    }
+
+    // Which modules import DisplayString?
+    let importers = mib.modules_importing("DisplayString");
+    println!("  'DisplayString' imported by:");
+    for mod_id in &importers {
+        println!("    {}", raw.module(*mod_id).name());
+    }
+
+    // Find all objects of a given base type.
+    let counters = mib.objects_by_base_type(mib_rs::BaseType::Integer32);
+    println!(
+        "\n  Objects with effective base Integer32: {}",
+        counters.len()
+    );
+    for id in counters.iter().take(5) {
+        let obj = raw.object(*id);
+        let mod_name = obj
+            .module()
+            .map(|mid| raw.module(mid).name())
+            .unwrap_or("?");
+        println!("    {}::{}", mod_name, obj.name());
+    }
+
+    // Find all objects using a specific named type.
+    let by_type = mib.objects_by_type_name("RawName");
+    println!("\n  Objects with type 'RawName':");
+    for id in &by_type {
+        println!("    {}", raw.object(*id).name());
+    }
+
+    // ---------------------------------------------------------------
+    // 9. Combining tiers
+    //
+    // The raw and handle APIs are views over the same data. You can
+    // freely cross between them: handle.id() drops to raw, and
+    // mib.*_by_id(id) lifts back to a handle. Use handles for
+    // ergonomic navigation, raw for bulk work and span access.
+    // ---------------------------------------------------------------
+    println!("\n=== Crossing between tiers ===");
+
+    // Start with a handle, drop to raw for span info.
+    let handle = mib.object("rawCount").unwrap();
+    let id = handle.id(); // -> ObjectId
+    let data = raw.object(id); // -> &ObjectData
+
+    let (syn_line, _) = mod_data.line_col(data.syntax_span().start);
+    let (acc_line, _) = mod_data.line_col(data.access_span().start);
+    println!("  {}: SYNTAX at line {}, MAX-ACCESS at line {}", handle.name(), syn_line, acc_line);
+
+    // Start with raw, lift to handle for navigation.
+    if let Some(type_id) = data.type_id() {
+        let type_handle = mib.type_by_id(type_id);
+        println!(
+            "  Type chain: {} -> effective base {:?}",
+            type_handle.name(),
+            type_handle.effective_base()
+        );
     }
 }
