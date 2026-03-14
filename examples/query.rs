@@ -103,7 +103,7 @@ fn main() {
     assert_eq!(oid, round_trip);
 
     // -- resolve: returns NodeId (lower-level) --
-    let node_id = mib.resolve("docTable");
+    let node_id = mib.raw().resolve("docTable");
     println!("\nresolve(\"docTable\"): {:?}", node_id);
 
     // -- symbol_by_name: untyped symbol lookup --

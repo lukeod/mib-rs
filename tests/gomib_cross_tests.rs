@@ -431,7 +431,7 @@ struct ExtractedDiagnostic {
 }
 
 fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
-    let tree = mib.tree();
+    let tree = mib.raw().tree();
     let node = tree.get(node_id);
 
     let mut e = ExtractedNode {
@@ -461,12 +461,12 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         capability_supports: Vec::new(),
     };
 
-    if let Some(mod_id) = mib.effective_module(node_id) {
+    if let Some(mod_id) = mib.raw().effective_module(node_id) {
         let module = mib.raw().module(mod_id);
         e.module = module.name().to_string();
         if module
             .oid()
-            .is_some_and(|mod_oid| mod_oid == mib.tree().oid_of(node_id))
+            .is_some_and(|mod_oid| mod_oid == mib.raw().tree().oid_of(node_id))
         {
             e.node_type = "MODULE-IDENTITY".to_string();
         }
@@ -479,7 +479,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
             Some(tid) => mib
                 .raw()
                 .type_(tid)
-                .effective_base(mib.types_slice())
+                .effective_base(mib.raw().types_slice())
                 .to_string(),
             None => String::new(),
         };
@@ -492,7 +492,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         e.description = obj.description().to_string();
         e.reference = obj.reference().to_string();
 
-        let k = obj.kind(mib.tree());
+        let k = obj.kind(mib.raw().tree());
         e.kind = if k.is_object_type() {
             k.to_string()
         } else {
@@ -563,7 +563,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         };
         for &member_id in group.members() {
             e.group_members
-                .push(mib.tree().get(member_id).name().to_string());
+                .push(mib.raw().tree().get(member_id).name().to_string());
         }
     }
 
@@ -712,7 +712,7 @@ fn syntax_constraint_type_name(mib: &Mib, sc: &mib_rs::mib::SyntaxConstraints) -
     if !type_.name().is_empty() {
         return type_.name().to_string();
     }
-    base_type_syntax(type_.effective_base(mib.types_slice()))
+    base_type_syntax(type_.effective_base(mib.raw().types_slice()))
 }
 
 fn base_type_syntax(base: BaseType) -> String {
@@ -764,29 +764,31 @@ fn extract_type(mib: &Mib, type_id: mib_rs::mib::TypeId) -> ExtractedType {
             .parent()
             .map(|parent_id| normalized_parent_type_name(mib, parent_id))
             .unwrap_or_else(|| fallback_parent_type_name(type_.name()).to_string()),
-        base: type_.effective_base(mib.types_slice()).to_string(),
+        base: type_.effective_base(mib.raw().types_slice()).to_string(),
         status: type_.status().to_string(),
-        display_hint: type_.effective_display_hint(mib.types_slice()).to_string(),
+        display_hint: type_
+            .effective_display_hint(mib.raw().types_slice())
+            .to_string(),
         description: type_.description().to_string(),
         reference: type_.reference().to_string(),
         is_textual_convention: type_.is_textual_convention(),
         sizes: type_
-            .effective_sizes(mib.types_slice())
+            .effective_sizes(mib.raw().types_slice())
             .iter()
             .map(|r| (r.min, r.max))
             .collect(),
         ranges: type_
-            .effective_ranges(mib.types_slice())
+            .effective_ranges(mib.raw().types_slice())
             .iter()
             .map(|r| (r.min, r.max))
             .collect(),
         enums: type_
-            .effective_enums(mib.types_slice())
+            .effective_enums(mib.raw().types_slice())
             .iter()
             .map(|nv| (nv.value, nv.label.clone()))
             .collect(),
         bits: type_
-            .effective_bits(mib.types_slice())
+            .effective_bits(mib.raw().types_slice())
             .iter()
             .map(|nv| (nv.value, nv.label.clone()))
             .collect(),
@@ -1182,7 +1184,7 @@ fn normalized_parent_type_name(mib: &Mib, type_id: mib_rs::mib::TypeId) -> Strin
     if !type_.name().is_empty() {
         return type_.name().to_string();
     }
-    base_type_syntax(type_.effective_base(mib.types_slice()))
+    base_type_syntax(type_.effective_base(mib.raw().types_slice()))
 }
 
 fn fallback_parent_type_name(type_name: &str) -> &'static str {
@@ -1245,13 +1247,13 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
     let gomib_oids: std::collections::HashSet<&str> =
         gomib_nodes.keys().map(|s| s.as_str()).collect();
 
-    for node_id in mib.tree().all_nodes() {
-        if let Some(mod_id) = mib.effective_module(node_id) {
+    for node_id in mib.raw().tree().all_nodes() {
+        if let Some(mod_id) = mib.raw().effective_module(node_id) {
             let mod_name = mib.raw().module(mod_id).name();
             if gomib_node_modules.contains(mod_name) {
-                let oid = mib.tree().oid_of(node_id).to_string();
+                let oid = mib.raw().tree().oid_of(node_id).to_string();
                 if !gomib_oids.contains(oid.as_str()) {
-                    let name = mib.tree().get(node_id).name();
+                    let name = mib.raw().tree().get(node_id).name();
                     failures.push(format!(
                         "[{strictness_name}] {name} ({oid}): in mib-rs module {mod_name} but not in gomib"
                     ));
@@ -1273,7 +1275,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
         }
     }
 
-    for module in mib.modules_slice() {
+    for module in mib.raw().modules_slice() {
         if !gomib_modules.contains_key(module.name()) {
             failures.push(format!(
                 "[{strictness_name}] module {}: present in mib-rs but not in gomib",
@@ -1283,6 +1285,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
     }
 
     let mib_types_by_key: HashMap<String, mib_rs::mib::TypeId> = mib
+        .raw()
         .modules_slice()
         .iter()
         .flat_map(|module| {
@@ -1317,7 +1320,7 @@ fn compare_at_strictness(strictness_name: &str, strictness: ResolverStrictness) 
     let gomib_type_keys: std::collections::HashSet<&str> =
         gomib_types.keys().map(|s| s.as_str()).collect();
 
-    for (index, type_) in mib.types_slice().iter().enumerate() {
+    for (index, type_) in mib.raw().types_slice().iter().enumerate() {
         if type_.name().is_empty() {
             continue;
         }

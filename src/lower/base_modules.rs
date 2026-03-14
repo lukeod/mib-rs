@@ -5,6 +5,18 @@
 //! parsed from files. They provide the core OID tree roots, base types
 //! (Counter32, Gauge32, etc.), and standard textual conventions
 //! (DisplayString, TruthValue, RowStatus, etc.).
+//!
+//! These modules are synthetic because they define the SMI language itself,
+//! specifically the ASN.1 MACRO definitions (OBJECT-TYPE, MODULE-IDENTITY,
+//! TEXTUAL-CONVENTION, etc.) that all other MIB modules use. Parsing
+//! these from their RFC source text would require a general ASN.1 macro
+//! parser, which is unnecessary: RFC 2578 Section 3 explicitly prohibits
+//! user-defined macros ("Additional ASN.1 macros must not be defined in
+//! SMIv2 information modules"), so only the fixed set of SMI macros needs
+//! to be supported.
+//!
+//! All definitions from base modules carry [`Span::SYNTHETIC`] values
+//! since there is no parsed source text to reference.
 
 use std::sync::LazyLock;
 

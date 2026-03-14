@@ -84,7 +84,7 @@ struct ExtractedNode {
 }
 
 fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
-    let tree = mib.tree();
+    let tree = mib.raw().tree();
     let node = tree.get(node_id);
 
     let mut e = ExtractedNode {
@@ -110,7 +110,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
     };
 
     // Module: Go does `if mod := node.Module(); mod != nil { n.Module = mod.Name() }`
-    if let Some(mod_id) = mib.effective_module(node_id) {
+    if let Some(mod_id) = mib.raw().effective_module(node_id) {
         e.module = mib.raw().module(mod_id).name().to_string();
     }
 
@@ -124,7 +124,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
             Some(tid) => mib
                 .raw()
                 .type_(tid)
-                .effective_base(mib.types_slice())
+                .effective_base(mib.raw().types_slice())
                 .to_string(),
             None => String::new(),
         };
@@ -138,7 +138,7 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
 
         // Kind: Go does `normalizeKind(obj.Kind())` which returns k.String()
         // for object-type kinds, else ""
-        let k = obj.kind(mib.tree());
+        let k = obj.kind(mib.raw().tree());
         e.kind = if k.is_object_type() {
             k.to_string()
         } else {
@@ -338,13 +338,13 @@ fn gomib_exhaustive_comparison() {
         let fixture_oids: std::collections::HashSet<&str> =
             fixture.keys().map(|s| s.as_str()).collect();
 
-        for node_id in mib.tree().all_nodes() {
-            if let Some(mod_id) = mib.effective_module(node_id)
+        for node_id in mib.raw().tree().all_nodes() {
+            if let Some(mod_id) = mib.raw().effective_module(node_id)
                 && mib.raw().module(mod_id).name() == module
             {
-                let oid = mib.tree().oid_of(node_id).to_string();
+                let oid = mib.raw().tree().oid_of(node_id).to_string();
                 if !fixture_oids.contains(oid.as_str()) {
-                    let name = mib.tree().get(node_id).name();
+                    let name = mib.raw().tree().get(node_id).name();
                     failures.push(format!(
                         "{name} ({oid}): node exists in mib-rs module {module} but not in fixture"
                     ));

@@ -22,19 +22,19 @@ fn main() {
 
     // -- Arena sizes via slices --
     println!("=== Arena sizes ===");
-    println!("  Modules:       {}", mib.modules_slice().len());
-    println!("  Objects:       {}", mib.objects_slice().len());
-    println!("  Types:         {}", mib.types_slice().len());
-    println!("  Notifications: {}", mib.notifications_slice().len());
-    println!("  Groups:        {}", mib.groups_slice().len());
-    println!("  Compliances:   {}", mib.compliances_slice().len());
+    println!("  Modules:       {}", raw.modules_slice().len());
+    println!("  Objects:       {}", raw.objects_slice().len());
+    println!("  Types:         {}", raw.types_slice().len());
+    println!("  Notifications: {}", raw.notifications_slice().len());
+    println!("  Groups:        {}", raw.groups_slice().len());
+    println!("  Compliances:   {}", raw.compliances_slice().len());
     println!("  Node count:    {}", mib.node_count());
 
     // -- Access object data through arena slices --
     // ObjectData, TypeData, etc. expose the same accessor methods
     // that the high-level handles delegate to.
     println!("\n=== Objects (via slice) ===");
-    for obj_data in mib.objects_slice() {
+    for obj_data in raw.objects_slice() {
         println!(
             "  {:<24} node={:<10?} type={:<10?}",
             obj_data.name(),
@@ -45,7 +45,7 @@ fn main() {
 
     // -- Type data --
     println!("\n=== Types (via slice) ===");
-    for type_data in mib.types_slice() {
+    for type_data in raw.types_slice() {
         println!(
             "  {:<24} base={:?}  parent={:?}",
             type_data.name(),
@@ -140,7 +140,7 @@ fn main() {
     println!("  ObjectId index: {}", obj_id.index());
 
     // -- Node children via raw data --
-    let entry_node_id = mib.resolve("docEntry").unwrap();
+    let entry_node_id = raw.resolve("docEntry").unwrap();
     let entry_data = raw.node(entry_node_id);
     println!("\n=== Children of {} (via raw) ===", entry_data.name());
     for (arc, &child_id) in entry_data.children() {

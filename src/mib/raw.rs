@@ -129,4 +129,62 @@ impl<'a> RawMib<'a> {
     pub fn longest_prefix_by_oid(self, oid: &Oid) -> NodeId {
         self.mib.tree().longest_prefix(oid)
     }
+
+    /// Direct slice access to the module arena.
+    pub fn modules_slice(self) -> &'a [ModuleData] {
+        self.mib.modules_slice()
+    }
+
+    /// Direct slice access to the object arena.
+    pub fn objects_slice(self) -> &'a [ObjectData] {
+        self.mib.objects_slice()
+    }
+
+    /// Direct slice access to the type arena.
+    pub fn types_slice(self) -> &'a [TypeData] {
+        self.mib.types_slice()
+    }
+
+    /// Direct slice access to the notification arena.
+    pub fn notifications_slice(self) -> &'a [NotificationData] {
+        self.mib.notifications_slice()
+    }
+
+    /// Direct slice access to the group arena.
+    pub fn groups_slice(self) -> &'a [GroupData] {
+        self.mib.groups_slice()
+    }
+
+    /// Direct slice access to the compliance arena.
+    pub fn compliances_slice(self) -> &'a [ComplianceData] {
+        self.mib.compliances_slice()
+    }
+
+    /// Direct slice access to the capability arena.
+    pub fn capabilities_slice(self) -> &'a [CapabilityData] {
+        self.mib.capabilities_slice()
+    }
+
+    /// Return the effective owning module for a node.
+    ///
+    /// When multiple modules register the same OID, ownership is determined
+    /// by the resolver's tiebreaker rules. Entity-backed ownership takes
+    /// priority over plain node assignments.
+    pub fn effective_module(self, id: NodeId) -> Option<ModuleId> {
+        self.mib.effective_module(id)
+    }
+
+    /// Resolve a query to the matching [`NodeId`].
+    ///
+    /// Accepted forms include:
+    /// - plain names such as `ifIndex`
+    /// - qualified names such as `IF-MIB::ifIndex`
+    /// - symbolic instance OIDs such as `ifIndex.5`
+    /// - numeric OIDs such as `1.3.6.1.2.1.2.2.1.1.5`
+    ///
+    /// OID-like queries resolve to the deepest matching node, so instance OIDs
+    /// like `ifIndex.5` resolve to the `ifIndex` node.
+    pub fn resolve(self, query: &str) -> Option<NodeId> {
+        self.mib.resolve(query)
+    }
 }

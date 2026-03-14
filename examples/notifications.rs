@@ -40,15 +40,11 @@ fn main() {
         notif2.objects().map(|o| o.name()).collect::<Vec<_>>()
     );
 
-    // -- Enumerate all notifications via the raw data slice --
+    // -- Enumerate all notifications in the user module --
     println!("\n  All notifications:");
-    for (i, notif_data) in mib.notifications_slice().iter().enumerate() {
-        // Only show user-module notifications.
-        let raw = mib.raw();
-        if let Some(mid) = notif_data.module()
-            && raw.module(mid).name() == "EXAMPLE-FULL-MIB"
-        {
-            println!("    [{}] {}", i, notif_data.name());
+    for notif in mib.notifications() {
+        if notif.module().map(|m| m.name()) == Some("EXAMPLE-FULL-MIB") {
+            println!("    {}", notif.name());
         }
     }
 

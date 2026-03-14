@@ -32,24 +32,22 @@ fn main() {
         println!("  OID:         {oid}");
     }
 
-    // -- Richer metadata via ModuleData (through raw API) --
-    let mod_id = mib.module_by_name("EXAMPLE-FULL-MIB").unwrap();
-    let data = mib.raw().module(mod_id);
-    println!("\n=== {} (ModuleData) ===", data.name());
-    println!("  Organization: {}", data.organization());
-    println!("  Contact:      {}", data.contact_info());
-    println!("  Description:  {}", data.description());
-    println!("  Last updated: {}", data.last_updated());
+    // -- Module metadata from MODULE-IDENTITY --
+    println!("\n=== {} (metadata) ===", module.name());
+    println!("  Organization: {}", module.organization());
+    println!("  Contact:      {}", module.contact_info());
+    println!("  Description:  {}", module.description());
+    println!("  Last updated: {}", module.last_updated());
 
     // -- Revisions --
     println!("\n  Revisions:");
-    for rev in data.revisions() {
+    for rev in module.revisions() {
         println!("    {} - {}", rev.date, rev.description);
     }
 
     // -- Imports --
     println!("\n  Imports:");
-    for imp in data.imports() {
+    for imp in module.imports() {
         let symbols: Vec<_> = imp.symbols.iter().map(|s| s.name.as_str()).collect();
         println!("    FROM {}: {}", imp.module, symbols.join(", "));
     }
@@ -90,13 +88,27 @@ fn main() {
     }
 
     // -- Base module inspection --
-    // Synthetic base modules are always loaded (SNMPv2-SMI, SNMPv2-TC, etc.)
+    // Seven base modules are always present in every loaded Mib. They define
+    // the SMI language itself (ASN.1 macros like OBJECT-TYPE, MODULE-IDENTITY,
+    // TEXTUAL-CONVENTION) plus the core types and OID tree roots.
+    //
+    // These are constructed programmatically, not parsed from files:
+    //   - You don't need to supply them as source files
+    //   - If they exist on disk, the synthetic versions take priority
+    //   - Spans are synthetic (no real source text to point to)
+    //   - source_path() returns an empty string
+    //
+    // Use is_base() to distinguish them from user-supplied modules.
     let base = mib.module("SNMPv2-SMI").unwrap();
     println!("\n=== Base module: {} ===", base.name());
-    println!("  Is base:  {}", base.is_base());
-    println!("  Language: {:?}", base.language());
+    println!("  Is base:      {}", base.is_base());
+    println!("  Language:     {:?}", base.language());
+    println!(
+        "  Source path:  {:?} (empty for base modules)",
+        base.source_path()
+    );
 
-    // List some well-known nodes from the base module.
+    // Base modules provide the well-known OID tree roots.
     println!("  Some nodes:");
     for name in ["iso", "internet", "mgmt", "mib-2", "enterprises"] {
         if let Some(node) = base.node(name) {
@@ -112,13 +124,14 @@ fn main() {
     println!("Modules importing 'DisplayString': {}", importers.len());
 
     // -- All symbols across the MIB --
-    let raw = mib.raw();
+    // Symbol is a raw-level enum (stores arena IDs), so module() returns
+    // ModuleId. Use module_by_id() to get back to a handle for the name.
     let symbols = mib.all_symbols();
     let module_symbols: Vec<_> = symbols
         .iter()
         .filter(|s| {
             s.module(&mib)
-                .map(|mid| raw.module(mid).name() == "EXAMPLE-FULL-MIB")
+                .map(|mid| mib.module_by_id(mid).name() == "EXAMPLE-FULL-MIB")
                 .unwrap_or(false)
         })
         .collect();

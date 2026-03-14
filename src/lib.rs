@@ -192,7 +192,7 @@
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
-//! iterators like [`Mib::table_objects`] and [`Mib::scalar_objects`].
+//! iterators like [`Mib::tables`] and [`Mib::scalars`].
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -231,11 +231,66 @@
 //! import symbols from other modules, so loading one module typically
 //! pulls in its dependencies automatically.
 //!
-//! Seven **base modules** (`SNMPv2-SMI`, `SNMPv2-TC`, `SNMPv2-CONF`,
-//! `RFC1155-SMI`, `RFC1065-SMI`, `RFC-1212`, `RFC-1215`) are built in
-//! and always available. These define the fundamental types and OID
-//! roots that all other MIBs build on. You can identify them with
-//! [`Module::is_base`].
+//! ## Base modules
+//!
+//! Seven **base modules** are built into the library and always available:
+//!
+//! | Module | SMI version | Defines |
+//! |--------|-------------|---------|
+//! | `SNMPv2-SMI` | SMIv2 | Core types (`Integer32`, `Counter32`, etc.), OID roots (`internet`, `enterprises`, `mib-2`), macros (`MODULE-IDENTITY`, `OBJECT-TYPE`, `NOTIFICATION-TYPE`, `OBJECT-IDENTITY`) |
+//! | `SNMPv2-TC` | SMIv2 | `TEXTUAL-CONVENTION` macro, standard TCs (`DisplayString`, `TruthValue`, `RowStatus`, etc.) |
+//! | `SNMPv2-CONF` | SMIv2 | Conformance macros (`MODULE-COMPLIANCE`, `OBJECT-GROUP`, `NOTIFICATION-GROUP`, `AGENT-CAPABILITIES`) |
+//! | `RFC1155-SMI` | SMIv1 | SMIv1 base types and OID roots |
+//! | `RFC1065-SMI` | SMIv1 | Earlier SMIv1 base (predecessor to RFC1155-SMI) |
+//! | `RFC-1212` | SMIv1 | SMIv1 `OBJECT-TYPE` macro definition |
+//! | `RFC-1215` | SMIv1 | SMIv1 `TRAP-TYPE` macro definition |
+//!
+//! These modules define the SMI language itself, specifically the ASN.1
+//! macros (`OBJECT-TYPE`, `MODULE-IDENTITY`, `TEXTUAL-CONVENTION`, etc.)
+//! that all other MIB modules use. The library constructs them
+//! programmatically rather than parsing them from files, because they
+//! contain ASN.1 MACRO definitions that require a general ASN.1 macro
+//! parser to process. Since RFC 2578 Section 3 explicitly prohibits
+//! user-defined macros in MIB modules ("Additional ASN.1 macros must not
+//! be defined in SMIv2 information modules"), the library only needs to
+//! handle the fixed set of macros defined by the SMI RFCs.
+//!
+//! Implications for users:
+//!
+//! - **No files needed:** You do not need to supply these modules as source
+//!   files. If they exist on disk in a source directory, the synthetic
+//!   versions take priority and the files are not parsed.
+//! - **Always present:** Base modules are included in every loaded [`Mib`],
+//!   even if nothing imports them. Use [`Module::is_base`] to distinguish
+//!   them from user-supplied modules (e.g. when iterating modules).
+//! - **No source spans:** Definitions from base modules carry synthetic
+//!   span values ([`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC))
+//!   rather than real byte offsets, since there is no parsed source text.
+//!   The `source_path` for base modules is empty.
+//! - **Included in iteration:** [`Mib::modules`], [`Mib::objects`],
+//!   [`Mib::types`], and [`Mib::nodes`] all include base module content.
+//!   Filter with [`Module::is_base`] when you only want user-supplied
+//!   definitions. Module-scoped iterators (e.g. `module.objects()`) are
+//!   naturally limited to a single module.
+//!
+//! ## OID ownership
+//!
+//! Several base modules define overlapping OID trees. For example, both
+//! `RFC1155-SMI` (SMIv1) and `SNMPv2-SMI` (SMIv2) define `internet`,
+//! `enterprises`, and other well-known roots. When multiple modules
+//! register the same OID, the resolver determines which module "owns"
+//! the node using these tiebreakers, in order:
+//!
+//! - Base modules take priority over user modules.
+//! - SMIv2 modules are preferred over SMIv1.
+//! - Among modules with the same SMI version, newer `LAST-UPDATED`
+//!   timestamps win.
+//! - Lexicographic module name as a final deterministic fallback.
+//!
+//! In practice this means `SNMPv2-SMI` owns nodes like `enterprises`
+//! even though `RFC1155-SMI` also defines them. [`Node::module`] returns
+//! the winning module. Both modules still function normally for imports,
+//! so SMIv1 MIBs that `IMPORTS ... FROM RFC1155-SMI` continue to work.
 //!
 //! Use [`Module`] handles to scope lookups and iteration to a single
 //! module:

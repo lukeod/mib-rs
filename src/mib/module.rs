@@ -104,6 +104,8 @@ impl ModuleData {
     }
 
     /// Return `true` if this is a synthetic base module.
+    ///
+    /// See [`Module::is_base`](super::Module::is_base) for details.
     pub fn is_base(&self) -> bool {
         self.is_base
     }

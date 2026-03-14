@@ -91,18 +91,21 @@ fn well_known_oids() {
     let mib = &r;
 
     // iso = 1
-    let iso = mib.resolve("iso").expect("iso not found");
-    let iso_oid = mib.tree().oid_of(iso);
+    let iso = mib.raw().resolve("iso").expect("iso not found");
+    let iso_oid = mib.raw().tree().oid_of(iso);
     assert_eq!(iso_oid.to_string(), "1");
 
     // internet = 1.3.6.1
-    let internet = mib.resolve("internet").expect("internet not found");
-    let internet_oid = mib.tree().oid_of(internet);
+    let internet = mib.raw().resolve("internet").expect("internet not found");
+    let internet_oid = mib.raw().tree().oid_of(internet);
     assert_eq!(internet_oid.to_string(), "1.3.6.1");
 
     // enterprises = 1.3.6.1.4.1
-    let enterprises = mib.resolve("enterprises").expect("enterprises not found");
-    let enterprises_oid = mib.tree().oid_of(enterprises);
+    let enterprises = mib
+        .raw()
+        .resolve("enterprises")
+        .expect("enterprises not found");
+    let enterprises_oid = mib.raw().tree().oid_of(enterprises);
     assert_eq!(enterprises_oid.to_string(), "1.3.6.1.4.1");
 }
 
@@ -112,18 +115,18 @@ fn if_mib_oids() {
     let mib = &r;
 
     // ifIndex = 1.3.6.1.2.1.2.2.1.1
-    let if_index = mib.resolve("ifIndex").expect("ifIndex not found");
-    let oid = mib.tree().oid_of(if_index);
+    let if_index = mib.raw().resolve("ifIndex").expect("ifIndex not found");
+    let oid = mib.raw().tree().oid_of(if_index);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1");
 
     // ifDescr = 1.3.6.1.2.1.2.2.1.2
-    let if_descr = mib.resolve("ifDescr").expect("ifDescr not found");
-    let oid = mib.tree().oid_of(if_descr);
+    let if_descr = mib.raw().resolve("ifDescr").expect("ifDescr not found");
+    let oid = mib.raw().tree().oid_of(if_descr);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.2");
 
     // ifTable = 1.3.6.1.2.1.2.2
-    let if_table = mib.resolve("ifTable").expect("ifTable not found");
-    let oid = mib.tree().oid_of(if_table);
+    let if_table = mib.raw().resolve("ifTable").expect("ifTable not found");
+    let oid = mib.raw().tree().oid_of(if_table);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2");
 }
 
@@ -154,9 +157,10 @@ fn resolve_qualified_name() {
     let mib = &r;
 
     let node = mib
+        .raw()
         .resolve("IF-MIB::ifIndex")
         .expect("qualified name not found");
-    let oid = mib.tree().oid_of(node);
+    let oid = mib.raw().tree().oid_of(node);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.2.2.1.1");
 }
 
@@ -193,7 +197,7 @@ fn node_subtree() {
     let entry_id = mib.node_by_name("ifEntry").expect("ifEntry not found");
     let subtree_names: Vec<&str> = mib
         .subtree(entry_id)
-        .map(|id| mib.tree().get(id).name())
+        .map(|id| mib.raw().tree().get(id).name())
         .filter(|n| !n.is_empty())
         .collect();
     assert!(subtree_names[0] == "ifEntry");
@@ -213,7 +217,7 @@ fn node_longest_prefix() {
     let table_id = mib.node_by_name("ifTable").expect("ifTable not found");
     let suffix: Oid = "1.1.5".parse().unwrap();
     let matched = mib.longest_prefix_from(table_id, &suffix);
-    let name = mib.tree().get(matched).name();
+    let name = mib.raw().tree().get(matched).name();
     assert_eq!(name, "ifIndex");
 }
 
@@ -245,7 +249,7 @@ fn object_types_resolved() {
         .expect("ifIndex object not found");
     let obj = mib.raw().object(obj_id);
     assert_eq!(obj.name(), "ifIndex");
-    assert_eq!(obj.kind(mib.tree()), Kind::Column);
+    assert_eq!(obj.kind(mib.raw().tree()), Kind::Column);
     assert_eq!(obj.access(), Access::ReadOnly);
 
     // Should have a resolved type
@@ -262,12 +266,12 @@ fn table_structure() {
     // ifTable should be a table
     let table_id = mib.object_by_name("ifTable").expect("ifTable not found");
     let table = mib.raw().object(table_id);
-    assert_eq!(table.kind(mib.tree()), Kind::Table);
+    assert_eq!(table.kind(mib.raw().tree()), Kind::Table);
 
     // ifEntry should be a row
     let entry_id = mib.object_by_name("ifEntry").expect("ifEntry not found");
     let entry = mib.raw().object(entry_id);
-    assert_eq!(entry.kind(mib.tree()), Kind::Row);
+    assert_eq!(entry.kind(mib.raw().tree()), Kind::Row);
 
     // ifEntry should have indexes
     assert!(
@@ -284,7 +288,7 @@ fn scalar_objects() {
     // ifNumber should be a scalar
     let obj_id = mib.object_by_name("ifNumber").expect("ifNumber not found");
     let obj = mib.raw().object(obj_id);
-    assert_eq!(obj.kind(mib.tree()), Kind::Scalar);
+    assert_eq!(obj.kind(mib.raw().tree()), Kind::Scalar);
 }
 
 // --- Type resolution tests ---
@@ -299,7 +303,7 @@ fn type_parent_chain() {
         .type_by_name("DisplayString")
         .expect("DisplayString not found");
     let ds = mib.raw().type_(ds_id);
-    let effective = ds.effective_base(mib.types_slice());
+    let effective = ds.effective_base(mib.raw().types_slice());
     assert_eq!(effective, BaseType::OctetString);
 }
 
@@ -314,7 +318,7 @@ fn textual_convention_display_hint() {
         .expect("DisplayString not found");
     let ds = mib.raw().type_(ds_id);
     assert!(ds.is_textual_convention());
-    assert_eq!(ds.effective_display_hint(mib.types_slice()), "255a");
+    assert_eq!(ds.effective_display_hint(mib.raw().types_slice()), "255a");
 }
 
 #[test]
@@ -366,7 +370,7 @@ fn groups_resolved() {
     let mib = &r;
 
     assert!(
-        !mib.groups_slice().is_empty(),
+        !mib.raw().groups_slice().is_empty(),
         "IF-MIB should define groups"
     );
 }
@@ -377,7 +381,7 @@ fn compliances_resolved() {
     let mib = &r;
 
     assert!(
-        !mib.compliances_slice().is_empty(),
+        !mib.raw().compliances_slice().is_empty(),
         "IF-MIB should define compliances"
     );
 }
@@ -389,10 +393,10 @@ fn filter_tables() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r;
 
-    let tables = mib.tables();
+    let tables: Vec<_> = mib.tables().collect();
     assert!(!tables.is_empty(), "IF-MIB should have at least one table");
     for t in &tables {
-        assert_eq!(mib.raw().object(*t).kind(mib.tree()), Kind::Table);
+        assert_eq!(t.kind(), Kind::Table);
     }
 }
 
@@ -473,13 +477,13 @@ fn snmpv2_mib_objects() {
     let mib = &r;
 
     // sysDescr = 1.3.6.1.2.1.1.1
-    let node = mib.resolve("sysDescr").expect("sysDescr not found");
-    let oid = mib.tree().oid_of(node);
+    let node = mib.raw().resolve("sysDescr").expect("sysDescr not found");
+    let oid = mib.raw().tree().oid_of(node);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.1.1");
 
     // sysUpTime = 1.3.6.1.2.1.1.3
-    let node = mib.resolve("sysUpTime").expect("sysUpTime not found");
-    let oid = mib.tree().oid_of(node);
+    let node = mib.raw().resolve("sysUpTime").expect("sysUpTime not found");
+    let oid = mib.raw().tree().oid_of(node);
     assert_eq!(oid.to_string(), "1.3.6.1.2.1.1.3");
 }
 
@@ -490,7 +494,7 @@ fn host_resources_mib() {
 
     assert!(mib.module_by_name("HOST-RESOURCES-MIB").is_some());
     // hrSystem is an object group root
-    let node = mib.resolve("hrSystem");
+    let node = mib.raw().resolve("hrSystem");
     assert!(node.is_some(), "hrSystem should exist");
 }
 
@@ -509,25 +513,25 @@ fn full_corpus_no_panics() {
 
     eprintln!(
         "resolved: {} modules, {} objects, {} types, {} notifications, {} nodes",
-        mib.modules_slice().len(),
-        mib.objects_slice().len(),
-        mib.types_slice().len(),
-        mib.notifications_slice().len(),
+        mib.raw().modules_slice().len(),
+        mib.raw().objects_slice().len(),
+        mib.raw().types_slice().len(),
+        mib.raw().notifications_slice().len(),
         mib.node_count(),
     );
 
     // Should have loaded a significant number of modules
     assert!(
-        mib.modules_slice().len() > 100,
+        mib.raw().modules_slice().len() > 100,
         "expected 100+ modules from corpus, got {}",
-        mib.modules_slice().len()
+        mib.raw().modules_slice().len()
     );
 
     // Should have many objects
     assert!(
-        mib.objects_slice().len() > 1000,
+        mib.raw().objects_slice().len() > 1000,
         "expected 1000+ objects from corpus, got {}",
-        mib.objects_slice().len()
+        mib.raw().objects_slice().len()
     );
 
     // Should have many nodes
@@ -557,8 +561,8 @@ fn problems_corpus_no_panics() {
     let r = load(opts).expect("load failed");
     eprintln!(
         "problems corpus: {} modules, {} objects",
-        r.modules_slice().len(),
-        r.objects_slice().len()
+        r.raw().modules_slice().len(),
+        r.raw().objects_slice().len()
     );
 }
 
@@ -917,6 +921,7 @@ fn base_module_ownership() {
             .node_by_name(name)
             .unwrap_or_else(|| panic!("node {name} not found"));
         let mod_id = mib
+            .raw()
             .tree()
             .get(node_id)
             .module()
@@ -942,6 +947,7 @@ fn base_module_beats_vendor_with_newer_timestamp() {
             .node_by_name(name)
             .unwrap_or_else(|| panic!("node {name} not found"));
         let mod_id = mib
+            .raw()
             .tree()
             .get(node_id)
             .module()
@@ -964,6 +970,7 @@ fn snmp_oid_owned_by_snmpv2_mib() {
 
     let node_id = mib.node_by_name("snmp").expect("snmp node not found");
     let mod_id = mib
+        .raw()
         .tree()
         .get(node_id)
         .module()
@@ -1048,6 +1055,7 @@ fn timestamp_normalization_in_module_preference() {
             .node_by_name(name)
             .unwrap_or_else(|| panic!("node {name} not found"));
         let mod_id = mib
+            .raw()
             .tree()
             .get(node_id)
             .module()

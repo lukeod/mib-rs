@@ -49,9 +49,6 @@ END
         .expect("should load");
 
     // -- Module metadata --
-    // The Module handle exposes name, language, source_path, is_base, oid.
-    // For richer metadata (organization, description, revisions), use ModuleData
-    // via the raw API.
     let module = mib.module("MY-MIB").expect("module exists");
     println!("Module:   {}", module.name());
     println!("Language: {:?}", module.language());
@@ -60,13 +57,11 @@ END
         println!("OID:      {oid}");
     }
 
-    // Access richer module metadata through ModuleData.
-    let mod_id = mib.module_by_name("MY-MIB").unwrap();
-    let mod_data = mib.raw().module(mod_id);
-    println!("Organization: {}", mod_data.organization());
-    println!("Description:  {}", mod_data.description());
-    println!("Last updated: {}", mod_data.last_updated());
-    for rev in mod_data.revisions() {
+    // Module-level metadata from MODULE-IDENTITY.
+    println!("Organization: {}", module.organization());
+    println!("Description:  {}", module.description());
+    println!("Last updated: {}", module.last_updated());
+    for rev in module.revisions() {
         println!("  Revision: {} - {}", rev.date, rev.description);
     }
 
@@ -117,8 +112,8 @@ END
     println!("  Modules: {}", mib.modules().count());
     println!("  Objects: {}", mib.objects().count());
     println!("  Types:   {}", mib.types().count());
-    println!("  Scalars: {}", mib.scalar_objects().count());
-    println!("  Tables:  {}", mib.table_objects().count());
+    println!("  Scalars: {}", mib.scalars().count());
+    println!("  Tables:  {}", mib.tables().count());
 
     // -- Diagnostics --
     println!("  Errors:  {}", mib.has_errors());

@@ -46,6 +46,14 @@ macro_rules! define_handle {
             pub(crate) fn data(self) -> &'a $data {
                 self.mib.$getter(self.id)
             }
+
+            /// Return the arena ID for this handle.
+            ///
+            /// Use IDs when you need deduplication, storage in collections,
+            /// or to call [`RawMib`](super::RawMib) methods.
+            pub fn id(self) -> $id {
+                self.id
+            }
         }
 
         impl PartialEq for $name<'_> {
@@ -104,6 +112,11 @@ impl<'a> Node<'a> {
         self.mib.node_data(self.id)
     }
 
+    /// Return the arena ID for this node.
+    pub fn id(self) -> NodeId {
+        self.id
+    }
+
     /// Return the node's numeric OID arc relative to its parent.
     pub fn arc(self) -> u32 {
         self.data().arc()
@@ -150,6 +163,11 @@ impl<'a> Node<'a> {
     }
 
     /// Return the effective owning module for this node.
+    ///
+    /// When multiple modules define the same OID, ownership is resolved by
+    /// preferring base modules over user modules, then SMIv2 over SMIv1,
+    /// then newer `LAST-UPDATED` timestamps. See the crate-level "OID
+    /// ownership" docs for details.
     ///
     /// If multiple entity kinds could conceptually own the node, entity-backed
     /// ownership takes precedence over plain base-module ownership.
@@ -303,7 +321,43 @@ impl<'a> Module<'a> {
         self.data().source_path()
     }
 
+    /// Return the ORGANIZATION clause text from MODULE-IDENTITY.
+    pub fn organization(self) -> &'a str {
+        self.data().organization()
+    }
+
+    /// Return the CONTACT-INFO clause text from MODULE-IDENTITY.
+    pub fn contact_info(self) -> &'a str {
+        self.data().contact_info()
+    }
+
+    /// Return the DESCRIPTION clause text from MODULE-IDENTITY.
+    pub fn description(self) -> &'a str {
+        self.data().description()
+    }
+
+    /// Return the LAST-UPDATED timestamp string from MODULE-IDENTITY.
+    pub fn last_updated(self) -> &'a str {
+        self.data().last_updated()
+    }
+
+    /// Return the REVISION entries from MODULE-IDENTITY.
+    pub fn revisions(self) -> &'a [super::types::Revision] {
+        self.data().revisions()
+    }
+
+    /// Return the IMPORTS declarations.
+    pub fn imports(self) -> &'a [super::types::Import] {
+        self.data().imports()
+    }
+
     /// Return `true` if this is a synthetic base module (SNMPv2-SMI, etc.).
+    ///
+    /// Base modules define the SMI language itself and are constructed
+    /// programmatically rather than parsed from files. They have no real
+    /// source text, so spans are [`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC)
+    /// and `source_path()` returns an empty string. See the crate-level
+    /// docs for the full list of base modules and their contents.
     pub fn is_base(self) -> bool {
         self.data().is_base()
     }
@@ -874,5 +928,49 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         self.ids.next().map(|id| Node::new(self.mib, id))
+    }
+}
+
+impl<'a, I> Iterator for HandleIter<'a, Notification<'a>, I>
+where
+    I: Iterator<Item = NotificationId>,
+{
+    type Item = Notification<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|id| Notification::new(self.mib, id))
+    }
+}
+
+impl<'a, I> Iterator for HandleIter<'a, Group<'a>, I>
+where
+    I: Iterator<Item = GroupId>,
+{
+    type Item = Group<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|id| Group::new(self.mib, id))
+    }
+}
+
+impl<'a, I> Iterator for HandleIter<'a, Compliance<'a>, I>
+where
+    I: Iterator<Item = ComplianceId>,
+{
+    type Item = Compliance<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|id| Compliance::new(self.mib, id))
+    }
+}
+
+impl<'a, I> Iterator for HandleIter<'a, Capability<'a>, I>
+where
+    I: Iterator<Item = CapabilityId>,
+{
+    type Item = Capability<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|id| Capability::new(self.mib, id))
     }
 }

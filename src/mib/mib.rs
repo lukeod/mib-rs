@@ -78,11 +78,7 @@ impl Mib {
 
     // --- Tree access ---
 
-    /// Return the underlying OID tree.
-    ///
-    /// Prefer the handle-oriented API for normal queries. Direct tree access is
-    /// mainly useful for lower-level traversal and tooling.
-    pub fn tree(&self) -> &OidTree {
+    pub(crate) fn tree(&self) -> &OidTree {
         &self.tree
     }
 
@@ -372,12 +368,7 @@ impl Mib {
         self.tree.longest_prefix_from(start, oid)
     }
 
-    /// Return the effective owning module for a node.
-    ///
-    /// Uses entity priority: object > notification > group > compliance >
-    /// capability > base module assignment.
-    #[must_use]
-    pub fn effective_module(&self, id: NodeId) -> Option<ModuleId> {
+    pub(crate) fn effective_module(&self, id: NodeId) -> Option<ModuleId> {
         let node = self.tree.get(id);
         if let Some(obj_id) = node.object {
             return self.objects[obj_id.0 as usize].entity.module;
@@ -438,18 +429,7 @@ impl Mib {
         self.resolve(query).map(|id| Node::new(self, id))
     }
 
-    /// Resolve a query to the matching [`NodeId`].
-    ///
-    /// Accepted forms include:
-    /// - plain names such as `ifIndex`
-    /// - qualified names such as `IF-MIB::ifIndex`
-    /// - symbolic instance OIDs such as `ifIndex.5`
-    /// - numeric OIDs such as `1.3.6.1.2.1.2.2.1.1.5`
-    ///
-    /// OID-like queries resolve to the deepest matching node, so instance OIDs
-    /// like `ifIndex.5` resolve to the `ifIndex` node. For the typed error
-    /// variant, see [`Mib::resolve_oid`].
-    pub fn resolve(&self, query: &str) -> Option<NodeId> {
+    pub(crate) fn resolve(&self, query: &str) -> Option<NodeId> {
         // Numeric OID
         let q = query.strip_prefix('.').unwrap_or(query);
         if q.starts_with(|c: char| c.is_ascii_digit()) {
@@ -557,6 +537,10 @@ impl Mib {
     // --- Collection accessors ---
 
     /// Iterate all resolved modules as [`Module`] handles.
+    ///
+    /// This includes the seven synthetic base modules (SNMPv2-SMI, etc.)
+    /// which are always present. Use [`Module::is_base`] to filter them out
+    /// when you only want user-supplied modules.
     pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
         HandleIter::new(
             self,
@@ -564,7 +548,22 @@ impl Mib {
         )
     }
 
+    /// Iterate user-supplied (non-base) modules as [`Module`] handles.
+    ///
+    /// Excludes the seven synthetic base modules. Equivalent to
+    /// `self.modules().filter(|m| !m.is_base())` but more convenient.
+    pub fn user_modules(&self) -> impl Iterator<Item = Module<'_>> + '_ {
+        self.modules
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| !m.is_base())
+            .map(|(i, _)| Module::new(self, ModuleId::new(i as u32)))
+    }
+
     /// Iterate all resolved objects as [`Object`] handles.
+    ///
+    /// Includes objects from base modules. Use [`Object::module`] and
+    /// [`Module::is_base`] to filter if needed.
     pub fn objects(&self) -> HandleIter<'_, Object<'_>, impl Iterator<Item = ObjectId>> {
         HandleIter::new(
             self,
@@ -573,47 +572,121 @@ impl Mib {
     }
 
     /// Iterate all resolved types as [`Type`] handles.
+    ///
+    /// Includes types from base modules (e.g. `Counter32`, `DisplayString`).
+    /// Use [`Type::module`] and [`Module::is_base`] to filter if needed.
     pub fn types(&self) -> HandleIter<'_, Type<'_>, impl Iterator<Item = TypeId>> {
         HandleIter::new(self, (0..self.types.len()).map(|i| TypeId::new(i as u32)))
     }
 
     /// Iterate all OID tree nodes (excluding root) as [`Node`] handles.
+    ///
+    /// Includes nodes from base modules (e.g. `iso`, `internet`, `enterprises`).
+    /// Use [`Node::module`] and [`Module::is_base`] to filter if needed.
     pub fn nodes(&self) -> HandleIter<'_, Node<'_>, impl Iterator<Item = NodeId>> {
         HandleIter::new(self, self.tree.all_nodes())
     }
 
-    /// Direct slice access to the module arena.
-    pub fn modules_slice(&self) -> &[ModuleData] {
+    /// Iterate all resolved notifications as [`Notification`] handles.
+    pub fn notifications(
+        &self,
+    ) -> HandleIter<'_, Notification<'_>, impl Iterator<Item = NotificationId>> {
+        HandleIter::new(
+            self,
+            (0..self.notifications.len()).map(|i| NotificationId::new(i as u32)),
+        )
+    }
+
+    /// Iterate all resolved groups as [`Group`] handles.
+    pub fn groups(&self) -> HandleIter<'_, Group<'_>, impl Iterator<Item = GroupId>> {
+        HandleIter::new(self, (0..self.groups.len()).map(|i| GroupId::new(i as u32)))
+    }
+
+    /// Iterate all resolved compliance statements as [`Compliance`] handles.
+    pub fn compliances(
+        &self,
+    ) -> HandleIter<'_, Compliance<'_>, impl Iterator<Item = ComplianceId>> {
+        HandleIter::new(
+            self,
+            (0..self.compliances.len()).map(|i| ComplianceId::new(i as u32)),
+        )
+    }
+
+    /// Iterate all resolved capability statements as [`Capability`] handles.
+    pub fn capabilities(
+        &self,
+    ) -> HandleIter<'_, Capability<'_>, impl Iterator<Item = CapabilityId>> {
+        HandleIter::new(
+            self,
+            (0..self.capabilities.len()).map(|i| CapabilityId::new(i as u32)),
+        )
+    }
+
+    /// Return a [`Node`] handle for the given [`NodeId`].
+    pub fn node_by_id(&self, id: NodeId) -> Node<'_> {
+        Node::new(self, id)
+    }
+
+    /// Return an [`Object`] handle for the given [`ObjectId`].
+    pub fn object_by_id(&self, id: ObjectId) -> Object<'_> {
+        Object::new(self, id)
+    }
+
+    /// Return a [`Type`] handle for the given [`TypeId`].
+    pub fn type_by_id(&self, id: TypeId) -> Type<'_> {
+        Type::new(self, id)
+    }
+
+    /// Return a [`Module`] handle for the given [`ModuleId`].
+    pub fn module_by_id(&self, id: ModuleId) -> Module<'_> {
+        Module::new(self, id)
+    }
+
+    /// Return a [`Notification`] handle for the given [`NotificationId`].
+    pub fn notification_by_id(&self, id: NotificationId) -> Notification<'_> {
+        Notification::new(self, id)
+    }
+
+    /// Return a [`Group`] handle for the given [`GroupId`].
+    pub fn group_by_id(&self, id: GroupId) -> Group<'_> {
+        Group::new(self, id)
+    }
+
+    /// Return a [`Compliance`] handle for the given [`ComplianceId`].
+    pub fn compliance_by_id(&self, id: ComplianceId) -> Compliance<'_> {
+        Compliance::new(self, id)
+    }
+
+    /// Return a [`Capability`] handle for the given [`CapabilityId`].
+    pub fn capability_by_id(&self, id: CapabilityId) -> Capability<'_> {
+        Capability::new(self, id)
+    }
+
+    pub(crate) fn modules_slice(&self) -> &[ModuleData] {
         &self.modules
     }
 
-    /// Direct slice access to the object arena.
-    pub fn objects_slice(&self) -> &[ObjectData] {
+    pub(crate) fn objects_slice(&self) -> &[ObjectData] {
         &self.objects
     }
 
-    /// Direct slice access to the type arena.
-    pub fn types_slice(&self) -> &[TypeData] {
+    pub(crate) fn types_slice(&self) -> &[TypeData] {
         &self.types
     }
 
-    /// Direct slice access to the notification arena.
-    pub fn notifications_slice(&self) -> &[NotificationData] {
+    pub(crate) fn notifications_slice(&self) -> &[NotificationData] {
         &self.notifications
     }
 
-    /// Direct slice access to the group arena.
-    pub fn groups_slice(&self) -> &[GroupData] {
+    pub(crate) fn groups_slice(&self) -> &[GroupData] {
         &self.groups
     }
 
-    /// Direct slice access to the compliance arena.
-    pub fn compliances_slice(&self) -> &[ComplianceData] {
+    pub(crate) fn compliances_slice(&self) -> &[ComplianceData] {
         &self.compliances
     }
 
-    /// Direct slice access to the capability arena.
-    pub fn capabilities_slice(&self) -> &[CapabilityData] {
+    pub(crate) fn capabilities_slice(&self) -> &[CapabilityData] {
         &self.capabilities
     }
 
@@ -655,44 +728,24 @@ impl Mib {
             .collect()
     }
 
-    /// Return all table [`ObjectId`]s.
-    pub fn tables(&self) -> Vec<ObjectId> {
-        self.objects_by_kind(Kind::Table)
-    }
-
     /// Iterate all table objects as [`Object`] handles.
-    pub fn table_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
-        self.tables().into_iter().map(|id| Object::new(self, id))
-    }
-
-    /// Return all scalar [`ObjectId`]s.
-    pub fn scalars(&self) -> Vec<ObjectId> {
-        self.objects_by_kind(Kind::Scalar)
+    pub fn tables(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.objects_with_kind(Kind::Table)
     }
 
     /// Iterate all scalar objects as [`Object`] handles.
-    pub fn scalar_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
-        self.scalars().into_iter().map(|id| Object::new(self, id))
-    }
-
-    /// Return all column [`ObjectId`]s.
-    pub fn columns(&self) -> Vec<ObjectId> {
-        self.objects_by_kind(Kind::Column)
+    pub fn scalars(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.objects_with_kind(Kind::Scalar)
     }
 
     /// Iterate all column objects as [`Object`] handles.
-    pub fn column_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
-        self.columns().into_iter().map(|id| Object::new(self, id))
+    pub fn columns(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.objects_with_kind(Kind::Column)
     }
 
-    /// Return all row (entry) [`ObjectId`]s.
-    pub fn rows(&self) -> Vec<ObjectId> {
-        self.objects_by_kind(Kind::Row)
-    }
-
-    /// Iterate all row objects as [`Object`] handles.
-    pub fn row_objects(&self) -> impl Iterator<Item = Object<'_>> + '_ {
-        self.rows().into_iter().map(|id| Object::new(self, id))
+    /// Iterate all row (entry) objects as [`Object`] handles.
+    pub fn rows(&self) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.objects_with_kind(Kind::Row)
     }
 
     /// Return all objects whose resolved type has the given name.
@@ -898,6 +951,17 @@ impl Mib {
         self.effective_indexes(row_id)
             .iter()
             .any(|idx| idx.object == Some(id))
+    }
+
+    fn objects_with_kind(&self, kind: Kind) -> impl Iterator<Item = Object<'_>> + '_ {
+        self.objects.iter().enumerate().filter_map(move |(i, obj)| {
+            let node_id = obj.entity.node?;
+            if self.tree.get(node_id).kind == kind {
+                Some(Object::new(self, ObjectId::new(i as u32)))
+            } else {
+                None
+            }
+        })
     }
 
     fn object_kind(&self, id: ObjectId) -> Kind {

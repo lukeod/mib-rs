@@ -67,7 +67,7 @@ fn normalize_node_type(mib: &Mib, name: &str) -> String {
         let obj = mib.raw().object(obj_id);
         match obj.type_id() {
             Some(tid) => {
-                let base = mib.raw().type_(tid).effective_base(mib.types_slice());
+                let base = mib.raw().type_(tid).effective_base(mib.raw().types_slice());
                 normalize_base_type(base).to_string()
             }
             None => "OTHER".to_string(),
@@ -86,10 +86,10 @@ fn normalize_node_type(mib: &Mib, name: &str) -> String {
         "AGENT-CAPABILITIES".to_string()
     } else if let Some(node_id) = mib.node_by_name(name) {
         // Check for MODULE-IDENTITY: module OID matches node OID.
-        if let Some(mod_id) = mib.effective_module(node_id) {
+        if let Some(mod_id) = mib.raw().effective_module(node_id) {
             let module = mib.raw().module(mod_id);
             if let Some(mod_oid) = module.oid() {
-                let node_oid = mib.tree().oid_of(node_id);
+                let node_oid = mib.raw().tree().oid_of(node_id);
                 if mod_oid == node_oid {
                     return "MODULE-IDENTITY".to_string();
                 }
@@ -314,7 +314,7 @@ fn fixture_oids() {
                 failures.push(format!("{}: not found in mib-rs", fn_.name));
                 return;
             };
-            let got = mib.tree().oid_of(node_id).to_string();
+            let got = mib.raw().tree().oid_of(node_id).to_string();
             if got != fn_.oid {
                 failures.push(format!("{}: OID: got={got} fixture={}", fn_.name, fn_.oid));
             }
@@ -340,7 +340,7 @@ fn fixture_types() {
         // Base type
         let got_type = match obj.type_id() {
             Some(tid) => {
-                let base = mib.raw().type_(tid).effective_base(mib.types_slice());
+                let base = mib.raw().type_(tid).effective_base(mib.raw().types_slice());
                 normalize_base_type(base).to_string()
             }
             None => String::new(),
@@ -461,7 +461,7 @@ fn fixture_tables() {
 
             // Kind
             if !fn_.kind.is_empty() {
-                let got_kind = normalize_kind(obj.kind(mib.tree()));
+                let got_kind = normalize_kind(obj.kind(mib.raw().tree()));
                 if got_kind != fn_.kind {
                     failures.push(format!(
                         "{}: kind: got={got_kind:?} fixture={:?}",
@@ -632,7 +632,7 @@ fn fixture_notifications() {
 
         // OID
         if let Some(node_id) = notif.node() {
-            let got_oid = mib.tree().oid_of(node_id).to_string();
+            let got_oid = mib.raw().tree().oid_of(node_id).to_string();
             if got_oid != fn_.oid {
                 failures.push(format!(
                     "{}: notification OID: got={got_oid} fixture={}",
@@ -786,7 +786,7 @@ fn fixture_module() {
                 failures.push(format!("{}: not found", fn_.name));
                 return;
             };
-            let got = match mib.effective_module(node_id) {
+            let got = match mib.raw().effective_module(node_id) {
                 Some(mid) => mib.raw().module(mid).name().to_string(),
                 None => String::new(),
             };

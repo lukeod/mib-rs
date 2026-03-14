@@ -16,7 +16,7 @@ fn main() {
 
     // -- Find all tables --
     println!("=== Tables ===");
-    for table in mib.table_objects() {
+    for table in mib.tables() {
         println!("  {} ({})", table.name(), table.node().oid());
     }
 
@@ -79,7 +79,7 @@ fn main() {
 
     // -- All scalars --
     println!("\n=== Scalars ===");
-    for scalar in mib.scalar_objects() {
+    for scalar in mib.scalars() {
         let ty_name = scalar
             .ty()
             .map(|t| t.name().to_string())
@@ -95,7 +95,7 @@ fn main() {
 
     // -- All rows --
     println!("\n=== Rows ===");
-    for row in mib.row_objects() {
+    for row in mib.rows() {
         let idx_names: Vec<_> = row
             .effective_indexes()
             .map(|i| i.name().to_string())
@@ -105,7 +105,7 @@ fn main() {
 
     // -- All columns --
     println!("\n=== All columns ===");
-    for col in mib.column_objects() {
+    for col in mib.columns() {
         println!(
             "  {:<20} table={}",
             col.name(),
@@ -117,8 +117,8 @@ fn main() {
 
     // -- Object kind filtering --
     println!("\n=== Object counts by kind ===");
-    println!("  Tables:  {}", mib.table_objects().count());
-    println!("  Rows:    {}", mib.row_objects().count());
-    println!("  Columns: {}", mib.column_objects().count());
-    println!("  Scalars: {}", mib.scalar_objects().count());
+    println!("  Tables:  {}", mib.tables().count());
+    println!("  Rows:    {}", mib.rows().count());
+    println!("  Columns: {}", mib.columns().count());
+    println!("  Scalars: {}", mib.scalars().count());
 }

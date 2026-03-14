@@ -127,7 +127,10 @@ fn oid_global_root_strictness() {
         );
         if let Some(obj_id) = obj {
             let node = mib.raw().object(obj_id).node().expect("node missing");
-            assert_eq!(mib.tree().oid_of(node).to_string(), "1.3.6.1.4.1.99999.1");
+            assert_eq!(
+                mib.raw().tree().oid_of(node).to_string(),
+                "1.3.6.1.4.1.99999.1"
+            );
         }
     }
 }
@@ -162,7 +165,9 @@ fn type_fallback_strictness() {
             );
             if let Some(type_id) = obj.type_id() {
                 assert_eq!(
-                    mib.raw().type_(type_id).effective_base(mib.types_slice()),
+                    mib.raw()
+                        .type_(type_id)
+                        .effective_base(mib.raw().types_slice()),
                     want_base
                 );
             }
@@ -189,7 +194,10 @@ fn tc_fallback_strictness() {
                 "{object} at {strictness}"
             );
             if let Some(type_id) = obj.type_id() {
-                let base = mib.raw().type_(type_id).effective_base(mib.types_slice());
+                let base = mib
+                    .raw()
+                    .type_(type_id)
+                    .effective_base(mib.raw().types_slice());
                 assert_eq!(normalize_base_type(base), want_type);
             }
         }
@@ -231,7 +239,9 @@ fn import_forwarding_type_resolution() {
     let obj = require_object(&mib, "problemForwardedTypeObject");
     let type_id = obj.type_id().expect("type missing");
     assert_eq!(
-        mib.raw().type_(type_id).effective_base(mib.types_slice()),
+        mib.raw()
+            .type_(type_id)
+            .effective_base(mib.raw().types_slice()),
         BaseType::OctetString
     );
 }
@@ -305,14 +315,14 @@ fn strict_partial_import_resolution_per_symbol() {
     let str_obj = require_object(&mib, "problemPartialString");
     let str_type = mib.raw().type_(str_obj.type_id().expect("type missing"));
     assert_eq!(
-        str_type.effective_base(mib.types_slice()),
+        str_type.effective_base(mib.raw().types_slice()),
         BaseType::OctetString
     );
 
     let int_obj = require_object(&mib, "problemPartialInteger");
     let node = int_obj.node().expect("node missing");
     assert_eq!(
-        mib.tree().oid_of(node).to_string(),
+        mib.raw().tree().oid_of(node).to_string(),
         "1.3.6.1.4.1.99998.38.2"
     );
 }
@@ -325,7 +335,7 @@ fn strict_imported_metadata_preserved() {
     assert_eq!(
         mib.raw()
             .type_(display.type_id().expect("type missing"))
-            .effective_base(mib.types_slice()),
+            .effective_base(mib.raw().types_slice()),
         BaseType::OctetString
     );
     assert_eq!(display.effective_display_hint(), "255a");
@@ -432,7 +442,7 @@ fn import_forwarding_oid_resolution() {
     let mib = load_at_strictness("PROBLEM-FORWARDING-MIB", ResolverStrictness::Normal);
     let node = require_node(&mib, "problemForwardedOidObject");
     assert_eq!(
-        mib.tree().oid_of(node).to_string(),
+        mib.raw().tree().oid_of(node).to_string(),
         "1.3.6.1.4.1.99998.20.1.10"
     );
 }

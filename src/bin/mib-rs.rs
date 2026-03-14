@@ -234,10 +234,10 @@ fn cmd_load(
         Err(code) => return code,
     };
 
-    let mod_count = mib.modules_slice().iter().filter(|m| !m.is_base()).count();
-    let obj_count = mib.objects_slice().len();
-    let type_count = mib.types_slice().len();
-    let notif_count = mib.notifications_slice().len();
+    let mod_count = mib.user_modules().count();
+    let obj_count = mib.objects().count();
+    let type_count = mib.types().count();
+    let notif_count = mib.notifications().count();
 
     println!(
         "Loaded {mod_count} modules ({type_count} types, {obj_count} objects, {notif_count} notifications)"
@@ -246,13 +246,13 @@ fn cmd_load(
     if stats {
         println!();
         println!("  Nodes:         {}", mib.node_count());
-        println!("  Tables:        {}", mib.tables().len());
-        println!("  Rows:          {}", mib.rows().len());
-        println!("  Columns:       {}", mib.columns().len());
-        println!("  Scalars:       {}", mib.scalars().len());
-        println!("  Groups:        {}", mib.groups_slice().len());
-        println!("  Compliances:   {}", mib.compliances_slice().len());
-        println!("  Capabilities:  {}", mib.capabilities_slice().len());
+        println!("  Tables:        {}", mib.tables().count());
+        println!("  Rows:          {}", mib.rows().count());
+        println!("  Columns:       {}", mib.columns().count());
+        println!("  Scalars:       {}", mib.scalars().count());
+        println!("  Groups:        {}", mib.groups().count());
+        println!("  Compliances:   {}", mib.compliances().count());
+        println!("  Capabilities:  {}", mib.capabilities().count());
         println!("  Diagnostics:   {}", mib.diagnostics().len());
         println!("  Unresolved:    {}", mib.unresolved().len());
     }
@@ -509,116 +509,149 @@ fn cmd_find(
     let mut matches = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // Helper closure to collect a match
-    let mut add_match =
-        |node_id: mib_rs::mib::NodeId, name: &str, mod_id: Option<mib_rs::mib::ModuleId>| {
-            if !seen.insert(node_id) {
-                return;
-            }
-            let node = mib.tree().get(node_id);
-            let k = node.kind();
-            if let Some(want) = kind_match
-                && k != want
-            {
-                return;
-            }
-            let oid = mib.tree().oid_of(node_id);
-            let mod_name = mod_id
-                .map(|mid| mib.raw().module(mid).name())
-                .unwrap_or("?");
-            matches.push((
-                mod_name.to_string(),
-                name.to_string(),
-                oid.to_string(),
-                k.to_string(),
-            ));
-        };
-
-    for obj in mib.objects_slice() {
+    // Collect matching entities via handle iterators
+    for obj in mib.objects() {
         if !glob_match(pattern, obj.name()) {
             continue;
         }
-        if let Some(node_id) = obj.node() {
-            add_match(node_id, obj.name(), obj.module());
+        let node = obj.node();
+        let node_id = node.id();
+        if !seen.insert(node_id) {
+            continue;
         }
+        let k = node.kind();
+        if kind_match.is_some_and(|want| k != want) {
+            continue;
+        }
+        let mod_name = obj.module().map(|m| m.name()).unwrap_or("?");
+        matches.push((
+            mod_name.to_string(),
+            obj.name().to_string(),
+            node.oid().to_string(),
+            k.to_string(),
+        ));
     }
 
-    for notif in mib.notifications_slice() {
+    for notif in mib.notifications() {
         if !glob_match(pattern, notif.name()) {
             continue;
         }
-        if let Some(node_id) = notif.node() {
-            add_match(node_id, notif.name(), notif.module());
+        if let Some(node) = notif.node() {
+            let node_id = node.id();
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let k = node.kind();
+            if kind_match.is_some_and(|want| k != want) {
+                continue;
+            }
+            let mod_name = notif.module().map(|m| m.name()).unwrap_or("?");
+            matches.push((
+                mod_name.to_string(),
+                notif.name().to_string(),
+                node.oid().to_string(),
+                k.to_string(),
+            ));
         }
     }
 
-    for grp in mib.groups_slice() {
+    for grp in mib.groups() {
         if !glob_match(pattern, grp.name()) {
             continue;
         }
-        if let Some(node_id) = grp.node() {
-            add_match(node_id, grp.name(), grp.module());
+        if let Some(node) = grp.node() {
+            let node_id = node.id();
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let k = node.kind();
+            if kind_match.is_some_and(|want| k != want) {
+                continue;
+            }
+            let mod_name = grp.module().map(|m| m.name()).unwrap_or("?");
+            matches.push((
+                mod_name.to_string(),
+                grp.name().to_string(),
+                node.oid().to_string(),
+                k.to_string(),
+            ));
         }
     }
 
-    for comp in mib.compliances_slice() {
+    for comp in mib.compliances() {
         if !glob_match(pattern, comp.name()) {
             continue;
         }
-        if let Some(node_id) = comp.node() {
-            add_match(node_id, comp.name(), comp.module());
+        if let Some(node) = comp.node() {
+            let node_id = node.id();
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let k = node.kind();
+            if kind_match.is_some_and(|want| k != want) {
+                continue;
+            }
+            let mod_name = comp.module().map(|m| m.name()).unwrap_or("?");
+            matches.push((
+                mod_name.to_string(),
+                comp.name().to_string(),
+                node.oid().to_string(),
+                k.to_string(),
+            ));
         }
     }
 
-    for cap in mib.capabilities_slice() {
+    for cap in mib.capabilities() {
         if !glob_match(pattern, cap.name()) {
             continue;
         }
-        if let Some(node_id) = cap.node() {
-            add_match(node_id, cap.name(), cap.module());
+        if let Some(node) = cap.node() {
+            let node_id = node.id();
+            if !seen.insert(node_id) {
+                continue;
+            }
+            let k = node.kind();
+            if kind_match.is_some_and(|want| k != want) {
+                continue;
+            }
+            let mod_name = cap.module().map(|m| m.name()).unwrap_or("?");
+            matches.push((
+                mod_name.to_string(),
+                cap.name().to_string(),
+                node.oid().to_string(),
+                k.to_string(),
+            ));
         }
     }
 
     // Walk the OID tree for nodes not covered above (module-identity, object-identity, plain nodes)
-    fn walk_tree_find(
-        mib: &Mib,
-        node_id: mib_rs::mib::NodeId,
-        pattern: &str,
-        kind_match: Option<Kind>,
-        seen: &mut std::collections::HashSet<mib_rs::mib::NodeId>,
-        matches: &mut Vec<(String, String, String, String)>,
-    ) {
-        let node = mib.tree().get(node_id);
+    for node in mib.root_node().subtree() {
         let name = node.name();
-        if !name.is_empty() && !seen.contains(&node_id) && glob_match(pattern, name) {
-            let k = node.kind();
-            let passes = match kind_match {
-                Some(want) => k == want,
-                None => true,
-            };
-            if passes && k != Kind::Internal && k != Kind::Unknown {
-                seen.insert(node_id);
-                let oid = mib.tree().oid_of(node_id);
-                let mod_name = mib
-                    .effective_module(node_id)
-                    .map(|mid| mib.raw().module(mid).name().to_string())
-                    .unwrap_or_else(|| "?".to_string());
-                matches.push((mod_name, name.to_string(), oid.to_string(), k.to_string()));
-            }
+        if name.is_empty() || !glob_match(pattern, name) {
+            continue;
         }
-        for (&_arc, &child_id) in node.children() {
-            walk_tree_find(mib, child_id, pattern, kind_match, seen, matches);
+        let node_id = node.id();
+        if !seen.insert(node_id) {
+            continue;
         }
+        let k = node.kind();
+        if k == Kind::Internal || k == Kind::Unknown {
+            continue;
+        }
+        if kind_match.is_some_and(|want| k != want) {
+            continue;
+        }
+        let mod_name = node
+            .module()
+            .map(|m| m.name().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        matches.push((
+            mod_name,
+            name.to_string(),
+            node.oid().to_string(),
+            k.to_string(),
+        ));
     }
-
-    walk_tree_find(
-        &mib,
-        mib.tree().root(),
-        pattern,
-        kind_match,
-        &mut seen,
-        &mut matches,
-    );
 
     matches.sort();
 
