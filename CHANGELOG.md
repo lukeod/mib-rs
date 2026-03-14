@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-15
+
+### Breaking Changes
+
+- Remove `table_objects()`, `scalar_objects()`, `column_objects()`, `row_objects()` from `Mib` (use `tables()`, `scalars()`, `columns()`, `rows()` instead)
+- Move `_slice()` methods, `tree()`, `resolve()`, and `effective_module()` from `Mib` to `RawMib`
+- `tables()`, `scalars()`, `columns()`, `rows()` now return handle iterators instead of `Vec<ObjectId>`
+
+### Added
+
+- Add `id()` method to all handle types for handle-to-raw bridge
+- Add `HandleIter` impls for Notification, Group, Compliance, Capability
+- Add `*_by_id()` bridge methods on `Mib` for all handle types (node, object, type, module, notification, group, compliance, capability)
+- Add `user_modules()` filtered iterator on `Mib`
+- Add `--version` flag to CLI
+- Add `--kind notification` support to CLI find command using ValueEnum
+
+### Changed
+
+- Expand API Tiers section in crate docs with per-tier capabilities and a choosing-a-tier table
+- Rewrite raw example to cover sub-clause spans, import metadata, OID references, symbol tables, bulk arena access, OID tree traversal, cross-references, and tier crossing
+- Make CLI `--max-depth` imply `--tree`, change to `Option<usize>`
+- Print CLI lint diagnostics to stderr
+- Return exit code 1 from CLI paths command when no system paths found
+- Use `clap::ValueEnum` for CLI `--kind` flag
+
+### Fixed
+
+- Fix private-item doc link warnings for `Mib::resolve`
+- Fix CLI kind filter rejecting valid values
+
 ## [0.1.3] - 2026-03-14
 
 ### Added
@@ -57,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/lukeod/mib-rs/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/lukeod/mib-rs/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/lukeod/mib-rs/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lukeod/mib-rs/compare/v0.1.0...v0.1.1

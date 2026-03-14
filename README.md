@@ -36,7 +36,7 @@ Or add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mib-rs = "0.1.3"
+mib-rs = "0.2"
 ```
 
 ## Quick Start
@@ -201,7 +201,7 @@ To use the library without defaults:
 
 ```toml
 [dependencies]
-mib-rs = { version = "0.1", default-features = false }
+mib-rs = { version = "0.2", default-features = false }
 ```
 
 ## Minimum Supported Rust Version

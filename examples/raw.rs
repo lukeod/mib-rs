@@ -331,11 +331,7 @@ END
     let instance_oid: mib_rs::Oid = "1.3.6.1.4.1.99990.1.1.42".parse().unwrap();
     let prefix_id = raw.longest_prefix_by_oid(&instance_oid);
     let prefix = raw.node(prefix_id);
-    println!(
-        "\n  Longest prefix for {}: {}",
-        instance_oid,
-        prefix.name()
-    );
+    println!("\n  Longest prefix for {}: {}", instance_oid, prefix.name());
 
     // Effective module ownership for a node.
     if let Some(mod_id) = raw.effective_module(prefix_id) {
@@ -412,7 +408,12 @@ END
 
     let (syn_line, _) = mod_data.line_col(data.syntax_span().start);
     let (acc_line, _) = mod_data.line_col(data.access_span().start);
-    println!("  {}: SYNTAX at line {}, MAX-ACCESS at line {}", handle.name(), syn_line, acc_line);
+    println!(
+        "  {}: SYNTAX at line {}, MAX-ACCESS at line {}",
+        handle.name(),
+        syn_line,
+        acc_line
+    );
 
     // Start with raw, lift to handle for navigation.
     if let Some(type_id) = data.type_id() {
