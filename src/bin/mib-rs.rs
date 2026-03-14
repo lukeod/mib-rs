@@ -27,7 +27,7 @@ impl From<CliReportingLevel> for ReportingLevel {
 }
 
 #[derive(Parser)]
-#[command(name = "mib-rs", about = "SNMP MIB parser and resolver")]
+#[command(name = "mib-rs", version, about = "SNMP MIB parser and resolver")]
 struct Cli {
     /// MIB search paths (repeatable). If none given, uses system paths.
     #[arg(short = 'p', long = "path", global = true)]
@@ -45,7 +45,7 @@ struct Cli {
 enum Command {
     /// Load and validate MIB modules
     Load {
-        /// Module names to load (omit to load all)
+        /// Module names to load (omit to load all available modules)
         modules: Vec<String>,
         /// Use strict resolver mode
         #[arg(long, conflicts_with = "permissive")]
@@ -64,19 +64,16 @@ enum Command {
     Get {
         /// OID or name to look up
         query: String,
-        /// Module names to load
+        /// Only load specific modules (repeatable, default: all)
         #[arg(short = 'm', long = "module")]
         modules: Vec<String>,
-        /// Load all modules from sources
-        #[arg(long)]
-        all: bool,
         /// Show subtree
         #[arg(short = 't', long = "tree")]
         tree: bool,
-        /// Max tree depth
-        #[arg(long, default_value = "0")]
-        max_depth: usize,
-        /// Show full descriptions (no truncation)
+        /// Max tree depth (implies --tree)
+        #[arg(long)]
+        max_depth: Option<usize>,
+        /// Show full descriptions (default: first line, max 80 chars)
         #[arg(long)]
         full: bool,
     },
@@ -93,26 +90,23 @@ enum Command {
         /// Module names to lint (omit to lint all)
         modules: Vec<String>,
     },
-    /// Search for objects matching a pattern
+    /// Search for nodes matching a pattern (case-insensitive, * and ? wildcards)
     Find {
-        /// Glob pattern to match
+        /// Name pattern to match (case-insensitive, * and ? wildcards)
         pattern: String,
-        /// Module names to load
+        /// Only load specific modules (repeatable, default: all)
         #[arg(short = 'm', long = "module")]
         modules: Vec<String>,
-        /// Load all modules
+        /// Filter by kind
         #[arg(long)]
-        all: bool,
-        /// Filter by kind (scalar, table, row, column, notification)
-        #[arg(long)]
-        kind: Option<String>,
+        kind: Option<CliKind>,
         /// Print only count
         #[arg(long)]
         count: bool,
     },
-    /// Export resolved MIB data as schema v1 JSON
+    /// Export resolved MIB data as JSON
     Dump {
-        /// Module names to load (omit to load all)
+        /// Module names to load (omit to load all available modules)
         modules: Vec<String>,
         /// Use strict resolver mode
         #[arg(long, conflicts_with = "permissive")]
@@ -120,6 +114,9 @@ enum Command {
         /// Use permissive resolver mode
         #[arg(long, conflicts_with = "strict")]
         permissive: bool,
+        /// Reporting level
+        #[arg(long, default_value = "default")]
+        report: CliReportingLevel,
     },
 }
 
@@ -149,26 +146,25 @@ fn main() {
         Command::Get {
             query,
             modules,
-            all,
             tree,
             max_depth,
             full,
-        } => cmd_get(&cli.paths, &query, modules, all, tree, max_depth, full),
+        } => cmd_get(&cli.paths, &query, modules, tree, max_depth, full),
         Command::List { count } => cmd_list(&cli.paths, count),
         Command::Paths => cmd_paths(&cli.paths),
         Command::Lint { modules } => cmd_lint(&cli.paths, modules),
         Command::Find {
             pattern,
             modules,
-            all,
             kind,
             count,
-        } => cmd_find(&cli.paths, &pattern, modules, all, kind, count),
+        } => cmd_find(&cli.paths, &pattern, modules, kind, count),
         Command::Dump {
             modules,
             strict,
             permissive,
-        } => cmd_dump(&cli.paths, modules, strict, permissive),
+            report,
+        } => cmd_dump(&cli.paths, modules, strict, permissive, report),
     };
 
     process::exit(exit_code);
@@ -188,7 +184,6 @@ fn build_sources(paths: &[String]) -> Vec<Box<dyn mib_rs::source::Source>> {
 fn load_mib(
     paths: &[String],
     modules: Vec<String>,
-    all: bool,
     strictness: ResolverStrictness,
     diag_config: DiagnosticConfig,
 ) -> Result<Mib, i32> {
@@ -204,7 +199,7 @@ fn load_mib(
         opts = opts.system_paths();
     }
 
-    if !all && !modules.is_empty() {
+    if !modules.is_empty() {
         opts = opts.modules(modules);
     }
 
@@ -234,8 +229,7 @@ fn cmd_load(
     };
     let diag_config = DiagnosticConfig::for_reporting(report.into());
 
-    let all = modules.is_empty();
-    let mib = match load_mib(paths, modules, all, strictness, diag_config) {
+    let mib = match load_mib(paths, modules, strictness, diag_config) {
         Ok(m) => m,
         Err(code) => return code,
     };
@@ -275,16 +269,13 @@ fn cmd_get(
     paths: &[String],
     query: &str,
     modules: Vec<String>,
-    all: bool,
     tree: bool,
-    max_depth: usize,
+    max_depth: Option<usize>,
     full: bool,
 ) -> i32 {
-    let load_all = all || modules.is_empty();
     let mib = match load_mib(
         paths,
         modules,
-        load_all,
         ResolverStrictness::Permissive,
         DiagnosticConfig::silent(),
     ) {
@@ -292,49 +283,42 @@ fn cmd_get(
         Err(code) => return code,
     };
 
-    let node_id = match mib.resolve(query) {
-        Some(id) => id,
+    let node = match mib.resolve_node(query) {
+        Some(n) => n,
         None => {
             eprintln!("not found: {query}");
             return 1;
         }
     };
 
-    if tree {
-        let depth = if max_depth == 0 {
-            usize::MAX
-        } else {
-            max_depth
+    // --max-depth implies --tree
+    let show_tree = tree || max_depth.is_some();
+
+    if show_tree {
+        let depth = match max_depth {
+            None => usize::MAX,
+            Some(d) => d,
         };
-        print_tree(&mib, node_id, 0, depth);
+        print_tree(node, 0, depth);
     } else {
-        print_node_detail(&mib, node_id, full);
+        print_node_detail(node, full);
     }
 
     0
 }
 
-fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
-    let node = mib.tree().get(node_id);
-    let oid = mib.tree().oid_of(node_id);
-
+fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
     println!("Name:    {}", node.name());
-    println!("OID:     {oid}");
+    println!("OID:     {}", node.oid());
     println!("Kind:    {}", node.kind());
 
-    if let Some(mod_id) = mib.effective_module(node_id) {
-        println!("Module:  {}", mib.raw().module(mod_id).name());
+    if let Some(module) = node.module() {
+        println!("Module:  {}", module.name());
     }
 
-    if let Some(obj_id) = node.object() {
-        let obj = mib.raw().object(obj_id);
-        if let Some(tid) = obj.type_id() {
-            let t = mib.raw().type_(tid);
-            println!(
-                "Type:    {} ({})",
-                t.name(),
-                t.effective_base(mib.types_slice())
-            );
+    if let Some(obj) = node.object() {
+        if let Some(ty) = obj.ty() {
+            println!("Type:    {} ({})", ty.name(), ty.effective_base());
         }
         println!("Access:  {}", obj.access());
         println!("Status:  {}", obj.status());
@@ -344,9 +328,9 @@ fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
         if let Some(dv) = obj.default_value() {
             println!("DefVal:  {dv}");
         }
-        if !obj.index().is_empty() {
-            let names: Vec<&str> = obj.index().iter().map(|i| i.name.as_str()).collect();
-            println!("Index:   {}", names.join(", "));
+        let indexes: Vec<&str> = obj.effective_indexes().map(|i| i.name()).collect();
+        if !indexes.is_empty() {
+            println!("Index:   {}", indexes.join(", "));
         }
         let enums = obj.effective_enums();
         if !enums.is_empty() {
@@ -365,45 +349,31 @@ fn print_node_detail(mib: &Mib, node_id: mib_rs::mib::NodeId, full: bool) {
             println!("Bits:    {}", vals.join(", "));
         }
 
-        let desc = obj.description();
-        if !desc.is_empty() {
-            if full {
-                println!("Descr:   {desc}");
-            } else {
-                let truncated = truncate(desc, 80);
-                println!("Descr:   {truncated}");
-            }
-        }
-    } else if let Some(notif_id) = node.notification() {
-        let notif = mib.raw().notification(notif_id);
+        print_description(obj.description(), full);
+    } else if let Some(notif) = node.notification() {
         println!("Status:  {}", notif.status());
-        let desc = notif.description();
-        if !desc.is_empty() {
-            if full {
-                println!("Descr:   {desc}");
-            } else {
-                println!("Descr:   {}", truncate(desc, 80));
-            }
-        }
+        print_description(notif.description(), full);
     } else {
-        let desc = node.description();
-        if !desc.is_empty() {
-            if full {
-                println!("Descr:   {desc}");
-            } else {
-                println!("Descr:   {}", truncate(desc, 80));
-            }
-        }
+        print_description(node.description(), full);
     }
 }
 
-fn print_tree(mib: &Mib, node_id: mib_rs::mib::NodeId, depth: usize, max_depth: usize) {
+fn print_description(desc: &str, full: bool) {
+    if desc.is_empty() {
+        return;
+    }
+    if full {
+        println!("Descr:   {desc}");
+    } else {
+        println!("Descr:   {}", truncate(desc, 80));
+    }
+}
+
+fn print_tree(node: mib_rs::mib::Node<'_>, depth: usize, max_depth: usize) {
     if depth > max_depth {
         return;
     }
-    let node = mib.tree().get(node_id);
     let indent = "  ".repeat(depth);
-    let oid = mib.tree().oid_of(node_id);
     let name = if node.name().is_empty() {
         format!("[{}]", node.arc())
     } else {
@@ -411,16 +381,16 @@ fn print_tree(mib: &Mib, node_id: mib_rs::mib::NodeId, depth: usize, max_depth: 
     };
 
     let kind = node.kind();
-    let kind_str = if kind == Kind::Internal {
+    let kind_str = if kind == Kind::Internal || kind == Kind::Unknown {
         String::new()
     } else {
         format!(" ({kind})")
     };
 
-    println!("{indent}{name} {oid}{kind_str}");
+    println!("{indent}{name} {}{kind_str}", node.oid());
 
-    for (&_arc, &child_id) in node.children() {
-        print_tree(mib, child_id, depth + 1, max_depth);
+    for child in node.children() {
+        print_tree(child, depth + 1, max_depth);
     }
 }
 
@@ -467,29 +437,34 @@ fn cmd_list(paths: &[String], count: bool) -> i32 {
 }
 
 fn cmd_paths(paths: &[String]) -> i32 {
-    if !paths.is_empty() {
-        for p in paths {
-            println!("{p}");
+    let custom: std::collections::HashSet<&str> = paths.iter().map(|s| s.as_str()).collect();
+    let system = mib_rs::searchpath::discover_system_paths();
+
+    let mut all_paths: Vec<(&str, &str)> = Vec::new();
+    for p in paths {
+        all_paths.push((p.as_str(), "custom"));
+    }
+    for p in &system {
+        if !custom.contains(p.as_str()) {
+            all_paths.push((p.as_str(), "system"));
         }
-    } else {
-        let system = mib_rs::searchpath::discover_system_paths();
-        if system.is_empty() {
-            eprintln!("no system MIB paths found");
-        } else {
-            for p in system {
-                println!("{p}");
-            }
-        }
+    }
+
+    if all_paths.is_empty() {
+        eprintln!("no MIB paths found");
+        return 1;
+    }
+
+    for (p, source) in &all_paths {
+        println!("{p}  ({source})");
     }
     0
 }
 
 fn cmd_lint(paths: &[String], modules: Vec<String>) -> i32 {
-    let all = modules.is_empty();
     let mib = match load_mib(
         paths,
         modules,
-        all,
         ResolverStrictness::Strict,
         DiagnosticConfig::verbose(),
     ) {
@@ -504,10 +479,10 @@ fn cmd_lint(paths: &[String], modules: Vec<String>) -> i32 {
     }
 
     for d in diags {
-        println!("{d}");
+        eprintln!("{d}");
     }
-    println!();
-    println!("{} issue(s) found.", mib.diagnostics().len());
+    eprintln!();
+    eprintln!("{} issue(s) found.", diags.len());
 
     if mib.has_errors() { 1 } else { 0 }
 }
@@ -516,15 +491,12 @@ fn cmd_find(
     paths: &[String],
     pattern: &str,
     modules: Vec<String>,
-    all: bool,
-    kind_filter: Option<String>,
+    kind_filter: Option<CliKind>,
     count: bool,
 ) -> i32 {
-    let load_all = all || modules.is_empty();
     let mib = match load_mib(
         paths,
         modules,
-        load_all,
         ResolverStrictness::Permissive,
         DiagnosticConfig::silent(),
     ) {
@@ -532,26 +504,26 @@ fn cmd_find(
         Err(code) => return code,
     };
 
-    let kind_match: Option<Kind> = kind_filter.as_deref().and_then(parse_kind);
+    let kind_match: Option<Kind> = kind_filter.map(Kind::from);
 
     let mut matches = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    for obj in mib.objects_slice() {
-        let name = obj.name();
-        if !glob_match(pattern, name) {
-            continue;
-        }
-        if let Some(node_id) = obj.node() {
+    // Helper closure to collect a match
+    let mut add_match =
+        |node_id: mib_rs::mib::NodeId, name: &str, mod_id: Option<mib_rs::mib::ModuleId>| {
+            if !seen.insert(node_id) {
+                return;
+            }
             let node = mib.tree().get(node_id);
             let k = node.kind();
             if let Some(want) = kind_match
                 && k != want
             {
-                continue;
+                return;
             }
             let oid = mib.tree().oid_of(node_id);
-            let mod_name = obj
-                .module()
+            let mod_name = mod_id
                 .map(|mid| mib.raw().module(mid).name())
                 .unwrap_or("?");
             matches.push((
@@ -560,8 +532,93 @@ fn cmd_find(
                 oid.to_string(),
                 k.to_string(),
             ));
+        };
+
+    for obj in mib.objects_slice() {
+        if !glob_match(pattern, obj.name()) {
+            continue;
+        }
+        if let Some(node_id) = obj.node() {
+            add_match(node_id, obj.name(), obj.module());
         }
     }
+
+    for notif in mib.notifications_slice() {
+        if !glob_match(pattern, notif.name()) {
+            continue;
+        }
+        if let Some(node_id) = notif.node() {
+            add_match(node_id, notif.name(), notif.module());
+        }
+    }
+
+    for grp in mib.groups_slice() {
+        if !glob_match(pattern, grp.name()) {
+            continue;
+        }
+        if let Some(node_id) = grp.node() {
+            add_match(node_id, grp.name(), grp.module());
+        }
+    }
+
+    for comp in mib.compliances_slice() {
+        if !glob_match(pattern, comp.name()) {
+            continue;
+        }
+        if let Some(node_id) = comp.node() {
+            add_match(node_id, comp.name(), comp.module());
+        }
+    }
+
+    for cap in mib.capabilities_slice() {
+        if !glob_match(pattern, cap.name()) {
+            continue;
+        }
+        if let Some(node_id) = cap.node() {
+            add_match(node_id, cap.name(), cap.module());
+        }
+    }
+
+    // Walk the OID tree for nodes not covered above (module-identity, object-identity, plain nodes)
+    fn walk_tree_find(
+        mib: &Mib,
+        node_id: mib_rs::mib::NodeId,
+        pattern: &str,
+        kind_match: Option<Kind>,
+        seen: &mut std::collections::HashSet<mib_rs::mib::NodeId>,
+        matches: &mut Vec<(String, String, String, String)>,
+    ) {
+        let node = mib.tree().get(node_id);
+        let name = node.name();
+        if !name.is_empty() && !seen.contains(&node_id) && glob_match(pattern, name) {
+            let k = node.kind();
+            let passes = match kind_match {
+                Some(want) => k == want,
+                None => true,
+            };
+            if passes && k != Kind::Internal && k != Kind::Unknown {
+                seen.insert(node_id);
+                let oid = mib.tree().oid_of(node_id);
+                let mod_name = mib
+                    .effective_module(node_id)
+                    .map(|mid| mib.raw().module(mid).name().to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                matches.push((mod_name, name.to_string(), oid.to_string(), k.to_string()));
+            }
+        }
+        for (&_arc, &child_id) in node.children() {
+            walk_tree_find(mib, child_id, pattern, kind_match, seen, matches);
+        }
+    }
+
+    walk_tree_find(
+        &mib,
+        mib.tree().root(),
+        pattern,
+        kind_match,
+        &mut seen,
+        &mut matches,
+    );
 
     matches.sort();
 
@@ -573,22 +630,47 @@ fn cmd_find(
         }
     }
 
-    0
+    if matches.is_empty() { 1 } else { 0 }
 }
 
-fn parse_kind(s: &str) -> Option<Kind> {
-    match s.to_lowercase().as_str() {
-        "scalar" => Some(Kind::Scalar),
-        "table" => Some(Kind::Table),
-        "row" => Some(Kind::Row),
-        "column" => Some(Kind::Column),
-        _ => None,
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliKind {
+    Node,
+    Scalar,
+    Table,
+    Row,
+    Column,
+    Notification,
+    Group,
+    Compliance,
+    Capability,
+    #[value(name = "module-identity")]
+    ModuleIdentity,
+    #[value(name = "object-identity")]
+    ObjectIdentity,
+}
+
+impl From<CliKind> for Kind {
+    fn from(k: CliKind) -> Self {
+        match k {
+            CliKind::Node => Kind::Node,
+            CliKind::Scalar => Kind::Scalar,
+            CliKind::Table => Kind::Table,
+            CliKind::Row => Kind::Row,
+            CliKind::Column => Kind::Column,
+            CliKind::Notification => Kind::Notification,
+            CliKind::Group => Kind::Group,
+            CliKind::Compliance => Kind::Compliance,
+            CliKind::Capability => Kind::Capability,
+            CliKind::ModuleIdentity => Kind::ModuleIdentity,
+            CliKind::ObjectIdentity => Kind::ObjectIdentity,
+        }
     }
 }
 
 fn glob_match(pattern: &str, name: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let name: Vec<char> = name.chars().collect();
+    let pattern: Vec<char> = pattern.chars().flat_map(|c| c.to_lowercase()).collect();
+    let name: Vec<char> = name.chars().flat_map(|c| c.to_lowercase()).collect();
     let mut pi = 0;
     let mut ni = 0;
     let mut star_pi = None;
@@ -618,7 +700,13 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     pi == pattern.len()
 }
 
-fn cmd_dump(paths: &[String], modules: Vec<String>, strict: bool, permissive: bool) -> i32 {
+fn cmd_dump(
+    paths: &[String],
+    modules: Vec<String>,
+    strict: bool,
+    permissive: bool,
+    report: CliReportingLevel,
+) -> i32 {
     let strictness = if strict {
         ResolverStrictness::Strict
     } else if permissive {
@@ -626,23 +714,25 @@ fn cmd_dump(paths: &[String], modules: Vec<String>, strict: bool, permissive: bo
     } else {
         ResolverStrictness::Normal
     };
-    let all = modules.is_empty();
     let mib = match load_mib(
         paths,
         modules,
-        all,
         strictness,
-        DiagnosticConfig::for_reporting(ReportingLevel::Default),
+        DiagnosticConfig::for_reporting(report.into()),
     ) {
         Ok(m) => m,
         Err(code) => return code,
     };
 
+    for d in mib.diagnostics() {
+        eprintln!("{d}");
+    }
+
     let payload = mib_rs::export::export_v1(&mib, strictness);
     match serde_json::to_string_pretty(&payload) {
         Ok(json) => {
             println!("{json}");
-            0
+            if mib.has_errors() { 1 } else { 0 }
         }
         Err(e) => {
             eprintln!("error: failed to serialize: {e}");
@@ -676,6 +766,14 @@ mod tests {
         assert!(glob_match("if?ndex", "ifIndex"));
         assert!(glob_match("*Entry", "ifTableEntry"));
         assert!(glob_match("foo**bar", "foobazbar"));
+    }
+
+    #[test]
+    fn glob_match_is_case_insensitive() {
+        assert!(glob_match("SYS*", "sysDescr"));
+        assert!(glob_match("sys*", "SysDescr"));
+        assert!(glob_match("IF-MIB", "IF-MIB"));
+        assert!(glob_match("if-mib", "IF-MIB"));
     }
 
     #[test]

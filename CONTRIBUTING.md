@@ -6,7 +6,7 @@ Thank you for your interest in contributing.
 
 1. Fork and clone the repository
 2. Install Rust 1.88 or later via [rustup](https://rustup.rs/)
-3. Run the test suite: `cargo test`
+3. Run the test suite: `cargo test --all-features`
 
 ## Development
 

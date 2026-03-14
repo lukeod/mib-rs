@@ -130,32 +130,64 @@ println!("{}", node.name()); // ifDescr
 The optional `mib-rs` binary provides commands for working with MIBs:
 
 ```bash
-cargo install mib-rs --features cli
+cargo install mib-rs
 ```
 
+### Global options
+
 ```bash
-# Load and validate modules
+mib-rs -p /usr/share/snmp/mibs load IF-MIB    # custom MIB search path (-p is repeatable)
+mib-rs -v load IF-MIB                          # debug logging (-vv for trace)
+mib-rs --version                               # show version
+```
+
+When no `-p` paths are given, system MIB directories (net-snmp, libsmi) are used automatically.
+
+### Commands
+
+```bash
+# Load and validate modules (omit names to load all available)
 mib-rs load IF-MIB SNMPv2-MIB
+mib-rs load --strict IF-MIB            # strict resolver mode
+mib-rs load --permissive IF-MIB        # permissive resolver mode
+mib-rs load --stats IF-MIB             # show detailed stats
+mib-rs load --report quiet IF-MIB      # reporting level: silent, quiet, default, verbose
 
 # Look up an OID or name
 mib-rs get sysDescr
 mib-rs get 1.3.6.1.2.1.1.1
+mib-rs get sysDescr --full              # show full description (default: first line, max 80 chars)
+mib-rs get sysDescr -m SNMPv2-MIB      # only load specific modules
 
 # Show a subtree
+mib-rs get ifEntry --tree
 mib-rs get ifEntry --tree --max-depth 2
+mib-rs get ifEntry --max-depth 0        # root node only (--max-depth implies --tree)
 
-# Search for objects by pattern
+# Search for nodes by pattern (case-insensitive, * and ? wildcards)
+# Output format: MODULE::NAME OID KIND
 mib-rs find "sys*"
-mib-rs find "*Entry" --kind table
+mib-rs find "*Entry" --kind table       # filter by kind
+mib-rs find "*Group" --kind group       # kinds: node, scalar, table, row, column,
+                                        #   notification, group, compliance, capability,
+                                        #   module-identity, object-identity
+mib-rs find "if*" --count               # print match count only
+mib-rs find "if*" -m IF-MIB            # only load specific modules
 
 # List available modules
 mib-rs list
+mib-rs list --count
+
+# Show MIB search paths (custom and auto-discovered system paths)
+mib-rs paths
 
 # Lint with strict diagnostics
 mib-rs lint IF-MIB
 
-# Export as JSON
+# Export as JSON (diagnostics go to stderr)
 mib-rs dump IF-MIB
+mib-rs dump --strict IF-MIB
+mib-rs dump --report silent IF-MIB     # suppress diagnostics on stderr
 ```
 
 ## Feature Flags
