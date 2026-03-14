@@ -1,0 +1,225 @@
+EXAMPLE-FULL-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, Counter32, Gauge32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    TEXTUAL-CONVENTION, DisplayString, TruthValue
+        FROM SNMPv2-TC;
+
+exampleFullMib MODULE-IDENTITY
+    LAST-UPDATED "202603120000Z"
+    ORGANIZATION "Example Corp"
+    CONTACT-INFO "support@example.com"
+    DESCRIPTION
+        "A feature-rich example module for demonstrating the mib-rs API.
+         Covers scalars, tables, notifications, groups, compliance,
+         textual conventions, enums, counters, and gauges."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
+    ::= { enterprises 99998 }
+
+-- Textual conventions
+
+ExDeviceStatus ::= TEXTUAL-CONVENTION
+    STATUS current
+    DESCRIPTION "Operational status of a device."
+    SYNTAX INTEGER {
+        up(1),
+        down(2),
+        testing(3),
+        unknown(4)
+    }
+
+ExPercentage ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d-%"
+    STATUS current
+    DESCRIPTION "A percentage value."
+    SYNTAX Integer32 (0..100)
+
+ExName ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS current
+    DESCRIPTION "A short name string."
+    SYNTAX DisplayString (SIZE (1..64))
+
+-- Subtree OIDs
+
+exObjects     OBJECT IDENTIFIER ::= { exampleFullMib 1 }
+exScalars     OBJECT IDENTIFIER ::= { exObjects 1 }
+exTables      OBJECT IDENTIFIER ::= { exObjects 2 }
+exNotifs      OBJECT IDENTIFIER ::= { exampleFullMib 2 }
+exConformance OBJECT IDENTIFIER ::= { exampleFullMib 3 }
+
+-- Scalars
+
+exDeviceName OBJECT-TYPE
+    SYNTAX ExName
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "The device name."
+    ::= { exScalars 1 }
+
+exDeviceStatus OBJECT-TYPE
+    SYNTAX ExDeviceStatus
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "The operational status."
+    ::= { exScalars 2 }
+
+exUptime OBJECT-TYPE
+    SYNTAX Counter32
+    UNITS "seconds"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Uptime in seconds."
+    ::= { exScalars 3 }
+
+exCpuLoad OBJECT-TYPE
+    SYNTAX ExPercentage
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Current CPU load."
+    ::= { exScalars 4 }
+
+exRebootEnabled OBJECT-TYPE
+    SYNTAX TruthValue
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "Whether automatic reboot is enabled."
+    DEFVAL { true }
+    ::= { exScalars 5 }
+
+-- Interface table
+
+exIfTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF ExIfEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Example interface table."
+    ::= { exTables 1 }
+
+exIfEntry OBJECT-TYPE
+    SYNTAX ExIfEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "An interface entry."
+    INDEX { exIfIndex }
+    ::= { exIfTable 1 }
+
+ExIfEntry ::= SEQUENCE {
+    exIfIndex      Integer32,
+    exIfName       ExName,
+    exIfStatus     ExDeviceStatus,
+    exIfSpeed      Gauge32,
+    exIfInOctets   Counter32,
+    exIfOutOctets  Counter32
+}
+
+exIfIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Interface index."
+    ::= { exIfEntry 1 }
+
+exIfName OBJECT-TYPE
+    SYNTAX ExName
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Interface name."
+    ::= { exIfEntry 2 }
+
+exIfStatus OBJECT-TYPE
+    SYNTAX ExDeviceStatus
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Interface status."
+    ::= { exIfEntry 3 }
+
+exIfSpeed OBJECT-TYPE
+    SYNTAX Gauge32
+    UNITS "bits per second"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Interface speed."
+    ::= { exIfEntry 4 }
+
+exIfInOctets OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Inbound octets."
+    ::= { exIfEntry 5 }
+
+exIfOutOctets OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Outbound octets."
+    ::= { exIfEntry 6 }
+
+-- Notifications
+
+exStatusChange NOTIFICATION-TYPE
+    OBJECTS { exDeviceName, exDeviceStatus }
+    STATUS current
+    DESCRIPTION "Device status changed."
+    ::= { exNotifs 1 }
+
+exIfStatusChange NOTIFICATION-TYPE
+    OBJECTS { exIfIndex, exIfName, exIfStatus }
+    STATUS current
+    DESCRIPTION "Interface status changed."
+    ::= { exNotifs 2 }
+
+-- Conformance
+
+exGroups OBJECT IDENTIFIER ::= { exConformance 1 }
+exCompliances OBJECT IDENTIFIER ::= { exConformance 2 }
+
+exScalarGroup OBJECT-GROUP
+    OBJECTS {
+        exDeviceName,
+        exDeviceStatus,
+        exUptime,
+        exCpuLoad,
+        exRebootEnabled
+    }
+    STATUS current
+    DESCRIPTION "Scalar objects group."
+    ::= { exGroups 1 }
+
+exIfGroup OBJECT-GROUP
+    OBJECTS {
+        exIfName,
+        exIfStatus,
+        exIfSpeed,
+        exIfInOctets,
+        exIfOutOctets
+    }
+    STATUS current
+    DESCRIPTION "Interface table group."
+    ::= { exGroups 2 }
+
+exNotifGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+        exStatusChange,
+        exIfStatusChange
+    }
+    STATUS current
+    DESCRIPTION "Notification group."
+    ::= { exGroups 3 }
+
+exBasicCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "Basic compliance statement."
+    MODULE
+        MANDATORY-GROUPS { exScalarGroup, exNotifGroup }
+        GROUP exIfGroup
+        DESCRIPTION "The interface group is optional."
+    ::= { exCompliances 1 }
+
+END

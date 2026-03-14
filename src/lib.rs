@@ -1,5 +1,18 @@
 //! SNMP MIB parsing, resolution, query, and tooling APIs.
 //!
+//! # What is a MIB?
+//!
+//! A MIB (Management Information Base) is a text file that describes the
+//! structure of data available from an SNMP-managed device. Each piece of
+//! data (a counter, a name, a status flag, a table row) is identified by an
+//! OID (Object Identifier), a dotted-decimal path like `1.3.6.1.2.1.1.1`.
+//! MIB files give those numeric OIDs human-readable names, types, and
+//! descriptions, so instead of `1.3.6.1.2.1.1.1` you can say `sysDescr`.
+//!
+//! MIBs are written in a language called SMI (Structure of Management
+//! Information), which has two versions: SMIv1 (RFC 1155/1212) and SMIv2
+//! (RFC 2578/2579/2580). This crate handles both transparently.
+//!
 //! # API Tiers
 //!
 //! This crate exposes three intentional API tiers:
@@ -112,9 +125,21 @@
 //! assert_eq!(ty.effective_display_hint(), "255a");
 //! ```
 //!
-//! # OID Resolution
+//! # OIDs and Resolution
 //!
-//! Resolve symbolic and numeric OIDs, including instance suffixes:
+//! Every named element in a MIB has an OID, a path through a global tree
+//! shared by all SNMP devices. OIDs are written as dotted decimal
+//! (`1.3.6.1.2.1.1.1`) or symbolically (`sysDescr`). The tree is
+//! hierarchical: `enterprises` is `1.3.6.1.4.1`, and a vendor's subtree
+//! hangs beneath that.
+//!
+//! **Instance OIDs** extend a base OID with a suffix that identifies a
+//! specific value. For a scalar like `sysDescr`, the instance is always
+//! `sysDescr.0`. For table columns, the suffix encodes the row's index
+//! values, e.g. `ifDescr.7` for interface 7.
+//!
+//! This crate resolves both directions: name to numeric OID, and numeric
+//! OID back to its closest named node.
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -153,7 +178,21 @@
 //!
 //! # Tables and Indexes
 //!
-//! Navigate tables, columns, and effective indexes through object handles:
+//! SNMP models tabular data as three nested objects:
+//!
+//! - A **table** (`SEQUENCE OF`) is a container, not directly readable.
+//! - A **row** (entry) represents one row, also not directly readable.
+//!   It declares which columns are **index** columns, whose values
+//!   together form the instance suffix that identifies each row.
+//! - **Columns** are the actual readable/writable values. Each column's
+//!   full OID is the column OID plus the index suffix.
+//!
+//! For example, `ifTable` contains `ifEntry` rows indexed by `ifIndex`.
+//! The column `ifDescr` for interface 7 has OID `ifDescr.7`.
+//!
+//! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
+//! and [`Object::is_scalar`] to distinguish these, or use the filtered
+//! iterators like [`Mib::table_objects`] and [`Mib::scalar_objects`].
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -186,9 +225,20 @@
 //! assert_eq!(index_type.name(), "Integer32");
 //! ```
 //!
-//! # Module Iteration
+//! # Modules
 //!
-//! Scope lookups to a module and iterate the resolved handles it owns:
+//! A MIB file contains one module (e.g. `IF-MIB`, `SNMPv2-MIB`). Modules
+//! import symbols from other modules, so loading one module typically
+//! pulls in its dependencies automatically.
+//!
+//! Seven **base modules** (`SNMPv2-SMI`, `SNMPv2-TC`, `SNMPv2-CONF`,
+//! `RFC1155-SMI`, `RFC1065-SMI`, `RFC-1212`, `RFC-1215`) are built in
+//! and always available. These define the fundamental types and OID
+//! roots that all other MIBs build on. You can identify them with
+//! [`Module::is_base`].
+//!
+//! Use [`Module`] handles to scope lookups and iteration to a single
+//! module:
 //!
 //! ```rust
 //! fn example_mib() -> mib_rs::Mib {
@@ -219,8 +269,10 @@
 //!
 //! # Query Formats
 //!
-//! [`Mib::resolve_oid`], [`Mib::resolve_node`], and [`Mib::resolve`] accept
-//! several query forms:
+//! Once a MIB is loaded, you can look up nodes and OIDs using several
+//! formats. Qualified names (`MODULE::name`) are useful when multiple
+//! modules define the same name. [`Mib::resolve_oid`],
+//! [`Mib::resolve_node`], and [`Mib::resolve`] all accept these forms:
 //!
 //! | Form | Example | Description |
 //! |------|---------|-------------|
@@ -238,8 +290,11 @@
 //!
 //! # Sources
 //!
-//! Sources provide MIB file content to the loading pipeline. The [`source`]
-//! module has several constructors:
+//! Sources tell the loader where to find MIB files. For testing and
+//! embedding, use in-memory sources. For production use, point at
+//! directories on disk or use system path auto-discovery to find MIBs
+//! installed by net-snmp or libsmi. The [`source`] module has several
+//! constructors:
 //!
 //! | Constructor | Description |
 //! |-------------|-------------|
@@ -260,54 +315,164 @@
 //!
 //! # Type Introspection
 //!
-//! Types form parent chains that terminate at a base SMI type. Each [`Type`]
-//! handle exposes both its own properties and effective (inherited) values:
+//! SMI types form parent chains. A MIB might define `HostName` as a
+//! refinement of `DisplayString`, which is itself a textual convention
+//! over `OCTET STRING`. Each link in the chain can add constraints
+//! (size limits, value ranges), a display hint (how to render the value
+//! as text), or enumeration labels.
+//!
+//! Each [`Type`] handle exposes two families of accessors:
+//!
+//! - **Direct** (`base`, `display_hint`, `enums`, `sizes`, `ranges`) -
+//!   return only what this specific type declares. These are empty/None
+//!   if the type inherits everything from its parent.
+//! - **Effective** (`effective_base`, `effective_display_hint`,
+//!   `effective_enums`, `effective_sizes`, `effective_ranges`) - walk up
+//!   the parent chain and return the first non-empty value. These give
+//!   you the "resolved" answer.
+//!
+//! **In most cases, use the `effective_*` methods.** They give you the
+//! answer you actually want: "what base type does this ultimately
+//! represent?", "how should I format this value?", "what are the valid
+//! enum labels?". The direct methods are mainly useful when you need to
+//! know exactly where in the chain a property was introduced, for
+//! instance when building a MIB browser that shows the full type
+//! derivation.
 //!
 //! | Method | Description |
 //! |--------|-------------|
-//! | [`Type::base`] | Directly assigned base type |
-//! | [`Type::effective_base`] | Base type after following the parent chain |
+//! | [`Type::base`] | Directly assigned base type (may be `Unknown` for derived types) |
+//! | [`Type::effective_base`] | Resolved base type - use this one |
 //! | [`Type::parent`] | Immediate parent type (if derived) |
-//! | [`Type::display_hint`] | This type's own DISPLAY-HINT |
-//! | [`Type::effective_display_hint`] | First non-empty hint in the chain |
+//! | [`Type::display_hint`] | This type's own DISPLAY-HINT (often empty) |
+//! | [`Type::effective_display_hint`] | First non-empty hint in the chain - use this one |
 //! | [`Type::enums`] | This type's own enum values |
-//! | [`Type::effective_enums`] | First non-empty enums in the chain |
+//! | [`Type::effective_enums`] | First non-empty enums in the chain - use this one |
 //! | [`Type::sizes`] / [`Type::ranges`] | This type's own constraints |
-//! | [`Type::effective_sizes`] / [`Type::effective_ranges`] | Inherited constraints |
+//! | [`Type::effective_sizes`] / [`Type::effective_ranges`] | Inherited constraints - use these |
 //! | [`Type::is_textual_convention`] | Whether defined as a TEXTUAL-CONVENTION |
 //!
 //! Convenience predicates: [`Type::is_counter`], [`Type::is_gauge`],
 //! [`Type::is_string`], [`Type::is_enumeration`], [`Type::is_bits`].
+//! These all use the effective base type internally.
 //!
 //! Objects expose the same effective accessors directly (e.g.
-//! [`Object::effective_display_hint`], [`Object::effective_enums`]) without
-//! needing to go through the type handle.
+//! [`Object::effective_display_hint`], [`Object::effective_enums`]) so
+//! you don't need to go through the type handle for common lookups.
 //!
-//! # Diagnostics
+//! # Diagnostics and Configuration
 //!
-//! The library collects diagnostics rather than failing fast. After loading,
-//! inspect them via [`Mib::diagnostics`] and [`Mib::has_errors`].
+//! Real-world MIB files frequently contain errors, vendor-specific
+//! extensions, or references to modules you don't have. Rather than
+//! failing on the first problem, this library collects diagnostics and
+//! continues, producing as much useful output as possible. After
+//! loading, check [`Mib::has_errors`] and inspect [`Mib::diagnostics`]
+//! for details.
 //!
-//! Two independent controls affect behavior:
+//! There are two independent knobs that control loading behavior.
+//! They can seem redundant at first ("don't both of them control how
+//! strict loading is?"), but they operate at different levels.
 //!
-//! - **[`ResolverStrictness`]** controls resolver fallback behavior (how
-//!   aggressively the resolver attempts to recover from issues). Set via
-//!   [`Loader::resolver_strictness`](load::Loader::resolver_strictness).
-//! - **[`DiagnosticConfig`]** controls reporting and failure thresholds (which
-//!   diagnostics are surfaced, and which severity causes [`LoadError::DiagnosticThreshold`]).
-//!   Set via [`Loader::diagnostic_config`](load::Loader::diagnostic_config).
+//! Think of it like a Rust analogy: [`ResolverStrictness`] is like
+//! controlling how `use` imports are resolved. In Rust, `use foo::Bar`
+//! must name the exact path. In MIBs, imports work similarly - a module
+//! declares `IMPORTS DisplayString FROM SNMPv2-TC`. But many real-world
+//! MIBs get this wrong: they import from the wrong module, or don't
+//! declare imports at all. `ResolverStrictness` controls whether the
+//! resolver gives up on those broken imports or tries to find the
+//! symbol anyway - like if `rustc` had a mode where it would search
+//! all your dependencies for a matching type name when an import fails.
 //!
-//! [`DiagnosticConfig`] has presets via [`ReportingLevel`]:
+//! [`DiagnosticConfig`], on the other hand, is like compiler warnings
+//! and `-Werror`. It controls what gets reported across the entire
+//! pipeline (lexing, parsing, and resolution), and whether problems
+//! cause `load()` to fail. It doesn't change what gets resolved.
 //!
-//! | Preset | Reports | Fails at |
-//! |--------|---------|----------|
-//! | `Verbose` | All (including style/info) | Severe |
-//! | `Default` | Minor and above | Severe |
-//! | `Quiet` | Error and above | Severe |
-//! | `Silent` | Nothing | Fatal only |
+//! The key tradeoff with `ResolverStrictness` is **correctness vs
+//! completeness**. The more permissive you go, the more things get
+//! resolved, but the higher the risk of incorrect results. At
+//! `Permissive`, the resolver falls back to searching all loaded
+//! modules for a matching symbol name. If multiple modules define a
+//! symbol with the same name, you're essentially guessing which one
+//! was intended. At `Strict`, everything must be explicitly imported
+//! from the right module, so if it resolves, it's correct.
 //!
-//! Individual diagnostic codes can be overridden or suppressed via
-//! [`DiagnosticConfig::overrides`] and [`DiagnosticConfig::ignore`].
+//! ## ResolverStrictness - what the resolver attempts
+//!
+//! [`ResolverStrictness`] controls how aggressively the resolver tries
+//! to recover when it can't find a symbol through explicit imports. Set
+//! via [`Loader::resolver_strictness`](load::Loader::resolver_strictness).
+//!
+//! | Level | Behavior | Correctness risk | When to use |
+//! |-------|----------|-----------------|-------------|
+//! | `Strict` | No fallbacks. Symbols must be found via explicit imports. | Lowest - if it resolves, the import was correct. | Validating MIBs for correctness, linting, CI checks. |
+//! | `Normal` (default) | Constrained fallbacks: searches well-known base modules (SNMPv2-SMI, SNMPv2-TC, RFC1155-SMI), global OID roots, and import aliases. | Low - fallbacks are limited to safe, unambiguous cases. | General use. Handles sloppy imports that are obviously resolvable. |
+//! | `Permissive` | All fallbacks, including searching every loaded module for the symbol by name. | Higher - if two modules define `FooStatus`, the resolver picks one. | Loading badly-written vendor MIBs that you can't fix. |
+//!
+//! **Which should I use?** Start with `Normal` (the default). If you
+//! get unresolved-reference diagnostics, it's usually better to fix
+//! the MIB file directly (correcting the `IMPORTS` statement to name
+//! the right source module) rather than reaching for `Permissive`.
+//! MIB files are plain text, and import fixes are usually obvious from
+//! the diagnostic message. Reserve `Permissive` for cases where you
+//! can't modify the MIB files, such as vendor-supplied MIBs loaded
+//! from a read-only path. `Strict` is useful for validation tooling
+//! or CI, where you want broken imports to surface as unresolved
+//! references rather than being silently fixed up.
+//!
+//! ## DiagnosticConfig - what gets reported
+//!
+//! [`DiagnosticConfig`] controls which diagnostics are collected and
+//! which severity level causes `load()` to fail. This is purely about
+//! reporting - it does not change what the resolver does. Set via
+//! [`Loader::diagnostic_config`](load::Loader::diagnostic_config).
+//!
+//! It has four preset constructors:
+//!
+//! | Preset | What's reported | `load()` fails at | When to use |
+//! |--------|-----------------|-------------------|-------------|
+//! | [`DiagnosticConfig::verbose()`] | Everything (style, info, warnings) | Severe | Debugging MIB issues, understanding what the resolver did. |
+//! | [`DiagnosticConfig::default()`] | Minor and above | Severe | General use. |
+//! | [`DiagnosticConfig::quiet()`] | Errors and above only | Severe | Production code that just wants to know about real problems. |
+//! | [`DiagnosticConfig::silent()`] | Nothing | Fatal only | When you don't care about diagnostics at all and want `load()` to succeed unless something is truly broken. |
+//!
+//! **Which should I use?** The default is fine for most cases. Use
+//! `quiet()` in production if you don't want to surface minor issues
+//! to users. Use `silent()` when loading untrusted or messy vendor
+//! MIBs where you just want whatever data you can get. Use `verbose()`
+//! when diagnosing why something isn't resolving correctly.
+//!
+//! ## Combining the two
+//!
+//! Since strictness controls resolution behavior and diagnostics
+//! controls reporting across the whole pipeline, they can be mixed
+//! freely:
+//!
+//! - `Normal` + `default()` - good general-purpose defaults.
+//! - `Permissive` + `silent()` - maximum tolerance. Tries every
+//!   fallback, suppresses all diagnostics, only fails on fatal errors.
+//!   Good for loading a pile of vendor MIBs where you want whatever
+//!   data you can get. Be aware that some resolved symbols may be
+//!   incorrect due to ambiguous fallback matches.
+//! - `Strict` + `verbose()` - maximum strictness. No fallbacks, all
+//!   diagnostics reported (including parse warnings and style issues).
+//!   Good for validating MIBs you author.
+//! - `Normal` + `quiet()` - reasonable for a production SNMP tool that
+//!   loads user-provided MIBs. Safe fallbacks, but only real errors
+//!   are surfaced.
+//!
+//! ## Fine-tuning
+//!
+//! For more control, [`DiagnosticConfig`] also supports:
+//!
+//! - `fail_at` - change which severity causes `load()` to return an
+//!   error. For example, set to [`Severity::Minor`] to fail on any
+//!   minor issue.
+//! - `overrides` - promote or demote specific diagnostic codes (e.g.
+//!   turn a warning into an error).
+//! - `ignore` - glob patterns to suppress specific diagnostic codes
+//!   entirely (e.g. `"import-*"` to ignore all import-related
+//!   diagnostics).
 //!
 //! # Feature Flags
 //!
@@ -315,6 +480,112 @@
 //! |---------|---------|-------------|
 //! | `serde` | yes | Serde support and JSON export via [`export`] |
 //! | `cli` | yes | CLI binary (`mib-rs`) |
+//!
+//! # Examples
+//!
+//! Runnable examples live in the `examples/` directory. Each one can be run
+//! with `cargo run --example <name>`.
+//!
+//! ## Basic usage
+//!
+//! Load a MIB from memory, query objects, and display module metadata.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/basic.rs")]
+//! ```
+//!
+//! ## OID tree walking
+//!
+//! Root traversal, subtree iteration, depth-first walk, and node navigation.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/walk.rs")]
+//! ```
+//!
+//! ## Type introspection
+//!
+//! Type chains, effective values, constraints, enums, display hints,
+//! and classification predicates.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/types.rs")]
+//! ```
+//!
+//! ## Table navigation
+//!
+//! Tables, rows, columns, indexes, and object kind predicates.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/tables.rs")]
+//! ```
+//!
+//! ## Module metadata
+//!
+//! Module metadata, imports, revisions, base modules, and module-scoped
+//! iteration.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/modules.rs")]
+//! ```
+//!
+//! ## JSON export
+//!
+//! JSON export of a resolved MIB using the serde-based export API.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/export.rs")]
+//! ```
+//!
+//! ## Notifications, groups, and compliance
+//!
+//! Notifications, object groups, notification groups, and compliance statements.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/notifications.rs")]
+//! ```
+//!
+//! ## Query formats
+//!
+//! Plain names, qualified names, numeric OIDs, instance OIDs, and OID formatting.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/query.rs")]
+//! ```
+//!
+//! ## Diagnostics
+//!
+//! Diagnostic collection, strictness levels, reporting configuration,
+//! filtering, and severity overrides.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/diagnostics.rs")]
+//! ```
+//!
+//! ## Raw data access
+//!
+//! Low-level raw data access using arena IDs and the RawMib view.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/raw.rs")]
+//! ```
+//!
+//! ## Tokenization
+//!
+//! Lexical tokenization of MIB source text for syntax highlighting,
+//! linting, or custom tooling.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/tokens.rs")]
+//! ```
+//!
+//! ## Sources
+//!
+//! Source types: in-memory modules, directory sources, chaining,
+//! and module listing.
+//!
+//! ```rust,no_run
+#![doc = include_str!("../examples/sources.rs")]
+//! ```
 pub mod ast;
 pub mod error;
 #[cfg(feature = "serde")]
