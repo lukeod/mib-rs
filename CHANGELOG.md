@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-14
+
+### Added
+
+- Add 12 runnable examples covering the full public API (basic, walk, types, tables, modules, export, notifications, query, diagnostics, raw, tokens, sources)
+- Embed examples in crate-level rustdoc via include_str
+
+### Changed
+
+- Expand crate docs with MIB/SNMP background for non-experts
+- Add guidance on effective_* vs direct type accessors
+- Document ResolverStrictness and DiagnosticConfig tradeoffs with practical recommendations
+- Explain correctness vs completeness tradeoff for resolver fallback levels
+
 ## [0.1.2] - 2026-03-13
 
 ### Changed
@@ -43,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/lukeod/mib-rs/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/lukeod/mib-rs/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lukeod/mib-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lukeod/mib-rs/releases/tag/v0.1.0
