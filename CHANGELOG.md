@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix private-item doc link warnings for `Mib::resolve`
 - Fix CLI kind filter rejecting valid values
 
+### Dependencies
+
+- Bump clap 4.5.60 -> 4.6.0
+- Bump anstream 0.6.21 -> 1.0.0
+- Bump tracing-subscriber 0.3.22 -> 0.3.23
+- Bump libc, once_cell, anstyle, colorchoice and other transitive deps
+
 ## [0.1.3] - 2026-03-14
 
 ### Added
