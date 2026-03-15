@@ -478,11 +478,12 @@
 //! controlling how `use` imports are resolved. In Rust, `use foo::Bar`
 //! must name the exact path. In MIBs, imports work similarly - a module
 //! declares `IMPORTS DisplayString FROM SNMPv2-TC`. But many real-world
-//! MIBs get this wrong: they import from the wrong module, or don't
-//! declare imports at all. `ResolverStrictness` controls whether the
-//! resolver gives up on those broken imports or tries to find the
-//! symbol anyway - like if `rustc` had a mode where it would search
-//! all your dependencies for a matching type name when an import fails.
+//! MIBs get this wrong: they import from the wrong module, forget to
+//! import well-known names they assume are built-in, or don't declare
+//! imports at all. `ResolverStrictness` controls how hard the resolver
+//! tries to recover from these mistakes, from following only explicit
+//! import chains (`Strict`) to searching all loaded modules by name
+//! (`Permissive`).
 //!
 //! [`DiagnosticConfig`], on the other hand, is like compiler warnings
 //! and `-Werror`. It controls what gets reported across the entire
@@ -495,8 +496,10 @@
 //! `Permissive`, the resolver falls back to searching all loaded
 //! modules for a matching symbol name. If multiple modules define a
 //! symbol with the same name, you're essentially guessing which one
-//! was intended. At `Strict`, everything must be explicitly imported
-//! from the right module, so if it resolves, it's correct.
+//! was intended. At `Strict`, the resolver only follows deterministic
+//! strategies where the source is unambiguous (explicit imports,
+//! import forwarding chains, ASN.1 primitives), so resolved symbols
+//! are traceable back to their origin.
 //!
 //! ## ResolverStrictness - what the resolver attempts
 //!
@@ -506,9 +509,100 @@
 //!
 //! | Level | Behavior | Correctness risk | When to use |
 //! |-------|----------|-----------------|-------------|
-//! | `Strict` | No fallbacks. Symbols must be found via explicit imports. | Lowest - if it resolves, the import was correct. | Validating MIBs for correctness, linting, CI checks. |
-//! | `Normal` (default) | Constrained fallbacks: searches well-known base modules (SNMPv2-SMI, SNMPv2-TC, RFC1155-SMI), global OID roots, and import aliases. | Low - fallbacks are limited to safe, unambiguous cases. | General use. Handles sloppy imports that are obviously resolvable. |
-//! | `Permissive` | All fallbacks, including searching every loaded module for the symbol by name. | Higher - if two modules define `FooStatus`, the resolver picks one. | Loading badly-written vendor MIBs that you can't fix. |
+//! | `Strict` | Minimal fallbacks. Only deterministic strategies that don't guess the source module. | Lowest - if it resolves, the import chain is traceable. | Validating MIBs for correctness, linting, CI checks. |
+//! | `Normal` (default) | Constrained fallbacks: searches well-known base modules for unimported types and OID roots, and resolves module name aliases. | Low - fallbacks are limited to safe, unambiguous cases. | General use. Handles sloppy imports that are obviously resolvable. |
+//! | `Permissive` | All fallbacks, including searching every loaded module for a symbol by name. | Higher - if two modules define `FooStatus`, the resolver picks one. | Loading badly-written vendor MIBs that you can't fix. |
+//!
+//! ### Specific behaviors by level
+//!
+//! **All levels (including Strict):**
+//! - Direct import resolution (symbol found in the named source module).
+//! - Import forwarding: MIB authors often import a symbol from a
+//!   module that uses it, not realizing that module doesn't define
+//!   the symbol - it imports it from somewhere else. SMI imports
+//!   are not transitive (importing from a module only gives you
+//!   what that module defines, not what it imports), but many MIB
+//!   authors treat them as if they were, similar to how programmers
+//!   sometimes confuse which scope a variable is visible in.
+//!
+//!   For example, suppose `ACME-TC` defines a textual convention
+//!   `AcmeStatus`, and `ACME-MIB` imports and uses it:
+//!
+//!   ```text
+//!   ACME-TC DEFINITIONS ::= BEGIN
+//!     AcmeStatus ::= TEXTUAL-CONVENTION ...
+//!   END
+//!
+//!   ACME-MIB DEFINITIONS ::= BEGIN
+//!     IMPORTS AcmeStatus FROM ACME-TC;
+//!     -- uses AcmeStatus in OBJECT-TYPE definitions
+//!   END
+//!   ```
+//!
+//!   A third module might then mistakenly import `AcmeStatus` from
+//!   `ACME-MIB` instead of from `ACME-TC`:
+//!
+//!   ```text
+//!   ACME-EXTENSION-MIB DEFINITIONS ::= BEGIN
+//!     IMPORTS AcmeStatus FROM ACME-MIB;  -- wrong: ACME-MIB doesn't define it
+//!   END
+//!   ```
+//!
+//!   The resolver handles this by checking `ACME-MIB`'s own IMPORTS,
+//!   finding that it declares `AcmeStatus FROM ACME-TC`, and
+//!   following that chain. This is deterministic - the intermediate
+//!   module explicitly names its source - so it is enabled at all
+//!   strictness levels.
+//! - Partial import resolution: when a source module has some but not
+//!   all of the requested symbols, the ones that exist are resolved
+//!   individually and the rest are reported as unresolved.
+//! - ASN.1 primitive type fallback: `INTEGER`, `OCTET STRING`,
+//!   `OBJECT IDENTIFIER`, and `BITS` always resolve from SNMPv2-SMI
+//!   even without an explicit import.
+//! - Well-known OID roots: `iso`, `ccitt`, and `joint-iso-ccitt`
+//!   always resolve to their fixed arc values.
+//!
+//! **Normal and Permissive (constrained fallbacks):**
+//! - Module name aliases: maps alternate module names to their
+//!   canonical form (e.g. `SNMPv2-SMI-v1` to `SNMPv2-SMI`,
+//!   `RFC-1213` to `RFC1213-MIB`).
+//! - Unimported well-known symbol fallback: names like `enterprises`,
+//!   `Counter64`, and `DisplayString` feel like built-in language
+//!   keywords, but they're actually defined in specific base modules
+//!   (`SNMPv2-SMI`, `SNMPv2-TC`, etc.) and formally need to be
+//!   imported. Many MIB authors skip the import, treating these names
+//!   as globally available:
+//!
+//!   ```text
+//!   ACME-MIB DEFINITIONS ::= BEGIN
+//!     IMPORTS
+//!       MODULE-IDENTITY, OBJECT-TYPE
+//!         FROM SNMPv2-SMI;
+//!     -- no import for enterprises or Counter64
+//!
+//!     acmeMib MODULE-IDENTITY ... ::= { enterprises 12345 }
+//!
+//!     acmeCounter OBJECT-TYPE
+//!       SYNTAX Counter64   -- not imported
+//!       ...
+//!   END
+//!   ```
+//!
+//!   When a type or OID parent is not found via imports, the resolver
+//!   searches the well-known base modules (SNMPv2-SMI, RFC1155-SMI,
+//!   SNMPv2-TC). This is limited to those specific modules, so there
+//!   is no ambiguity about which definition is meant.
+//! - TRAP-TYPE enterprise global lookup: the ENTERPRISE reference in
+//!   TRAP-TYPE definitions is searched across all modules when not
+//!   found via imports.
+//!
+//! **Permissive only (global fallbacks):**
+//! - Global object lookup: INDEX objects, AUGMENTS targets,
+//!   NOTIFICATION-TYPE OBJECTS members, and DEFVAL object references
+//!   are searched across all loaded modules when not found via imports.
+//! - Global group/compliance member lookup: OBJECT-GROUP members,
+//!   MODULE-COMPLIANCE mandatory groups, and AGENT-CAPABILITIES
+//!   variation targets are searched globally.
 //!
 //! **Which should I use?** Start with `Normal` (the default). If you
 //! get unresolved-reference diagnostics, it's usually better to fix
@@ -555,9 +649,9 @@
 //!   Good for loading a pile of vendor MIBs where you want whatever
 //!   data you can get. Be aware that some resolved symbols may be
 //!   incorrect due to ambiguous fallback matches.
-//! - `Strict` + `verbose()` - maximum strictness. No fallbacks, all
-//!   diagnostics reported (including parse warnings and style issues).
-//!   Good for validating MIBs you author.
+//! - `Strict` + `verbose()` - maximum strictness. Minimal fallbacks,
+//!   all diagnostics reported (including parse warnings and style
+//!   issues). Good for validating MIBs you author.
 //! - `Normal` + `quiet()` - reasonable for a production SNMP tool that
 //!   loads user-provided MIBs. Safe fallbacks, but only real errors
 //!   are surfaced.

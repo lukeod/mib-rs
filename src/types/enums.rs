@@ -60,14 +60,24 @@ impl_display!(Severity {
 ///
 /// Ordered from strictest (fewest fallbacks) to most permissive.
 /// See also [`ReportingLevel`] which controls diagnostic output separately.
+///
+/// All levels support direct import resolution, import forwarding (following
+/// re-exports declared in the source module's own IMPORTS), partial import
+/// resolution, ASN.1 primitive type fallback, and well-known OID roots.
+///
+/// See the crate-level docs for a detailed breakdown of behaviors per level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ResolverStrictness {
-    /// No fallbacks. Unresolved references produce errors.
+    /// Minimal fallbacks. Only deterministic strategies that don't guess
+    /// the source module (direct imports, import forwarding, ASN.1
+    /// primitives, well-known OID roots).
     Strict = 0,
-    /// Tier-2 constrained fallbacks enabled (e.g. searching related modules).
+    /// Constrained fallbacks: module name aliases, unimported SMI/TC type
+    /// lookup, SMI global OID root fallback, TRAP-TYPE enterprise lookup.
     Normal = 1,
-    /// All fallbacks enabled, including global symbol search.
+    /// All fallbacks, including global symbol search across all loaded
+    /// modules for objects, group members, and compliance targets.
     Permissive = 2,
 }
 
