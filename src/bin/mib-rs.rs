@@ -237,15 +237,7 @@ fn main() {
             permissive,
             format,
         } => cmd_get(
-            &cli.paths,
-            &query,
-            modules,
-            tree,
-            max_depth,
-            full,
-            strict,
-            permissive,
-            format,
+            &cli.paths, &query, modules, tree, max_depth, full, strict, permissive, format,
         ),
         Command::List { count, format } => cmd_list(&cli.paths, count, format),
         Command::Paths => cmd_paths(&cli.paths),
@@ -341,7 +333,11 @@ fn load_mib(
     }
 }
 
-fn resolve_strictness(strict: bool, permissive: bool, default: ResolverStrictness) -> ResolverStrictness {
+fn resolve_strictness(
+    strict: bool,
+    permissive: bool,
+    default: ResolverStrictness,
+) -> ResolverStrictness {
     if strict {
         ResolverStrictness::Strict
     } else if permissive {
@@ -406,10 +402,10 @@ fn cmd_load(
             Kind::Capability,
         ];
         for kind in kinds {
-            if let Some(&count) = kind_counts.get(&kind) {
-                if count > 0 {
-                    println!("  {:<15} {count}", format!("{kind}:"));
-                }
+            if let Some(&count) = kind_counts.get(&kind)
+                && count > 0
+            {
+                println!("  {:<15} {count}", format!("{kind}:"));
             }
         }
     }
@@ -472,6 +468,7 @@ fn count_node_kinds(mib: &Mib) -> HashMap<Kind, usize> {
 
 // --- get ---
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_get(
     paths: &[String],
     query: &str,
@@ -549,7 +546,12 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
             } else {
                 String::new()
             };
-            println!("Type:    {} ({}){}", ty.name(), ty.effective_base(), constraint);
+            println!(
+                "Type:    {} ({}){}",
+                ty.name(),
+                ty.effective_base(),
+                constraint
+            );
         }
         println!("Access:  {}", obj.access());
         println!("Status:  {}", obj.status());
@@ -588,32 +590,29 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
         }
 
         // Table structure
-        if let Some(tbl) = obj.table() {
-            if tbl.name() != obj.name() {
-                println!("Table:   {}", tbl.name());
-            }
+        if let Some(tbl) = obj.table()
+            && tbl.name() != obj.name()
+        {
+            println!("Table:   {}", tbl.name());
         }
-        if let Some(row) = obj.row() {
-            if row.name() != obj.name() {
-                println!("Row:     {}", row.name());
-            }
+        if let Some(row) = obj.row()
+            && row.name() != obj.name()
+        {
+            println!("Row:     {}", row.name());
         }
         let cols: Vec<_> = obj.columns().collect();
         if !cols.is_empty() {
             println!("Columns:");
             println!(
-                "  {:<28} {:<20} {:<18} {:<18} {}",
-                "COLUMN", "TYPE", "BASE", "ACCESS", "ROLE"
+                "  {:<28} {:<20} {:<18} {:<18} ROLE",
+                "COLUMN", "TYPE", "BASE", "ACCESS"
             );
             println!(
-                "  {:<28} {:<20} {:<18} {:<18} {}",
-                "------", "----", "----", "------", "----"
+                "  {:<28} {:<20} {:<18} {:<18} ----",
+                "------", "----", "----", "------"
             );
             for col in &cols {
-                let type_name = col
-                    .ty()
-                    .map(|t| t.name().to_string())
-                    .unwrap_or_default();
+                let type_name = col.ty().map(|t| t.name().to_string()).unwrap_or_default();
                 let base_type = col
                     .ty()
                     .map(|t| t.effective_base().to_string())
@@ -750,10 +749,10 @@ fn print_tree(node: mib_rs::mib::Node<'_>, depth: usize, max_depth: usize) {
 
     // Enrich tree output with type and access
     let mut extra = String::new();
-    if let Some(obj) = node.object() {
-        if let Some(ty) = obj.ty() {
-            extra = format!(" {} {}", ty.effective_base(), obj.access());
-        }
+    if let Some(obj) = node.object()
+        && let Some(ty) = obj.ty()
+    {
+        extra = format!(" {} {}", ty.effective_base(), obj.access());
     }
 
     println!("{indent}{name} {}{kind_str}{extra}", node.oid());
@@ -992,7 +991,11 @@ fn format_desc(desc: &str, full: bool) -> Option<String> {
 }
 
 fn non_empty(s: &str) -> Option<String> {
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 // --- list ---
@@ -1100,6 +1103,7 @@ struct LintResult {
     exit_code: i32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_lint(
     paths: &[String],
     modules: Vec<String>,
@@ -1122,12 +1126,7 @@ fn cmd_lint(
     let mut diag_config = DiagnosticConfig::verbose();
     diag_config.fail_at = Severity::Fatal;
 
-    let mib = match load_mib(
-        paths,
-        modules,
-        ResolverStrictness::Strict,
-        diag_config,
-    ) {
+    let mib = match load_mib(paths, modules, ResolverStrictness::Strict, diag_config) {
         Ok(m) => m,
         Err(_) => return 2,
     };
@@ -1152,10 +1151,10 @@ fn cmd_lint(
 
     for d in diags {
         // Filter by level
-        if let Some(max_sev) = level_sev {
-            if d.severity > max_sev {
-                continue;
-            }
+        if let Some(max_sev) = level_sev
+            && d.severity > max_sev
+        {
+            continue;
         }
 
         let code_str = d.code.as_code();
@@ -1171,15 +1170,23 @@ fn cmd_lint(
         }
 
         let sev_str = d.severity.to_string();
-        *result.summary.by_severity.entry(sev_str.clone()).or_insert(0) += 1;
-        *result.summary.by_code.entry(code_str.to_string()).or_insert(0) += 1;
+        *result
+            .summary
+            .by_severity
+            .entry(sev_str.clone())
+            .or_insert(0) += 1;
+        *result
+            .summary
+            .by_code
+            .entry(code_str.to_string())
+            .or_insert(0) += 1;
         result.summary.total += 1;
 
         // Check fail threshold
-        if let Some(fail_threshold) = fail_sev {
-            if d.severity <= fail_threshold {
-                result.exit_code = 1;
-            }
+        if let Some(fail_threshold) = fail_sev
+            && d.severity <= fail_threshold
+        {
+            result.exit_code = 1;
         }
 
         result.diagnostics.push(LintDiagnostic {
@@ -1220,7 +1227,9 @@ fn severity_from_num(n: u8) -> Option<Severity> {
     }
 }
 
-const SEVERITY_ORDER: &[&str] = &["fatal", "severe", "error", "minor", "style", "warning", "info"];
+const SEVERITY_ORDER: &[&str] = &[
+    "fatal", "severe", "error", "minor", "style", "warning", "info",
+];
 
 fn print_lint_text(result: &LintResult, group_by: Option<GroupBy>, summary_only: bool) {
     if summary_only {
@@ -1237,13 +1246,20 @@ fn print_lint_text(result: &LintResult, group_by: Option<GroupBy>, summary_only:
         None => {
             for d in &result.diagnostics {
                 let loc = format_lint_location(d);
-                println!("{}: [{}] {}{}: {}", d.severity, d.code, loc, if loc.is_empty() { "" } else { "" }, d.message);
+                println!("{}: [{}] {}: {}", d.severity, d.code, loc, d.message);
             }
         }
         Some(GroupBy::Module) => {
             let mut by_module: HashMap<&str, Vec<&LintDiagnostic>> = HashMap::new();
             for d in &result.diagnostics {
-                by_module.entry(if d.module.is_empty() { "<unknown>" } else { &d.module }).or_default().push(d);
+                by_module
+                    .entry(if d.module.is_empty() {
+                        "<unknown>"
+                    } else {
+                        &d.module
+                    })
+                    .or_default()
+                    .push(d);
             }
             let mut modules: Vec<_> = by_module.keys().copied().collect();
             modules.sort();
@@ -1313,10 +1329,10 @@ fn print_lint_summary(result: &LintResult) {
         result.summary.modules, result.summary.total
     );
     for sev in SEVERITY_ORDER {
-        if let Some(&count) = result.summary.by_severity.get(*sev) {
-            if count > 0 {
-                println!("  {:<8} {count}", format!("{sev}:"));
-            }
+        if let Some(&count) = result.summary.by_severity.get(*sev)
+            && count > 0
+        {
+            println!("  {:<8} {count}", format!("{sev}:"));
         }
     }
 }
@@ -1324,20 +1340,20 @@ fn print_lint_summary(result: &LintResult) {
 fn print_lint_compact(result: &LintResult, summary_only: bool) {
     if summary_only {
         let mut parts = Vec::new();
-        if let Some(&c) = result.summary.by_severity.get("error") {
-            if c > 0 {
-                parts.push(format!("{c} errors"));
-            }
+        if let Some(&c) = result.summary.by_severity.get("error")
+            && c > 0
+        {
+            parts.push(format!("{c} errors"));
         }
-        if let Some(&c) = result.summary.by_severity.get("minor") {
-            if c > 0 {
-                parts.push(format!("{c} minor"));
-            }
+        if let Some(&c) = result.summary.by_severity.get("minor")
+            && c > 0
+        {
+            parts.push(format!("{c} minor"));
         }
-        if let Some(&c) = result.summary.by_severity.get("style") {
-            if c > 0 {
-                parts.push(format!("{c} style"));
-            }
+        if let Some(&c) = result.summary.by_severity.get("style")
+            && c > 0
+        {
+            parts.push(format!("{c} style"));
         }
         print!("{} issues", result.summary.total);
         if !parts.is_empty() {
@@ -1600,6 +1616,7 @@ fn print_diagnostic_codes() {
 
 // --- find ---
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_find(
     paths: &[String],
     pattern: &str,
@@ -1644,10 +1661,10 @@ fn cmd_find(
             continue;
         }
         // Type filter
-        if let Some(ref base) = base_lower {
-            if !match_base_type_obj(&obj, base) {
-                continue;
-            }
+        if let Some(ref base) = base_lower
+            && !match_base_type_obj(&obj, base)
+        {
+            continue;
         }
         let mod_name = obj.module().map(|m| m.name()).unwrap_or("?");
         matches.push((
@@ -1859,6 +1876,7 @@ impl From<CliKind> for Kind {
 
 // --- dump ---
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_dump(
     paths: &[String],
     modules: Vec<String>,
@@ -1916,9 +1934,7 @@ fn cmd_dump(
 
 fn filter_export_by_oid(payload: &mut mib_rs::export::ExportPayload, oid_prefix: &str) {
     let prefix_dot = format!("{oid_prefix}.");
-    let matches_oid = |oid: &str| -> bool {
-        oid == oid_prefix || oid.starts_with(&prefix_dot)
-    };
+    let matches_oid = |oid: &str| -> bool { oid == oid_prefix || oid.starts_with(&prefix_dot) };
 
     payload.nodes.retain(|n| matches_oid(&n.oid));
     payload.objects.retain(|o| matches_oid(&o.oid));

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-15
+
+### Breaking Changes
+
+- Rename `export_v1` to `export_payload`
+- Change `description` fields to `Option<String>` in `ExportRevision`, `ExportNotification`, `ExportGroup`, `ExportCompliance`, `ExportCapability`
+
+### Added
+
+- Add CLI parity features across all subcommands
+- Expand rustdoc coverage for mid-level MIB concepts
+- Expand ResolverStrictness docs with per-level behavior details
+
+### Fixed
+
+- Fix CLI get output and dump export issues
+
 ## [0.2.0] - 2026-03-15
 
 ### Breaking Changes
@@ -95,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/lukeod/mib-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/lukeod/mib-rs/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/lukeod/mib-rs/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/lukeod/mib-rs/compare/v0.1.1...v0.1.2
