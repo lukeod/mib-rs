@@ -338,9 +338,25 @@ impl_display!(BaseType {
     Unsigned64 => "Unsigned64",
 });
 
-/// How an INDEX component maps to instance-identifier sub-identifiers (RFC 2578, section 7.7).
+/// How an INDEX component maps to instance-identifier sub-identifiers (RFC 2578, Section 7.7).
 ///
-/// The encoding depends on the index object's [`BaseType`].
+/// When a table row is identified by its index values, those values are
+/// encoded as OID sub-identifiers appended to the column OID. The
+/// encoding strategy depends on the index object's [`BaseType`] and
+/// constraints:
+///
+/// - Integer types use a single sub-identifier containing the value.
+/// - Fixed-length strings (with a single-value SIZE constraint like
+///   `SIZE (6)`) use one sub-identifier per octet, with no length prefix.
+/// - Variable-length strings are length-prefixed: one sub-identifier
+///   for the length, followed by one per octet.
+/// - The `IMPLIED` keyword omits the length prefix, but can only be
+///   used on the last index component since there is no way to tell
+///   where it ends otherwise.
+///
+/// This encoding matters when constructing or parsing instance OIDs
+/// programmatically (e.g. building an SNMP GET request for a specific
+/// table row).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum IndexEncoding {
@@ -350,12 +366,15 @@ pub enum IndexEncoding {
     /// Single sub-identifier for integer-valued indexes.
     Integer = 1,
     /// Fixed number of sub-identifiers (SIZE-constrained OCTET STRING).
+    /// No length prefix; the number of sub-identifiers equals the fixed SIZE.
     FixedString = 2,
     /// Length prefix followed by that many sub-identifiers.
+    /// Used for variable-length OCTET STRING and OBJECT IDENTIFIER indexes.
     LengthPrefixed = 3,
-    /// Like `FixedString` but length is implied from the end of the OID.
+    /// No length prefix; the index value extends to the end of the OID.
+    /// Only valid for the last index component (uses the `IMPLIED` keyword).
     Implied = 4,
-    /// Four sub-identifiers encoding an IPv4 address.
+    /// Four sub-identifiers encoding an IPv4 address (one per octet).
     IpAddress = 5,
 }
 

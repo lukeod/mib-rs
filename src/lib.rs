@@ -234,7 +234,31 @@
 //!   full OID is the column OID plus the index suffix.
 //!
 //! For example, `ifTable` contains `ifEntry` rows indexed by `ifIndex`.
-//! The column `ifDescr` for interface 7 has OID `ifDescr.7`.
+//! The column `ifDescr` for interface 7 has OID `ifDescr.7` (i.e.
+//! the column's base OID with the index value `7` appended).
+//!
+//! ## AUGMENTS
+//!
+//! Some rows use `AUGMENTS` instead of `INDEX`. An augmenting row
+//! extends another table's rows with additional columns, sharing the
+//! same index structure. For example, `ifXEntry AUGMENTS ifEntry`
+//! adds columns like `ifHighSpeed` to each `ifEntry` row, using the
+//! same `ifIndex` to identify rows. Use [`Object::augments`] to find
+//! the target row and [`Object::augmented_by`] to find extending rows.
+//! [`Object::effective_indexes`] follows the augment chain
+//! automatically, returning the inherited index list.
+//!
+//! ## Index encoding
+//!
+//! Each index component has an [`IndexEncoding`] that describes how
+//! its value maps to OID sub-identifiers in the instance suffix.
+//! Integer indexes use a single sub-identifier. Fixed-length strings
+//! (with a single-value SIZE constraint) use one sub-identifier per
+//! octet. Variable-length strings are length-prefixed. The `IMPLIED`
+//! keyword omits the length prefix, relying on the index being the
+//! last component. [`Index::encoding`] returns the derived encoding,
+//! which is useful for SNMP pollers that need to decode or construct
+//! instance OIDs programmatically.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
@@ -368,6 +392,36 @@
 //! assert!(type_names.contains(&"DocName"));
 //! ```
 //!
+//! # Notifications and Conformance
+//!
+//! Beyond objects and types, SMI defines several constructs for
+//! event reporting and conformance testing:
+//!
+//! - **NOTIFICATION-TYPE** (SMIv2) / **TRAP-TYPE** (SMIv1) - defines
+//!   an asynchronous event an agent can send. Each notification lists
+//!   the objects it carries as payload via its OBJECTS clause. SMIv1
+//!   traps additionally carry an enterprise OID and trap number.
+//!   See [`Notification`] and [`Notification::objects`].
+//!
+//! - **OBJECT-GROUP** / **NOTIFICATION-GROUP** - bundles related
+//!   objects or notifications into a named set. Groups are the unit
+//!   of conformance: a compliance statement says "you must implement
+//!   these groups". See [`Group`] and [`Group::members`].
+//!
+//! - **MODULE-COMPLIANCE** - declares which groups a compliant
+//!   implementation must support, with optional per-object refinements
+//!   that can narrow syntax or access requirements. See [`Compliance`].
+//!
+//! - **AGENT-CAPABILITIES** - declares what an actual agent
+//!   implementation supports, including which groups it includes and
+//!   any per-object variations (restricted syntax, different defaults).
+//!   See [`Capability`].
+//!
+//! These are less commonly needed than objects and types, but matter
+//! for MIB validation tooling, compliance checking, and understanding
+//! which objects are required vs optional. The `notifications` example
+//! demonstrates querying all four.
+//!
 //! # Query Formats
 //!
 //! Once a MIB is loaded, you can look up nodes and OIDs using several
@@ -421,6 +475,45 @@
 //! over `OCTET STRING`. Each link in the chain can add constraints
 //! (size limits, value ranges), a display hint (how to render the value
 //! as text), or enumeration labels.
+//!
+//! A **textual convention** (TC) is the standard way to define reusable
+//! types in SMIv2 (RFC 2579). A TC wraps a base type with a name,
+//! description, and optional DISPLAY-HINT and constraints. For example,
+//! `DisplayString` is a TC over `OCTET STRING (SIZE (0..255))` with
+//! display hint `"255a"`. Use [`Type::is_textual_convention`] to check
+//! whether a type was defined as a TC.
+//!
+//! ## Constraints: SIZE vs range
+//!
+//! Both [`Type::sizes`] and [`Type::ranges`] return `&[Range]`, but
+//! they constrain different things:
+//!
+//! - **SIZE** constrains the length (in octets) of string-like types
+//!   (`OCTET STRING`, `Opaque`). Example: `SIZE (0..255)` means
+//!   at most 255 bytes.
+//! - **Range** constrains the numeric value of integer-like types.
+//!   Example: `(1..2147483647)` means the value must be at least 1.
+//!
+//! The `effective_*` variants walk the parent chain to find inherited
+//! constraints.
+//!
+//! ## Display hints
+//!
+//! A DISPLAY-HINT string (RFC 2579, Section 3) tells a MIB browser or
+//! SNMP tool how to render a raw value as human-readable text. Common
+//! examples:
+//!
+//! - `"255a"` - up to 255 ASCII characters (used by `DisplayString`)
+//! - `"1x:"` - hex bytes separated by colons (used by `MacAddress`)
+//! - `"2d-1d-1d,1d:1d:1d.1d"` - date-time components (used by
+//!   `DateAndTime`)
+//!
+//! [`Type::effective_display_hint`] and
+//! [`Object::effective_display_hint`] return the hint string. This
+//! library does not interpret the hint, it just provides it. Callers
+//! are responsible for parsing the format and applying it to raw values.
+//!
+//! ## Direct vs effective accessors
 //!
 //! Each [`Type`] handle exposes two families of accessors:
 //!
@@ -565,7 +658,9 @@
 //! **Normal and Permissive (constrained fallbacks):**
 //! - Module name aliases: maps alternate module names to their
 //!   canonical form (e.g. `SNMPv2-SMI-v1` to `SNMPv2-SMI`,
-//!   `RFC-1213` to `RFC1213-MIB`).
+//!   `RFC-1213` to `RFC1213-MIB`). These aliases exist because
+//!   modules have been renamed over time as RFCs were revised,
+//!   and some vendors use non-standard names in their IMPORTS.
 //! - Unimported well-known symbol fallback: names like `enterprises`,
 //!   `Counter64`, and `DisplayString` feel like built-in language
 //!   keywords, but they're actually defined in specific base modules
