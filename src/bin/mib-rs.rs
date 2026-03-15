@@ -1884,7 +1884,7 @@ fn cmd_dump(
         eprintln!("{d}");
     }
 
-    let mut payload = mib_rs::export::export_v1(&mib, strictness);
+    let mut payload = mib_rs::export::export_payload(&mib, strictness);
 
     // Apply --oid filter
     if let Some(ref oid_prefix) = oid_filter {

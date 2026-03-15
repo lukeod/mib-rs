@@ -15,7 +15,7 @@ fn main() {
         .expect("should load");
 
     // -- Export to JSON --
-    let payload = mib_rs::export::export_v1(&mib, ResolverStrictness::Normal);
+    let payload = mib_rs::export::export_payload(&mib, ResolverStrictness::Normal);
 
     // The payload is a fully serializable structure.
     let json = serde_json::to_string_pretty(&payload).expect("should serialize");

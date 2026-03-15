@@ -1,6 +1,6 @@
-//! JSON export of a resolved [`Mib`] as a schema v1 payload.
+//! JSON export of a resolved [`Mib`].
 //!
-//! The entry point is [`export_v1`], which converts a resolved [`Mib`] into an
+//! The entry point is [`export_payload`], which converts a resolved [`Mib`] into an
 //! [`ExportPayload`]. All types derive [`Serialize`] and
 //! produce a deterministic, sorted JSON representation suitable for
 //! golden-file comparison tests.
@@ -18,9 +18,9 @@ use crate::mib::typedef::TypeData;
 use crate::mib::types::*;
 use crate::types::{Access, BaseType, Kind, Language, ResolverStrictness, Severity, Status};
 
-/// Top-level payload for the schema v1 resolved-mib export.
+/// Top-level payload for the resolved-mib export.
 ///
-/// Built by [`export_v1`] from a resolved [`Mib`].
+/// Built by [`export_payload`] from a resolved [`Mib`].
 ///
 /// Collections are sorted deterministically: modules and types by name,
 /// OID-bearing items (objects, notifications, groups, compliances,
@@ -58,7 +58,7 @@ pub struct ExportPayload {
 
 /// Identifies the exporter implementation, version, and commit hash.
 ///
-/// Populated by [`export_v1`] with the crate name; version and commit
+/// Populated by [`export_payload`] with the crate name; version and commit
 /// are left empty and can be filled in by CLI tooling.
 #[derive(Serialize)]
 pub struct Exporter {
@@ -832,7 +832,7 @@ where
     })
 }
 
-/// Build the complete schema v1 export payload from a resolved [`Mib`].
+/// Build the complete export payload from a resolved [`Mib`].
 ///
 /// All collections are sorted deterministically (modules and types by name,
 /// objects/notifications/groups by OID) for reproducible output. The
@@ -850,10 +850,10 @@ where
 ///     .modules(["IF-MIB"])
 ///     .load()
 ///     .unwrap();
-/// let payload = export::export_v1(&mib, ResolverStrictness::Normal);
+/// let payload = export::export_payload(&mib, ResolverStrictness::Normal);
 /// let json = serde_json::to_string_pretty(&payload).unwrap();
 /// ```
-pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
+pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
     let tree = mib.tree();
 
     // --- Modules ---
@@ -1479,7 +1479,7 @@ mod tests {
     use crate::source::dir as dir_source;
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
-    use super::export_v1;
+    use super::export_payload;
 
     fn corpus_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
@@ -1498,7 +1498,7 @@ mod tests {
     #[test]
     fn export_includes_base_modules_and_builtins() {
         let mib = load_corpus(&["IF-MIB"]);
-        let payload = export_v1(&mib, ResolverStrictness::Permissive);
+        let payload = export_payload(&mib, ResolverStrictness::Permissive);
 
         assert!(
             payload.modules.iter().any(|m| m.name == "SNMPv2-SMI"),
@@ -1520,7 +1520,7 @@ mod tests {
     #[test]
     fn export_uppercases_byte_defval_hex() {
         let mib = load_corpus(&["SYNTHETIC-MIB"]);
-        let payload = export_v1(&mib, ResolverStrictness::Permissive);
+        let payload = export_payload(&mib, ResolverStrictness::Permissive);
         let object = payload
             .objects
             .iter()
