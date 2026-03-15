@@ -98,7 +98,7 @@ pub struct ExportRevision {
     /// Revision date string (e.g. `"200206140000Z"`).
     pub date: String,
     /// DESCRIPTION text for this revision.
-    pub description: String,
+    pub description: Option<String>,
 }
 
 /// A resolved type definition (TEXTUAL-CONVENTION or type assignment).
@@ -307,7 +307,7 @@ pub struct ExportNotification {
     /// SMIv1 TRAP-TYPE fields, present only when `kind` is `"trap"`.
     pub trap: Option<ExportTrap>,
     /// DESCRIPTION clause text.
-    pub description: String,
+    pub description: Option<String>,
     /// REFERENCE clause, if any.
     pub reference: Option<String>,
     /// OBJECTS clause: the variables included with this notification.
@@ -340,7 +340,7 @@ pub struct ExportGroup {
     /// STATUS clause value.
     pub status: String,
     /// DESCRIPTION clause text.
-    pub description: String,
+    pub description: Option<String>,
     /// REFERENCE clause, if any.
     pub reference: Option<String>,
     /// OBJECTS or NOTIFICATIONS clause members.
@@ -361,7 +361,7 @@ pub struct ExportCompliance {
     /// STATUS clause value.
     pub status: String,
     /// DESCRIPTION clause text.
-    pub description: String,
+    pub description: Option<String>,
     /// REFERENCE clause, if any.
     pub reference: Option<String>,
     /// MODULE clauses within this compliance definition.
@@ -426,7 +426,7 @@ pub struct ExportCapability {
     /// PRODUCT-RELEASE clause, if present.
     pub product_release: Option<String>,
     /// DESCRIPTION clause text.
-    pub description: String,
+    pub description: Option<String>,
     /// REFERENCE clause, if any.
     pub reference: Option<String>,
     /// SUPPORTS clauses describing which modules/groups this agent supports.
@@ -873,7 +873,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 .iter()
                 .map(|r| ExportRevision {
                     date: r.date.clone(),
-                    description: r.description.clone(),
+                    description: opt_string(&r.description),
                 })
                 .collect(),
         })
@@ -1129,7 +1129,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 status: status_str(notif.status()).to_string(),
                 kind: kind.to_string(),
                 trap,
-                description: notif.description().to_string(),
+                description: opt_string(notif.description()),
                 reference: opt_string(notif.reference()),
                 objects: notif_objects,
             },
@@ -1182,7 +1182,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 module: mod_name.to_string(),
                 kind: kind.to_string(),
                 status: status_str(group.status()).to_string(),
-                description: group.description().to_string(),
+                description: opt_string(group.description()),
                 reference: opt_string(group.reference()),
                 members,
             },
@@ -1269,7 +1269,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 name: comp.name().to_string(),
                 module: comp_mod_name.to_string(),
                 status: status_str(comp.status()).to_string(),
-                description: comp.description().to_string(),
+                description: opt_string(comp.description()),
                 reference: opt_string(comp.reference()),
                 modules: comp_modules,
             },
@@ -1362,7 +1362,7 @@ pub fn export_v1(mib: &Mib, strictness: ResolverStrictness) -> ExportPayload {
                 module: mod_name.to_string(),
                 status: status_str(cap.status()).to_string(),
                 product_release: opt_string(cap.product_release()),
-                description: cap.description().to_string(),
+                description: opt_string(cap.description()),
                 reference: opt_string(cap.reference()),
                 supports,
             },

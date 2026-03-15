@@ -545,7 +545,7 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
             let constraint = if !ranges.is_empty() {
                 format!(" ({})", ranges)
             } else if !sizes.is_empty() {
-                format!(" ({})", sizes)
+                format!(" (SIZE({}))", sizes)
             } else {
                 String::new()
             };
@@ -554,7 +554,7 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
         println!("Access:  {}", obj.access());
         println!("Status:  {}", obj.status());
 
-        // Index
+        // Index / EffectiveIndex
         let indexes: Vec<String> = obj
             .effective_indexes()
             .map(|i| {
@@ -569,13 +569,18 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
                 s
             })
             .collect();
-        if !indexes.is_empty() {
-            println!("Index:   [{}]", indexes.join(", "));
-        }
 
         // Augments / AugmentedBy
         if let Some(aug) = obj.augments() {
             println!("Augments: {}", aug.name());
+        }
+        if !indexes.is_empty() {
+            let label = if obj.augments().is_some() {
+                "EffectiveIndex"
+            } else {
+                "Index"
+            };
+            println!("{label}: [{}]", indexes.join(", "));
         }
         let aug_by: Vec<&str> = obj.augmented_by().map(|o| o.name()).collect();
         if !aug_by.is_empty() {
@@ -593,9 +598,37 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
                 println!("Row:     {}", row.name());
             }
         }
-        let cols: Vec<&str> = obj.columns().map(|c| c.name()).collect();
+        let cols: Vec<_> = obj.columns().collect();
         if !cols.is_empty() {
-            println!("Columns: [{}]", cols.join(", "));
+            println!("Columns:");
+            println!(
+                "  {:<28} {:<20} {:<18} {:<18} {}",
+                "COLUMN", "TYPE", "BASE", "ACCESS", "ROLE"
+            );
+            println!(
+                "  {:<28} {:<20} {:<18} {:<18} {}",
+                "------", "----", "----", "------", "----"
+            );
+            for col in &cols {
+                let type_name = col
+                    .ty()
+                    .map(|t| t.name().to_string())
+                    .unwrap_or_default();
+                let base_type = col
+                    .ty()
+                    .map(|t| t.effective_base().to_string())
+                    .unwrap_or_default();
+                let access = col.access().to_string();
+                let role = if col.is_index() { "index" } else { "data" };
+                println!(
+                    "  {:<28} {:<20} {:<18} {:<18} {}",
+                    col.name(),
+                    type_name,
+                    base_type,
+                    access,
+                    role
+                );
+            }
         }
 
         if !obj.units().is_empty() {
@@ -604,8 +637,8 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
         if let Some(dv) = obj.default_value() {
             println!("DefVal:  {dv}");
         }
-        if obj.is_index() {
-            println!("IsIndex: true");
+        if obj.is_column() {
+            println!("IsIndex: {}", obj.is_index());
         }
 
         let enums = obj.effective_enums();
@@ -629,6 +662,13 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
         print_reference(obj.reference());
     } else if let Some(notif) = node.notification() {
         println!("Status:  {}", notif.status());
+        let objects: Vec<&str> = notif.objects().map(|o| o.name()).collect();
+        if !objects.is_empty() {
+            println!("Objects:");
+            for name in &objects {
+                println!("  {name}");
+            }
+        }
         print_description(notif.description(), full);
         print_reference(notif.reference());
     } else {
@@ -757,6 +797,8 @@ struct ObjectJson {
     default_value: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     indexes: Vec<IndexJson>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    effective_indexes: Vec<IndexJson>,
     #[serde(skip_serializing_if = "Option::is_none")]
     augments: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -795,6 +837,8 @@ struct NamedValueJson {
 #[derive(serde::Serialize)]
 struct NotificationJson {
     status: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    objects: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -817,9 +861,10 @@ fn node_detail_json(node: mib_rs::mib::Node<'_>, full: bool) -> NodeJson {
     let module = node.module().map(|m| m.name().to_string());
 
     let (object, notification, desc, reference) = if let Some(obj) = node.object() {
+        let obj_name = obj.name();
         let type_name = obj.ty().map(|t| t.name().to_string());
         let base_type = obj.ty().map(|t| t.effective_base().to_string());
-        let indexes: Vec<IndexJson> = obj
+        let idx_entries: Vec<IndexJson> = obj
             .effective_indexes()
             .map(|i| {
                 let enc = i.encoding();
@@ -834,6 +879,12 @@ fn node_detail_json(node: mib_rs::mib::Node<'_>, full: bool) -> NodeJson {
                 }
             })
             .collect();
+        let has_augments = obj.augments().is_some();
+        let (indexes, effective_indexes) = if has_augments {
+            (Vec::new(), idx_entries)
+        } else {
+            (idx_entries, Vec::new())
+        };
         let desc = format_desc(obj.description(), full);
         let reference = non_empty(obj.reference());
         let obj_json = ObjectJson {
@@ -844,10 +895,17 @@ fn node_detail_json(node: mib_rs::mib::Node<'_>, full: bool) -> NodeJson {
             units: non_empty(obj.units()),
             default_value: obj.default_value().map(|dv| dv.to_string()),
             indexes,
+            effective_indexes,
             augments: obj.augments().map(|a| a.name().to_string()),
             augmented_by: obj.augmented_by().map(|o| o.name().to_string()).collect(),
-            table: obj.table().map(|t| t.name().to_string()),
-            row: obj.row().map(|r| r.name().to_string()),
+            table: obj
+                .table()
+                .filter(|t| t.name() != obj_name)
+                .map(|t| t.name().to_string()),
+            row: obj
+                .row()
+                .filter(|r| r.name() != obj_name)
+                .map(|r| r.name().to_string()),
             columns: obj.columns().map(|c| c.name().to_string()).collect(),
             is_index: obj.is_index(),
             enums: obj
@@ -866,19 +924,21 @@ fn node_detail_json(node: mib_rs::mib::Node<'_>, full: bool) -> NodeJson {
                     value: b.value,
                 })
                 .collect(),
-            description: desc.clone(),
-            reference: reference.clone(),
+            description: desc,
+            reference,
         };
-        (Some(obj_json), None, desc, reference)
+        (Some(obj_json), None, None, None)
     } else if let Some(notif) = node.notification() {
         let desc = format_desc(notif.description(), full);
         let reference = non_empty(notif.reference());
+        let objects: Vec<String> = notif.objects().map(|o| o.name().to_string()).collect();
         let notif_json = NotificationJson {
             status: notif.status().to_string(),
-            description: desc.clone(),
-            reference: reference.clone(),
+            objects,
+            description: desc,
+            reference,
         };
-        (None, Some(notif_json), desc, reference)
+        (None, Some(notif_json), None, None)
     } else {
         let desc = format_desc(node.description(), full);
         let reference = non_empty(node.reference());
@@ -1872,7 +1932,7 @@ fn strip_descriptions(payload: &mut mib_rs::export::ExportPayload) {
     for m in &mut payload.modules {
         m.description = None;
         for r in &mut m.revisions {
-            r.description = String::new();
+            r.description = None;
         }
     }
     for t in &mut payload.types {
@@ -1885,13 +1945,13 @@ fn strip_descriptions(payload: &mut mib_rs::export::ExportPayload) {
         o.description = None;
     }
     for n in &mut payload.notifications {
-        n.description = String::new();
+        n.description = None;
     }
     for g in &mut payload.groups {
-        g.description = String::new();
+        g.description = None;
     }
     for c in &mut payload.compliances {
-        c.description = String::new();
+        c.description = None;
         for cm in &mut c.modules {
             for cg in &mut cm.groups {
                 cg.description = None;
@@ -1902,7 +1962,7 @@ fn strip_descriptions(payload: &mut mib_rs::export::ExportPayload) {
         }
     }
     for c in &mut payload.capabilities {
-        c.description = String::new();
+        c.description = None;
     }
 }
 
