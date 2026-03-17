@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-18
+
+### Added
+
+- Add RFC 2579 DISPLAY-HINT formatting for integer and octet-string values
+- Add `format_integer()`, `scale_integer()`, `format_octets()` methods on `Object` handle
+- Add standalone `display_hint::format_integer()`, `display_hint::format_octets()`, `display_hint::scale_integer()` functions
+
+### Changed
+
+- Rewrite crate-level API documentation (simplify tier descriptions, add raw data and compiler pipeline sections)
+- Update README feature list with display-hint formatting
+
 ## [0.3.0] - 2026-03-15
 
 ### Breaking Changes
@@ -112,7 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/lukeod/mib-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/lukeod/mib-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/lukeod/mib-rs/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/lukeod/mib-rs/compare/v0.1.2...v0.1.3
