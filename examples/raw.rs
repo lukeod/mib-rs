@@ -240,13 +240,13 @@ END
     // ---------------------------------------------------------------
     // 5. ID-only workflows
     //
-    // Both tiers share the same arena IDs (ObjectId, NodeId, etc.).
-    // Handles expose theirs via .id(), so you can always get an ID.
-    // The raw tier lets you work entirely in IDs: follow cross-refs
-    // like obj_data.type_id(), look up data with raw.object(id),
-    // and iterate arenas - all without constructing handles. IDs are
-    // Copy + Eq + Hash + Ord, so they work as map keys or can be
-    // sent across channels.
+    // Handles and raw access share the same arena IDs (ObjectId,
+    // NodeId, etc.). Handles expose theirs via .id(), so you can
+    // always get an ID. The raw layer lets you work entirely in IDs:
+    // follow cross-refs like obj_data.type_id(), look up data with
+    // raw.object(id), and iterate arenas without constructing
+    // handles. IDs are Copy + Eq + Hash + Ord, so they work as map
+    // keys or can be sent across channels.
     // ---------------------------------------------------------------
     println!("\n=== ID-only workflows ===");
 
@@ -392,14 +392,14 @@ END
     }
 
     // ---------------------------------------------------------------
-    // 9. Combining tiers
+    // 9. Combining handle and raw access
     //
     // The raw and handle APIs are views over the same data. You can
     // freely cross between them: handle.id() drops to raw, and
     // mib.*_by_id(id) lifts back to a handle. Use handles for
-    // ergonomic navigation, raw for bulk work and span access.
+    // navigation, raw for bulk work and span access.
     // ---------------------------------------------------------------
-    println!("\n=== Crossing between tiers ===");
+    println!("\n=== Crossing between handle and raw ===");
 
     // Start with a handle, drop to raw for span info.
     let handle = mib.object("rawCount").unwrap();

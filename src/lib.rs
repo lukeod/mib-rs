@@ -13,68 +13,56 @@
 //! Information), which has two versions: SMIv1 (RFC 1155/1212) and SMIv2
 //! (RFC 2578/2579/2580). This crate handles both transparently.
 //!
-//! # API Tiers
+//! # API Layers
 //!
-//! This crate exposes three intentional API tiers, each serving a
-//! different audience:
+//! Most callers should use the **handle API**: start with [`Loader`],
+//! get a [`Mib`], and navigate the resolved model through borrowed
+//! handle types ([`Node`], [`Object`], [`Type`], [`Module`],
+//! [`Notification`], [`Group`], [`Compliance`], [`Capability`]).
+//! Handles wrap an arena ID and a `&Mib` reference. Methods on
+//! handles return further handles, so typical usage looks like
+//! `object.ty()?.effective_base()` without touching IDs directly.
+//! The handle API covers OID resolution, type chain introspection,
+//! table/index navigation, module iteration, diagnostics, and
+//! everything else documented in the sections below.
 //!
-//! - **High-level handles** - start with [`Loader`] and navigate the
-//!   resolved model with [`Mib`], [`Module`], [`Node`], [`Object`], and [`Type`].
-//!   Handles are borrowed `(&Mib, Id)` pairs with ergonomic navigation
-//!   methods that return further handles (e.g. `object.ty()?.effective_base()`).
-//!   This is the right API for SNMP pollers, MIB browsers, and any code
-//!   that queries resolved data.
+//! Every handle exposes its arena ID via `.id()`. IDs are
+//! `Copy + Eq + Hash + Ord`, so you can store them in collections
+//! for deduplication or cross-referencing, then convert back to
+//! handles with `mib.*_by_id()` when you need to query again.
 //!
-//! - **Low-level raw data** - call [`Mib::raw()`] to work with stable ids,
-//!   arena-backed records, and the OID tree directly. This tier provides
-//!   capabilities the handle API does not expose:
-//!   - **Sub-clause spans** - per-clause source locations on
-//!     [`ObjectData`](raw::ObjectData) (`syntax_span`, `access_span`,
-//!     `units_span`, `default_value_span`) and
-//!     [`TypeData`](raw::TypeData) (`syntax_span`) for pointing
-//!     diagnostics at specific clauses rather than whole definitions.
-//!   - **Import metadata** - [`ModuleData::is_import_used`](raw::ModuleData::is_import_used)
-//!     and [`ModuleData::import_source`](raw::ModuleData::import_source)
-//!     for detecting unused imports and verifying resolution targets.
-//!   - **OID references** - `oid_refs()` on entity records gives the
-//!     symbolic names referenced in OID value assignments with their
-//!     spans, for "go to definition" on OID components.
-//!   - **ID-only workflows** - handles expose their arena ID via
-//!     `.id()`, but raw lets you work entirely in IDs: follow
-//!     cross-references (`obj_data.type_id()`), look up data
-//!     (`raw.object(id)`), and iterate arenas without constructing
-//!     handles. IDs are `Copy + Eq + Hash + Ord`, so they work as
-//!     map keys, can be sent across channels, and can outlive any
-//!     particular `&Mib` borrow.
-//!   - **Bulk arena access** - `raw.*_slice()` gives direct `&[Data]`
-//!     access for batch analysis and secondary index construction.
-//!   - **Symbol tables** - [`Mib::available_symbols`] returns everything
-//!     visible in a module's scope (own definitions + resolved imports),
-//!     for building completion engines.
+//! [`Mib`] also has query methods that work with IDs directly:
+//! [`Mib::modules_defining`] and [`Mib::modules_importing`] find
+//! modules by symbol name, [`Mib::objects_by_base_type`] and
+//! [`Mib::objects_by_type_name`] filter objects by type, and
+//! [`Mib::available_symbols`] returns everything visible in a
+//! module's scope (own definitions plus resolved imports).
 //!
-//!   See the [`raw`] module and the `raw` example.
+//! ## Raw data access
 //!
-//! - **Compiler pipeline** - [`ast`], [`parser`], [`lower`], [`ir`], and
-//!   [`token`] expose pre-resolution stages for callers that need
-//!   syntax-aware analysis before full resolution. Tokens provide
-//!   classification predicates for syntax highlighting. The parser
-//!   produces partial ASTs even from broken input, which matters for
-//!   editor integration where the user is mid-edit. See the [`compile`]
-//!   module and the `tokens` example.
+//! [`Mib::raw()`] returns a [`RawMib`](raw::RawMib) view that
+//! exposes the arena-backed data records directly. This is useful
+//! when you need things the handle API doesn't surface:
 //!
-//! ## Choosing a tier
+//! - Per-clause source spans on [`ObjectData`](raw::ObjectData)
+//!   and [`TypeData`](raw::TypeData) (e.g. `syntax_span`,
+//!   `access_span`) for pointing diagnostics at specific clauses.
+//! - Import metadata ([`ModuleData::is_import_used`](raw::ModuleData::is_import_used),
+//!   [`ModuleData::import_source`](raw::ModuleData::import_source)).
+//! - Symbolic OID references via `oid_refs()` on entity records.
+//! - Bulk arena slices (`raw.*_slice()`) for batch analysis.
 //!
-//! | If you need... | Use |
-//! |---|---|
-//! | Object lookups, OID resolution, type info, table navigation | Handle API (`Mib`, `Object`, `Type`, etc.) |
-//! | Sub-clause source locations, import metadata, bulk arena access, stable IDs | Raw API (`Mib::raw()`) |
-//! | Syntax highlighting, error-tolerant parsing, pre-resolution analysis | Compile pipeline (`token`, `parser`, `ast`) |
+//! See the [`raw`] module and the `raw` example.
 //!
-//! The tiers are not isolated. Handles expose their arena ID via
-//! `handle.id()`, and IDs convert back to handles via `mib.*_by_id()`.
-//! Real tooling typically mixes tiers: handles for interactive queries,
-//! raw for building indices and accessing spans, compile pipeline for
-//! highlighting and partial-parse support.
+//! ## Compiler pipeline
+//!
+//! The [`ast`], [`parser`], [`lower`], [`ir`], and [`token`]
+//! modules expose pre-resolution stages for callers that need
+//! syntax-aware analysis before full resolution. The parser
+//! produces partial ASTs from broken input, which matters for
+//! editor integration where the user is mid-edit. Token types
+//! carry classification predicates for syntax highlighting.
+//! See the [`compile`] module and the `tokens` example.
 //!
 //! # Loading MIBs
 //!
@@ -509,9 +497,11 @@
 //!   `DateAndTime`)
 //!
 //! [`Type::effective_display_hint`] and
-//! [`Object::effective_display_hint`] return the hint string. This
-//! library does not interpret the hint, it just provides it. Callers
-//! are responsible for parsing the format and applying it to raw values.
+//! [`Object::effective_display_hint`] return the hint string.
+//! [`Object::format_integer`], [`Object::format_octets`], and
+//! [`Object::scale_integer`] apply the hint directly to raw values.
+//! The [`display_hint`](mib::display_hint) module exposes the same
+//! formatting functions for use without an Object handle.
 //!
 //! ## Direct vs effective accessors
 //!
@@ -853,9 +843,8 @@
 //!
 //! ## Raw data access
 //!
-//! Low-level raw data access for tooling: sub-clause spans, import
-//! metadata, OID references, symbol tables, bulk arena access, and
-//! tier crossing.
+//! Low-level raw data access: sub-clause spans, import metadata,
+//! OID references, symbol tables, and bulk arena access.
 //!
 //! ```rust,no_run
 #![doc = include_str!("../examples/raw.rs")]

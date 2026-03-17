@@ -24,6 +24,7 @@
 
 pub mod capability;
 pub mod compliance;
+pub mod display_hint;
 pub mod group;
 pub mod handle;
 #[allow(clippy::module_inception)]

@@ -543,6 +543,43 @@ impl<'a> Object<'a> {
         self.data().effective_bits()
     }
 
+    /// Format an integer value using this object's effective DISPLAY-HINT.
+    ///
+    /// Returns `None` if the object has no display hint or the hint is
+    /// not a valid integer hint.
+    pub fn format_integer(self, value: i64) -> Option<String> {
+        let hint = self.data().effective_display_hint();
+        if hint.is_empty() {
+            return None;
+        }
+        super::display_hint::format_integer(hint, value)
+    }
+
+    /// Apply this object's DISPLAY-HINT as numeric scaling, returning `f64`.
+    ///
+    /// Only `d` and `d-N` hints produce a result (e.g. `d-2` on 1234
+    /// returns 12.34). Returns `None` if the hint is absent, non-decimal,
+    /// or malformed.
+    pub fn scale_integer(self, value: i64) -> Option<f64> {
+        let hint = self.data().effective_display_hint();
+        if hint.is_empty() {
+            return None;
+        }
+        super::display_hint::scale_integer(hint, value)
+    }
+
+    /// Format an octet string using this object's effective DISPLAY-HINT.
+    ///
+    /// Returns `None` if the object has no display hint, the hint is
+    /// malformed, or the data is empty.
+    pub fn format_octets(self, data: &[u8]) -> Option<String> {
+        let hint = self.data().effective_display_hint();
+        if hint.is_empty() {
+            return None;
+        }
+        super::display_hint::format_octets(hint, data)
+    }
+
     /// Return the containing table for a table, row, or column.
     ///
     /// Scalars return `None`.

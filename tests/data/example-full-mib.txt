@@ -45,6 +45,18 @@ ExName ::= TEXTUAL-CONVENTION
     DESCRIPTION "A short name string."
     SYNTAX DisplayString (SIZE (1..64))
 
+ExHundredths ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d-2"
+    STATUS current
+    DESCRIPTION "A value expressed in hundredths."
+    SYNTAX Integer32
+
+ExMacAddress ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "1x:"
+    STATUS current
+    DESCRIPTION "A 6-octet MAC address."
+    SYNTAX OCTET STRING (SIZE (6))
+
 -- Subtree OIDs
 
 exObjects     OBJECT IDENTIFIER ::= { exampleFullMib 1 }
@@ -91,6 +103,21 @@ exRebootEnabled OBJECT-TYPE
     DESCRIPTION "Whether automatic reboot is enabled."
     DEFVAL { true }
     ::= { exScalars 5 }
+
+exTemperature OBJECT-TYPE
+    SYNTAX ExHundredths
+    UNITS "degrees Celsius"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Board temperature in hundredths of a degree."
+    ::= { exScalars 6 }
+
+exDeviceMac OBJECT-TYPE
+    SYNTAX ExMacAddress
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Primary MAC address of the device."
+    ::= { exScalars 7 }
 
 -- Interface table
 
@@ -186,7 +213,9 @@ exScalarGroup OBJECT-GROUP
         exDeviceStatus,
         exUptime,
         exCpuLoad,
-        exRebootEnabled
+        exRebootEnabled,
+        exTemperature,
+        exDeviceMac
     }
     STATUS current
     DESCRIPTION "Scalar objects group."
