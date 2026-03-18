@@ -161,6 +161,18 @@ impl Mib {
         None
     }
 
+    /// Return all nodes registered under the given name, or an empty slice.
+    ///
+    /// Unlike [`Mib::node_by_name`], which returns a single preferred node,
+    /// this returns every node across all loaded modules that shares the name.
+    #[must_use]
+    pub fn nodes_by_name(&self, name: &str) -> &[NodeId] {
+        self.name_to_nodes
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Look up a node by name, returning the [`NodeId`].
     ///
     /// When multiple nodes share the same name (which can happen when
@@ -920,7 +932,14 @@ impl Mib {
         let Some(node_id) = obj.node() else {
             return Vec::new();
         };
-        if self.tree.get(node_id).kind != Kind::Row {
+        let kind = self.tree.get(node_id).kind;
+        if kind == Kind::Column {
+            if let Some(row_id) = self.object_row(id) {
+                return self.effective_indexes_inner(row_id, visited);
+            }
+            return Vec::new();
+        }
+        if kind != Kind::Row {
             return Vec::new();
         }
         if !obj.index.is_empty() {
@@ -943,7 +962,12 @@ impl Mib {
     ) -> Option<ObjectId> {
         let obj = self.object_data(id);
         let node_id = obj.node()?;
-        if self.tree.get(node_id).kind != Kind::Row {
+        let kind = self.tree.get(node_id).kind;
+        if kind == Kind::Column {
+            let row_id = self.object_row(id)?;
+            return self.effective_indexes_source_inner(row_id, visited);
+        }
+        if kind != Kind::Row {
             return None;
         }
         if !obj.index.is_empty() {
@@ -984,10 +1008,7 @@ impl Mib {
         if self.object_kind(id) != Kind::Column {
             return false;
         }
-        let Some(row_id) = self.object_row(id) else {
-            return false;
-        };
-        self.effective_indexes(row_id)
+        self.effective_indexes(id)
             .iter()
             .any(|idx| idx.object == Some(id))
     }
@@ -1181,10 +1202,11 @@ impl<'a> OidLookup<'a> {
         let Some(obj) = self.node.object() else {
             return Vec::new();
         };
-        let Some(row) = obj.row() else {
+        let mut indexes = obj.effective_indexes().peekable();
+        if indexes.peek().is_none() {
             return Vec::new();
-        };
-        super::index::decode_suffix(row.effective_indexes(), &self.suffix)
+        }
+        super::index::decode_suffix(indexes, &self.suffix)
     }
 }
 

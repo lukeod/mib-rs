@@ -1302,3 +1302,81 @@ fn fs_alarm_input_bits_index_is_accepted() {
         .count();
     assert_eq!(count, 0, "BITS-based alarm input index should not emit");
 }
+
+#[test]
+fn column_effective_indexes() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    let col = mib.object("ifDescr").expect("ifDescr");
+    assert_eq!(col.kind(), Kind::Column, "ifDescr should be a column");
+
+    let indexes: Vec<_> = col.effective_indexes().collect();
+    assert_eq!(indexes.len(), 1, "column should yield 1 index from row");
+    assert_eq!(indexes[0].name(), "ifIndex");
+}
+
+#[test]
+fn nodes_by_name() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    let nodes = mib.nodes_by_name("ifIndex");
+    assert!(
+        !nodes.is_empty(),
+        "nodes_by_name(ifIndex) should not be empty"
+    );
+
+    let empty = mib.nodes_by_name("totallyFakeName");
+    assert!(empty.is_empty(), "unknown name should return empty slice");
+}
+
+#[test]
+fn effective_tc() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    let obj = mib.object("ifDescr").expect("ifDescr");
+    let ty = obj.ty().expect("ifDescr type");
+    let tc = ty.effective_tc().expect("ifDescr should have a TC");
+    assert_eq!(
+        tc.name(),
+        "DisplayString",
+        "ifDescr TC should be DisplayString"
+    );
+}
+
+#[test]
+fn effective_tc_no_tc_in_chain() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    let obj = mib.object("ifIndex").expect("ifIndex");
+    let ty = obj.ty().expect("ifIndex type");
+    // ifIndex is InterfaceIndex which is a TC
+    let tc = ty.effective_tc();
+    assert!(tc.is_some(), "ifIndex should have InterfaceIndex TC");
+    assert_eq!(tc.unwrap().name(), "InterfaceIndex");
+}
+
+#[test]
+fn index_fixed_size() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    let row = mib.object("ifEntry").expect("ifEntry");
+    let indexes: Vec<_> = row.effective_indexes().collect();
+    assert_eq!(indexes.len(), 1);
+    // ifIndex is an integer index, fixed size = 1
+    let (size, ok) = indexes[0].fixed_size();
+    assert!(ok, "integer index should have fixed size");
+    assert_eq!(size, 1, "integer index fixed size should be 1");
+}
+
+#[test]
+fn is_index_uses_column_effective_indexes() {
+    let mib = load_corpus(&["IF-MIB"]);
+
+    // ifIndex is an index column
+    let idx = mib.object("ifIndex").expect("ifIndex");
+    assert!(idx.is_index(), "ifIndex should be an index");
+
+    // ifDescr is a column but not an index
+    let descr = mib.object("ifDescr").expect("ifDescr");
+    assert!(!descr.is_index(), "ifDescr should not be an index");
+}

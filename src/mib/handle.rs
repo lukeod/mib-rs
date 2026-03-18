@@ -292,6 +292,28 @@ impl<'a> Index<'a> {
         self.entry.encoding
     }
 
+    /// Return the fixed encoding width for this index entry, if determinable.
+    ///
+    /// Returns the width in sub-identifiers and `true` for fixed-width
+    /// encodings (integer = 1, IP address = 4, fixed-size string = SIZE value).
+    /// Returns `(0, false)` for variable-length or unknown encodings.
+    pub fn fixed_size(self) -> (usize, bool) {
+        match self.entry.encoding {
+            crate::types::IndexEncoding::Integer => (1, true),
+            crate::types::IndexEncoding::IpAddress => (4, true),
+            crate::types::IndexEncoding::FixedString => {
+                if let Some(obj) = self.object() {
+                    let sizes = obj.effective_sizes();
+                    if super::types::is_fixed_size(sizes) {
+                        return (sizes[0].min as usize, true);
+                    }
+                }
+                (0, false)
+            }
+            _ => (0, false),
+        }
+    }
+
     /// Return the source span of this index component.
     pub fn span(self) -> Span {
         self.entry.span
@@ -644,10 +666,11 @@ impl<'a> Object<'a> {
             .map(|id| Object::new(self.mib, id))
     }
 
-    /// Iterate the effective indexes for this row or augmented row.
+    /// Iterate the effective indexes for this row, column, or augmented row.
     ///
-    /// For rows that use `AUGMENTS`, this follows the augment chain to the
-    /// source row that owns the effective `INDEX` clause.
+    /// For columns, delegates to the parent row. For rows that use
+    /// `AUGMENTS`, follows the augment chain to the source row that owns
+    /// the effective `INDEX` clause.
     pub fn effective_indexes(self) -> impl Iterator<Item = Index<'a>> + 'a {
         self.mib
             .effective_indexes_source(self.id)
@@ -761,6 +784,17 @@ impl<'a> Type<'a> {
     /// Return `true` if this type was defined as a TEXTUAL-CONVENTION.
     pub fn is_textual_convention(self) -> bool {
         self.data().is_textual_convention()
+    }
+
+    /// Walk the parent type chain and return the first type that is a
+    /// TEXTUAL-CONVENTION, or `None` if no type in the chain is a TC.
+    pub fn effective_tc(self) -> Option<Type<'a>> {
+        if self.data().is_textual_convention() {
+            return Some(self);
+        }
+        self.data()
+            .effective_tc_in_parents(self.mib.types_slice())
+            .map(|id| Type::new(self.mib, id))
     }
 
     /// Return the effective [`BaseType`] after following the parent type chain.

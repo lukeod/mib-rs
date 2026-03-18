@@ -158,6 +158,30 @@ impl TypeData {
 /// Callers using the [`Type`](super::handle::Type) handle do not need to
 /// pass the arena; the handle threads it automatically.
 impl TypeData {
+    /// Walk the parent type chain (starting from `self.parent`) and return
+    /// the [`TypeId`] of the first type that is a TEXTUAL-CONVENTION, or
+    /// `None` if none in the chain is a TC.
+    ///
+    /// Does **not** check `self` - the caller is responsible for checking
+    /// the starting type when it has the id available (see
+    /// [`Type::effective_tc`](super::handle::Type::effective_tc)).
+    pub(crate) fn effective_tc_in_parents(&self, types: &[TypeData]) -> Option<TypeId> {
+        let mut current_id = self.parent;
+        let mut depth = 1;
+        while let Some(id) = current_id {
+            if depth >= MAX_TYPE_CHAIN_DEPTH {
+                break;
+            }
+            let t = &types[id.0 as usize];
+            if t.is_tc {
+                return Some(id);
+            }
+            current_id = t.parent;
+            depth += 1;
+        }
+        None
+    }
+
     /// Walk the parent type chain and return the first non-[`Unknown`](BaseType::Unknown)
     /// base type.
     pub fn effective_base(&self, types: &[TypeData]) -> BaseType {

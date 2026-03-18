@@ -228,8 +228,8 @@ pub fn decode_suffix<'a>(
             // RFC 2578 s7.7: fixed-length strings use exactly SIZE
             // sub-identifiers, one per octet, no length prefix.
             IndexEncoding::FixedString => {
-                let size = fixed_size(&idx);
-                if size == 0 || pos + size > suffix.len() {
+                let (size, ok) = idx.fixed_size();
+                if !ok || size == 0 || pos + size > suffix.len() {
                     break;
                 }
                 let Some(bytes) = arcs_to_bytes(&suffix[pos..pos + size]) else {
@@ -293,23 +293,6 @@ pub fn decode_suffix<'a>(
 /// Convert OID arcs to bytes, returning `None` if any arc exceeds 255.
 fn arcs_to_bytes(arcs: &[u32]) -> Option<Vec<u8>> {
     arcs.iter().map(|&a| u8::try_from(a).ok()).collect()
-}
-
-/// Extract the fixed size from an index component's SIZE constraint.
-///
-/// Returns 0 if the index has no object or the size cannot be determined.
-/// The resolver guarantees that effective sizes are propagated onto objects
-/// from the type chain during resolution, so no type fallback is needed.
-fn fixed_size(idx: &Index<'_>) -> usize {
-    let Some(obj) = idx.object() else {
-        return 0;
-    };
-    let sizes = obj.effective_sizes();
-    if super::types::is_fixed_size(sizes) {
-        sizes[0].min as usize
-    } else {
-        0
-    }
 }
 
 #[cfg(test)]
