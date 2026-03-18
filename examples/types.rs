@@ -113,39 +113,57 @@ fn main() {
     // Octet-string hints format byte slices.
 
     // ExHundredths has DISPLAY-HINT "d-2": 1234 -> "12.34"
+    use mib_rs::mib::display_hint::{self, HexCase};
     let obj = mib.object("exTemperature").unwrap();
     println!("\n=== Display-hint formatting ===");
     println!("  hint:           {:?}", obj.effective_display_hint());
-    println!("  format(2345):   {:?}", obj.format_integer(2345));
+    println!(
+        "  format(2345):   {:?}",
+        obj.format_integer(2345, HexCase::Upper)
+    );
     println!("  scale(2345):    {:?}", obj.scale_integer(2345));
     println!("  units:          {:?}", obj.units());
-    assert_eq!(obj.format_integer(2345), Some("23.45".into()));
+    assert_eq!(
+        obj.format_integer(2345, HexCase::Upper),
+        Some("23.45".into())
+    );
     assert_eq!(obj.scale_integer(2345), Some(23.45));
 
     // ExMacAddress has DISPLAY-HINT "1x:": formats as colon-separated hex.
     let obj = mib.object("exDeviceMac").unwrap();
     let mac = [0x00, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e];
-    println!("  mac format:     {:?}", obj.format_octets(&mac));
-    assert_eq!(obj.format_octets(&mac), Some("00:1A:2B:3C:4D:5E".into()));
+    println!(
+        "  mac format:     {:?}",
+        obj.format_octets(&mac, HexCase::Upper)
+    );
+    assert_eq!(
+        obj.format_octets(&mac, HexCase::Upper),
+        Some("00:1A:2B:3C:4D:5E".into())
+    );
 
     // ExName has DISPLAY-HINT "255a": ASCII display.
     let obj = mib.object("exDeviceName").unwrap();
-    println!("  name format:    {:?}", obj.format_octets(b"switch-01"));
-    assert_eq!(obj.format_octets(b"switch-01"), Some("switch-01".into()),);
+    println!(
+        "  name format:    {:?}",
+        obj.format_octets(b"switch-01", HexCase::Upper)
+    );
+    assert_eq!(
+        obj.format_octets(b"switch-01", HexCase::Upper),
+        Some("switch-01".into()),
+    );
 
     // Objects without a display hint return None.
     let obj = mib.object("exUptime").unwrap();
-    assert_eq!(obj.format_integer(12345), None);
+    assert_eq!(obj.format_integer(12345, HexCase::Upper), None);
 
     // The display_hint module is also available for direct use without
     // an Object handle, e.g. when you have a hint string from elsewhere.
-    use mib_rs::mib::display_hint;
     assert_eq!(
-        display_hint::format_integer("d-2", 1234),
+        display_hint::format_integer("d-2", 1234, HexCase::Upper),
         Some("12.34".into())
     );
     assert_eq!(
-        display_hint::format_octets("1d.1d.1d.1d", &[10, 0, 0, 1]),
+        display_hint::format_octets("1d.1d.1d.1d", &[10, 0, 0, 1], HexCase::Upper),
         Some("10.0.0.1".into())
     );
 

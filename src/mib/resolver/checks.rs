@@ -3035,76 +3035,11 @@ fn check_format_hints(ctx: &mut ResolverContext) {
 }
 
 fn validate_display_hint_integer(hint: &str) -> bool {
-    if hint.is_empty() {
-        return false;
-    }
-    let bytes = hint.as_bytes();
-    match bytes[0] {
-        b'x' | b'o' | b'b' => bytes.len() == 1,
-        b'd' => {
-            if bytes.len() == 1 {
-                return true;
-            }
-            if bytes.len() < 3 || bytes[1] != b'-' {
-                return false;
-            }
-            bytes[2..].iter().all(|b| b.is_ascii_digit())
-        }
-        _ => false,
-    }
+    super::super::display_hint::is_valid_integer_hint(hint)
 }
 
 fn validate_display_hint_octet_string(hint: &str) -> bool {
-    if hint.is_empty() {
-        return false;
-    }
-    let bytes = hint.as_bytes();
-    let mut p = 0;
-    let mut last_spec_consumes = false;
-
-    while p < bytes.len() {
-        // Optional repeat indicator
-        let repeat = if bytes[p] == b'*' {
-            p += 1;
-            true
-        } else {
-            false
-        };
-
-        // Required octet count
-        let mut n = 0;
-        let mut take = 0;
-        while p < bytes.len() && bytes[p].is_ascii_digit() {
-            take = take * 10 + (bytes[p] - b'0') as usize;
-            p += 1;
-            n += 1;
-        }
-        if n == 0 {
-            return false;
-        }
-
-        // Required format character
-        if p >= bytes.len() {
-            return false;
-        }
-        match bytes[p] {
-            b'x' | b'd' | b'o' | b'a' | b't' => p += 1,
-            _ => return false,
-        }
-
-        // Optional separator character
-        if p < bytes.len() && bytes[p] != b'*' && !bytes[p].is_ascii_digit() {
-            p += 1;
-            // Optional repeat terminator
-            if repeat && p < bytes.len() && bytes[p] != b'*' && !bytes[p].is_ascii_digit() {
-                p += 1;
-            }
-        }
-
-        last_spec_consumes = take > 0 || repeat;
-    }
-
-    last_spec_consumes
+    super::super::display_hint::is_valid_octet_string_hint(hint)
 }
 
 // --- Capabilities status ---

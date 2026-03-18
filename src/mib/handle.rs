@@ -543,16 +543,33 @@ impl<'a> Object<'a> {
         self.data().effective_bits()
     }
 
-    /// Format an integer value using this object's effective DISPLAY-HINT.
+    /// Parse and validate this object's effective DISPLAY-HINT, returning a
+    /// structured [`DisplayHint`](super::display_hint::DisplayHint).
     ///
     /// Returns `None` if the object has no display hint or the hint is
-    /// not a valid integer hint.
-    pub fn format_integer(self, value: i64) -> Option<String> {
+    /// malformed.
+    pub fn parsed_display_hint(self) -> Option<super::display_hint::DisplayHint> {
         let hint = self.data().effective_display_hint();
         if hint.is_empty() {
             return None;
         }
-        super::display_hint::format_integer(hint, value)
+        super::display_hint::DisplayHint::parse(hint)
+    }
+
+    /// Format an integer value using this object's effective DISPLAY-HINT.
+    ///
+    /// Returns `None` if the object has no display hint or the hint is
+    /// not a valid integer hint.
+    pub fn format_integer(
+        self,
+        value: i64,
+        hex_case: super::display_hint::HexCase,
+    ) -> Option<String> {
+        let hint = self.data().effective_display_hint();
+        if hint.is_empty() {
+            return None;
+        }
+        super::display_hint::format_integer(hint, value, hex_case)
     }
 
     /// Apply this object's DISPLAY-HINT as numeric scaling, returning `f64`.
@@ -572,12 +589,16 @@ impl<'a> Object<'a> {
     ///
     /// Returns `None` if the object has no display hint, the hint is
     /// malformed, or the data is empty.
-    pub fn format_octets(self, data: &[u8]) -> Option<String> {
+    pub fn format_octets(
+        self,
+        data: &[u8],
+        hex_case: super::display_hint::HexCase,
+    ) -> Option<String> {
         let hint = self.data().effective_display_hint();
         if hint.is_empty() {
             return None;
         }
-        super::display_hint::format_octets(hint, data)
+        super::display_hint::format_octets(hint, data, hex_case)
     }
 
     /// Return the containing table for a table, row, or column.
@@ -753,6 +774,19 @@ impl<'a> Type<'a> {
     /// Return the effective display hint after following parent type chains.
     pub fn effective_display_hint(self) -> &'a str {
         self.data().effective_display_hint(self.mib.types_slice())
+    }
+
+    /// Parse and validate the effective display hint, returning a structured
+    /// [`DisplayHint`](super::display_hint::DisplayHint).
+    ///
+    /// Returns `None` if there is no display hint in the type chain or the
+    /// hint is malformed.
+    pub fn parsed_display_hint(self) -> Option<super::display_hint::DisplayHint> {
+        let hint = self.data().effective_display_hint(self.mib.types_slice());
+        if hint.is_empty() {
+            return None;
+        }
+        super::display_hint::DisplayHint::parse(hint)
     }
 
     /// Return the effective SIZE constraints from the type chain.
