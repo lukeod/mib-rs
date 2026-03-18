@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `mib::index` module with `decode_suffix()` for decoding OID instance suffixes into typed index values per RFC 2578 section 7.7
+- Add `IndexValue` enum (Integer, IpAddress, OctetString, ObjectIdentifier) and `DecodedIndex` type
+- Add `OidLookup::decode_indexes()` convenience method
+- Re-export `DecodedIndex` and `IndexValue` from crate root
+
 ## [0.6.0] - 2026-03-18
 
 ### Added

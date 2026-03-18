@@ -102,6 +102,19 @@ fn main() {
     println!("Round-trip:  {round_trip}");
     assert_eq!(oid, round_trip);
 
+    // -- lookup_instance: node + suffix + index decoding --
+    // Given a full instance OID (column.index), split it into the base
+    // node and instance suffix, then decode the suffix into typed index
+    // values using the row's INDEX clause.
+    let oid = mib.resolve_oid("docDescr.7").unwrap();
+    let lookup = mib.lookup_instance(&oid);
+    println!("\nlookup_instance(\"docDescr.7\"):");
+    println!("  Node:   {}", lookup.node().name());
+    println!("  Suffix: {:?}", lookup.suffix());
+    for idx in lookup.decode_indexes() {
+        println!("  Index:  {}={}", idx.name(), idx.value());
+    }
+
     // -- resolve: returns NodeId (lower-level) --
     let node_id = mib.raw().resolve("docTable");
     println!("\nresolve(\"docTable\"): {:?}", node_id);

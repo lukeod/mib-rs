@@ -244,9 +244,11 @@
 //! (with a single-value SIZE constraint) use one sub-identifier per
 //! octet. Variable-length strings are length-prefixed. The `IMPLIED`
 //! keyword omits the length prefix, relying on the index being the
-//! last component. [`Index::encoding`] returns the derived encoding,
-//! which is useful for SNMP pollers that need to decode or construct
-//! instance OIDs programmatically.
+//! last component. [`Index::encoding`] returns the derived encoding.
+//!
+//! Use [`mib::index::decode_suffix`] to decode raw OID suffix arcs
+//! into typed [`IndexValue`]s, or call [`OidLookup::decode_indexes`]
+//! for the common case of processing a varbind OID.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
@@ -892,6 +894,7 @@ pub use load::{Loader, load};
 pub use mib::{
     Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid, OidLookup,
     ParseOidError, ResolveOidError, Type,
+    index::{DecodedIndex, IndexValue},
 };
 pub use source::{FindResult, Source};
 pub use token::{Token, TokenKind};

@@ -1166,6 +1166,26 @@ impl<'a> OidLookup<'a> {
     pub fn suffix(&self) -> &[u32] {
         &self.suffix
     }
+
+    /// Decode the instance suffix into typed index values.
+    ///
+    /// Uses the matched node's row INDEX clause to interpret the suffix
+    /// arcs per RFC 2578 section 7.7. Returns an empty Vec if the node
+    /// has no associated object, is not part of a table, or the row has
+    /// no index definitions.
+    ///
+    /// See [`index::decode_suffix`](super::index::decode_suffix) for
+    /// the standalone function and encoding details.
+    #[must_use]
+    pub fn decode_indexes(&self) -> Vec<super::index::DecodedIndex> {
+        let Some(obj) = self.node.object() else {
+            return Vec::new();
+        };
+        let Some(row) = obj.row() else {
+            return Vec::new();
+        };
+        super::index::decode_suffix(row.effective_indexes(), &self.suffix)
+    }
 }
 
 /// Error returned by [`Mib::resolve_oid`] when a query cannot be resolved.

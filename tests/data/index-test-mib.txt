@@ -1,0 +1,320 @@
+INDEX-TEST-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, IpAddress, enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+indexTestMib MODULE-IDENTITY
+    LAST-UPDATED "202603180000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test MIB for index suffix decoding."
+    ::= { enterprises 99997 }
+
+indexTestTables OBJECT IDENTIFIER ::= { indexTestMib 1 }
+
+-- Simple integer index table
+
+simpleTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SimpleEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with a simple integer index."
+    ::= { indexTestTables 1 }
+
+simpleEntry OBJECT-TYPE
+    SYNTAX SimpleEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { simpleIndex }
+    ::= { simpleTable 1 }
+
+SimpleEntry ::= SEQUENCE {
+    simpleIndex Integer32,
+    simpleValue DisplayString
+}
+
+simpleIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Integer index."
+    ::= { simpleEntry 1 }
+
+simpleValue OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value column."
+    ::= { simpleEntry 2 }
+
+-- IP address index table
+
+ipTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF IpEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table indexed by IP address."
+    ::= { indexTestTables 2 }
+
+ipEntry OBJECT-TYPE
+    SYNTAX IpEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { ipAddr }
+    ::= { ipTable 1 }
+
+IpEntry ::= SEQUENCE {
+    ipAddr IpAddress,
+    ipValue Integer32
+}
+
+ipAddr OBJECT-TYPE
+    SYNTAX IpAddress
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "IP address index."
+    ::= { ipEntry 1 }
+
+ipValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value column."
+    ::= { ipEntry 2 }
+
+-- Fixed-length string index (MAC address, SIZE (6))
+
+MacAddress ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "1x:"
+    STATUS current
+    DESCRIPTION "MAC address."
+    SYNTAX OCTET STRING (SIZE (6))
+
+fixedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF FixedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with fixed-length string index."
+    ::= { indexTestTables 3 }
+
+fixedEntry OBJECT-TYPE
+    SYNTAX FixedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { fixedAddr }
+    ::= { fixedTable 1 }
+
+FixedEntry ::= SEQUENCE {
+    fixedAddr MacAddress,
+    fixedValue Integer32
+}
+
+fixedAddr OBJECT-TYPE
+    SYNTAX MacAddress
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "MAC address index."
+    ::= { fixedEntry 1 }
+
+fixedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value column."
+    ::= { fixedEntry 2 }
+
+-- Variable-length string index (length-prefixed)
+
+varTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF VarEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with variable-length string index."
+    ::= { indexTestTables 4 }
+
+varEntry OBJECT-TYPE
+    SYNTAX VarEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { varName }
+    ::= { varTable 1 }
+
+VarEntry ::= SEQUENCE {
+    varName DisplayString,
+    varValue Integer32
+}
+
+varName OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Variable-length string index."
+    ::= { varEntry 1 }
+
+varValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value column."
+    ::= { varEntry 2 }
+
+-- Multi-index table (integer + IP)
+
+multiTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF MultiEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with multiple index components."
+    ::= { indexTestTables 5 }
+
+multiEntry OBJECT-TYPE
+    SYNTAX MultiEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { multiSlot, multiAddr }
+    ::= { multiTable 1 }
+
+MultiEntry ::= SEQUENCE {
+    multiSlot Integer32,
+    multiAddr IpAddress,
+    multiValue Integer32
+}
+
+multiSlot OBJECT-TYPE
+    SYNTAX Integer32 (1..256)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Slot number."
+    ::= { multiEntry 1 }
+
+multiAddr OBJECT-TYPE
+    SYNTAX IpAddress
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "IP address."
+    ::= { multiEntry 2 }
+
+multiValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { multiEntry 3 }
+
+-- IMPLIED string index
+
+impliedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF ImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with IMPLIED string index."
+    ::= { indexTestTables 6 }
+
+impliedEntry OBJECT-TYPE
+    SYNTAX ImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { IMPLIED impliedName }
+    ::= { impliedTable 1 }
+
+ImpliedEntry ::= SEQUENCE {
+    impliedName DisplayString,
+    impliedValue Integer32
+}
+
+impliedName OBJECT-TYPE
+    SYNTAX DisplayString (SIZE (1..64))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "IMPLIED string index."
+    ::= { impliedEntry 1 }
+
+impliedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { impliedEntry 2 }
+
+-- OBJECT IDENTIFIER index (length-prefixed)
+
+oidTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF OidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with OID index."
+    ::= { indexTestTables 7 }
+
+oidEntry OBJECT-TYPE
+    SYNTAX OidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { oidIndex }
+    ::= { oidTable 1 }
+
+OidEntry ::= SEQUENCE {
+    oidIndex OBJECT IDENTIFIER,
+    oidValue Integer32
+}
+
+oidIndex OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "OID index."
+    ::= { oidEntry 1 }
+
+oidValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { oidEntry 2 }
+
+-- IMPLIED OBJECT IDENTIFIER index
+
+impliedOidTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF ImpliedOidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with IMPLIED OID index."
+    ::= { indexTestTables 8 }
+
+impliedOidEntry OBJECT-TYPE
+    SYNTAX ImpliedOidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { IMPLIED impliedOidIndex }
+    ::= { impliedOidTable 1 }
+
+ImpliedOidEntry ::= SEQUENCE {
+    impliedOidIndex OBJECT IDENTIFIER,
+    impliedOidValue Integer32
+}
+
+impliedOidIndex OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "IMPLIED OID index."
+    ::= { impliedOidEntry 1 }
+
+impliedOidValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { impliedOidEntry 2 }
+
+END

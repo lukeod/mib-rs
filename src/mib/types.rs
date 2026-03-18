@@ -146,7 +146,7 @@ pub(crate) fn classify_index_encoding(
     }
 }
 
-fn is_fixed_size(sizes: &[Range]) -> bool {
+pub(crate) fn is_fixed_size(sizes: &[Range]) -> bool {
     sizes.len() == 1 && sizes[0].min == sizes[0].max && sizes[0].min > 0
 }
 
