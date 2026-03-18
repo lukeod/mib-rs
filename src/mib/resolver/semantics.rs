@@ -12,6 +12,8 @@
 //! - Resolves AUGMENTS references, INDEX object linkage, and
 //!   NOTIFICATION-TYPE OBJECTS references.
 
+use std::collections::HashMap;
+
 use crate::ir;
 use crate::mib::Oid;
 use crate::types::{Access, BaseType, DiagCode, Kind, Span, Status};
@@ -43,6 +45,12 @@ pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
 
 /// Classify OBJECT-TYPE nodes into table/row/scalar/column.
 fn infer_node_kinds(ctx: &mut ResolverContext) {
+    // Track which module's OBJECT-TYPE determined each node's kind so
+    // that only the preferred module's structural classification wins
+    // when multiple modules define the same OID.
+    let mut node_kind_module: HashMap<NodeId, ModuleId> = HashMap::new();
+    let mut row_nodes: Vec<NodeId> = Vec::new();
+
     for idx in 0..ctx.modules.len() {
         let m = &ctx.modules[idx];
         let ir_id = IrModuleId(idx as u32);
@@ -62,6 +70,11 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
                 None => continue,
             };
 
+            let existing_mod = node_kind_module.get(&node_id).copied();
+            if !super::oids::should_prefer_module(ctx, existing_mod, ir_id) {
+                continue;
+            }
+
             let kind = if matches!(ot.syntax, ir::TypeSyntax::SequenceOf { .. }) {
                 Kind::Table
             } else if !ot.index.is_empty() || !ot.augments.is_empty() {
@@ -71,14 +84,19 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
             };
 
             ctx.mib.tree.set_kind(node_id, kind);
+            if kind == Kind::Row {
+                row_nodes.push(node_id);
+            }
+            if let Some(&resolved_mod) = ctx.module_to_resolved.get(&ir_id) {
+                node_kind_module.insert(node_id, resolved_mod);
+            }
         }
     }
 
     // Reclassify children of Row nodes as columns.
-    let all_nodes: Vec<NodeId> = ctx.mib.tree().all_nodes().collect();
-    for node_id in &all_nodes {
-        let kind = ctx.mib.tree().get(*node_id).kind;
-        if kind != Kind::Row {
+    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    for node_id in &row_nodes {
+        if !seen.insert(*node_id) {
             continue;
         }
         let children: Vec<NodeId> = ctx

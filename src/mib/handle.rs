@@ -162,15 +162,10 @@ impl<'a> Node<'a> {
         self.data().parent().map(|id| Node::new(self.mib, id))
     }
 
-    /// Return the effective owning module for this node.
-    ///
-    /// When multiple modules define the same OID, ownership is resolved by
-    /// preferring base modules over user modules, then SMIv2 over SMIv1,
-    /// then newer `LAST-UPDATED` timestamps. See the crate-level "OID
-    /// ownership" docs for details.
-    ///
-    /// If multiple entity kinds could conceptually own the node, entity-backed
-    /// ownership takes precedence over plain base-module ownership.
+    /// Return the owning module for this node, determined during OID
+    /// resolution. For the defining module of a specific entity, use the
+    /// entity's own `module()` accessor instead (e.g.,
+    /// `node.object().module()`).
     pub fn module(self) -> Option<Module<'a>> {
         self.mib
             .effective_module(self.id)

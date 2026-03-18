@@ -423,23 +423,7 @@ impl Mib {
     }
 
     pub(crate) fn effective_module(&self, id: NodeId) -> Option<ModuleId> {
-        let node = self.tree.get(id);
-        if let Some(obj_id) = node.object {
-            return self.objects[obj_id.0 as usize].entity.module;
-        }
-        if let Some(notif_id) = node.notification {
-            return self.notifications[notif_id.0 as usize].entity.module;
-        }
-        if let Some(group_id) = node.group {
-            return self.groups[group_id.0 as usize].entity.module;
-        }
-        if let Some(comp_id) = node.compliance {
-            return self.compliances[comp_id.0 as usize].entity.module;
-        }
-        if let Some(cap_id) = node.capability {
-            return self.capabilities[cap_id.0 as usize].entity.module;
-        }
-        node.module
+        self.tree.get(id).module
     }
 
     /// Format a numeric [`Oid`] as `MODULE::name.suffix`.

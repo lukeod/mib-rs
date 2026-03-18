@@ -165,11 +165,9 @@ impl<'a> RawMib<'a> {
         self.mib.capabilities_slice()
     }
 
-    /// Return the effective owning module for a node.
-    ///
-    /// When multiple modules register the same OID, ownership is determined
-    /// by the resolver's tiebreaker rules. Entity-backed ownership takes
-    /// priority over plain node assignments.
+    /// Return the owning module for a node, determined during OID
+    /// resolution. For the defining module of a specific entity, use the
+    /// entity's own `module()` accessor.
     pub fn effective_module(self, id: NodeId) -> Option<ModuleId> {
         self.mib.effective_module(id)
     }
