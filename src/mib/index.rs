@@ -297,20 +297,14 @@ fn arcs_to_bytes(arcs: &[u32]) -> Option<Vec<u8>> {
 
 /// Extract the fixed size from an index component's SIZE constraint.
 ///
-/// Prefers the object's effective sizes (matching how the encoding was
-/// classified during resolution), falling back to the type chain.
-/// Returns 0 if the size cannot be determined.
+/// Returns 0 if the index has no object or the size cannot be determined.
+/// The resolver guarantees that effective sizes are propagated onto objects
+/// from the type chain during resolution, so no type fallback is needed.
 fn fixed_size(idx: &Index<'_>) -> usize {
-    let sizes = if let Some(obj) = idx.object() {
-        let s = obj.effective_sizes();
-        if !s.is_empty() {
-            s
-        } else {
-            idx.ty().map_or(&[][..], |t| t.effective_sizes())
-        }
-    } else {
-        idx.ty().map_or(&[][..], |t| t.effective_sizes())
+    let Some(obj) = idx.object() else {
+        return 0;
     };
+    let sizes = obj.effective_sizes();
     if super::types::is_fixed_size(sizes) {
         sizes[0].min as usize
     } else {
