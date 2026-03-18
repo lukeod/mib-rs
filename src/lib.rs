@@ -441,6 +441,8 @@
 //!
 //! | Constructor | Description |
 //! |-------------|-------------|
+//! | [`source::file()`] | Single file on disk, module name auto-detected |
+//! | [`source::files()`] | Multiple files on disk, module names auto-detected |
 //! | [`source::dir`] | Recursively indexes a directory tree on disk |
 //! | [`source::dirs`] | Chains multiple directory trees |
 //! | [`source::memory`] | Single in-memory module (for tests or embedding) |
@@ -888,7 +890,7 @@ pub mod types;
 pub use error::LoadError;
 pub use load::{Loader, load};
 pub use mib::{
-    Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid,
+    Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid, OidLookup,
     ParseOidError, ResolveOidError, Type,
 };
 pub use source::{FindResult, Source};

@@ -352,9 +352,51 @@ impl Mib {
     ///
     /// This is the handle-oriented entry point for instance OIDs such as
     /// `ifIndex.5`. Always returns a node (at minimum the root).
+    ///
+    /// When you also need the instance suffix (the arcs after the matched
+    /// node), use [`lookup_instance`](Mib::lookup_instance) instead.
     #[must_use]
     pub fn lookup_oid(&self, oid: &Oid) -> Node<'_> {
         Node::new(self, self.longest_prefix_by_oid(oid))
+    }
+
+    /// Look up a numeric OID and return both the matched node and the
+    /// instance suffix.
+    ///
+    /// This is the standard pattern for processing SNMP varbinds, where
+    /// you need the base node (for metadata, type info, formatting) and
+    /// the trailing arcs (the instance index that identifies which row
+    /// or scalar instance the value belongs to).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example_mib() -> mib_rs::Mib {
+    /// #     let source = mib_rs::source::memory(
+    /// #         "DOC-EXAMPLE-MIB",
+    /// #         include_bytes!("../../tests/data/doc-example-mib.txt").as_slice(),
+    /// #     );
+    /// #     mib_rs::Loader::new()
+    /// #         .source(source)
+    /// #         .modules(["DOC-EXAMPLE-MIB"])
+    /// #         .load()
+    /// #         .expect("example MIB should load")
+    /// # }
+    /// let mib = example_mib();
+    /// let instance_oid = mib.resolve_oid("docDescr.7").unwrap();
+    /// let lookup = mib.lookup_instance(&instance_oid);
+    /// assert_eq!(lookup.node().name(), "docDescr");
+    /// assert_eq!(lookup.suffix(), &[7]);
+    /// ```
+    #[must_use]
+    pub fn lookup_instance(&self, oid: &Oid) -> OidLookup<'_> {
+        let id = self.longest_prefix_by_oid(oid);
+        let node_oid = self.tree.oid_of(id);
+        let suffix = oid[node_oid.len()..].to_vec();
+        OidLookup {
+            node: Node::new(self, id),
+            suffix,
+        }
     }
 
     /// Depth-first iterator over a subtree rooted at `id`, yielding [`NodeId`]s.
@@ -397,22 +439,19 @@ impl Mib {
         if oid.is_empty() {
             return String::new();
         }
-        let matched_id = self.tree.longest_prefix(oid);
-        let matched = self.tree.get(matched_id);
+        let lookup = self.lookup_instance(oid);
+        let matched = self.tree.get(lookup.node.id);
         if matched.name.is_empty() {
             return oid.to_string();
         }
 
-        let node_oid = self.tree.oid_of(matched_id);
-        let suffix = &oid[node_oid.len()..];
-
         let mut result = String::new();
-        if let Some(mod_id) = self.effective_module(matched_id) {
+        if let Some(mod_id) = self.effective_module(lookup.node.id) {
             result.push_str(&self.modules[mod_id.0 as usize].name);
             result.push_str("::");
         }
         result.push_str(&matched.name);
-        for arc in suffix {
+        for arc in lookup.suffix() {
             result.push('.');
             result.push_str(&arc.to_string());
         }
@@ -1103,6 +1142,30 @@ fn append_suffix(base: Oid, suffix: &str) -> Result<Oid, ResolveOidError> {
             source,
         })?;
     Ok(base.child_oid(&extra))
+}
+
+/// Result of [`Mib::lookup_instance`], containing the matched node and
+/// any remaining instance suffix arcs.
+pub struct OidLookup<'a> {
+    node: Node<'a>,
+    suffix: Vec<u32>,
+}
+
+impl<'a> OidLookup<'a> {
+    /// The deepest tree node matching the OID prefix.
+    #[must_use]
+    pub fn node(&self) -> Node<'a> {
+        self.node
+    }
+
+    /// The instance suffix: arcs from the input OID that follow the
+    /// matched node's OID.
+    ///
+    /// Empty when the input OID exactly matches a tree node.
+    #[must_use]
+    pub fn suffix(&self) -> &[u32] {
+        &self.suffix
+    }
 }
 
 /// Error returned by [`Mib::resolve_oid`] when a query cannot be resolved.

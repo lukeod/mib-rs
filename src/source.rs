@@ -33,6 +33,7 @@ pub struct FindResult {
 /// Implementations must be `Send + Sync` to support parallel loading.
 /// The library ships several constructors:
 ///
+/// - [`file()`] / [`files()`] - individual files on disk
 /// - [`dir`] / [`dir_with_config`] - directory tree on disk
 /// - [`dirs()`] - multiple directory trees combined
 /// - [`memory`] / [`memory_modules`] - in-memory content
@@ -243,6 +244,59 @@ impl Source for MultiSource {
         }
         Ok(names)
     }
+}
+
+/// Create a [`Source`] from a single MIB file on disk.
+///
+/// The module name is extracted from the file content by scanning for
+/// `DEFINITIONS ::=` headers, just like [`dir`] does for directory trees.
+/// The caller does not need to know or provide the module name.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if the file cannot be read or does not contain
+/// a valid module definition.
+///
+/// # Examples
+///
+/// ```no_run
+/// let src = mib_rs::source::file("/path/to/IF-MIB.mib").unwrap();
+/// assert!(src.list_modules().unwrap().contains(&"IF-MIB".to_string()));
+/// ```
+pub fn file(path: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
+    files([path])
+}
+
+/// Create a [`Source`] from multiple MIB files on disk.
+///
+/// Module names are extracted from each file's content by scanning for
+/// `DEFINITIONS ::=` headers. When duplicate module names appear across
+/// files, the first file wins.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if any file cannot be read or contains no
+/// valid module definition.
+pub fn files(paths: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
+    let mut modules = HashMap::new();
+    for path in paths {
+        let path = path.as_ref();
+        let content = std::fs::read(path)?;
+        let names = crate::scan::scan_module_names(&content);
+        if names.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("no module definition found in {}", path.display()),
+            ));
+        }
+        let diag_path = path.to_path_buf();
+        for name in names {
+            modules
+                .entry(name)
+                .or_insert_with(|| (diag_path.clone(), content.clone()));
+        }
+    }
+    Ok(Box::new(MemorySource { modules }))
 }
 
 /// A source backed by in-memory byte buffers keyed by module name.
