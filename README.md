@@ -37,7 +37,7 @@ Or add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mib-rs = "0.5"
+mib-rs = "0.6"
 ```
 
 ## Quick Start

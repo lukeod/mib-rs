@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-18
+
+### Added
+
+- Add `source::file()` and `source::files()` for loading individual MIB files from disk with automatic module name detection
+- Add `OidLookup` type and `Mib::lookup_instance()` for returning both the matched node and instance suffix from a longest-prefix lookup
+
+### Changed
+
+- Refactor `format_oid` to use `lookup_instance` internally
+
 ## [0.5.0] - 2026-03-18
 
 ### Breaking Changes
@@ -143,7 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/lukeod/mib-rs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/lukeod/mib-rs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/lukeod/mib-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/lukeod/mib-rs/compare/v0.2.0...v0.3.0
