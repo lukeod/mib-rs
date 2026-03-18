@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-18
+
+### Breaking Changes
+
+- `format_integer()` and `format_octets()` now require a `HexCase` parameter (both standalone functions and `Object` handle methods)
+
+### Added
+
+- Add `HexCase` enum for upper/lower hex output control
+- Add `DisplayHint::parse()` for structured hint representation
+- Add `parsed_display_hint()` method on `Object` and `Type` handles
+- Add display-hint validation helpers (`is_valid_integer_hint`, `is_valid_octet_string_hint`)
+
+### Changed
+
+- Optimize hex formatting with lookup table instead of write!
+- Cache parsed hint spec to avoid re-parsing on implicit repetition
+
 ## [0.4.0] - 2026-03-18
 
 ### Added
@@ -125,7 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/lukeod/mib-rs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/lukeod/mib-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/lukeod/mib-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/lukeod/mib-rs/compare/v0.1.3...v0.2.0
