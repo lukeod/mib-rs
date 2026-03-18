@@ -1710,25 +1710,10 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
     let mut refs = Vec::new();
     for comp in &oid.components {
         match comp {
-            ir::OidComponent::Name { name, span } => {
-                refs.push(OidRef {
-                    name: name.clone(),
-                    span: *span,
-                });
-            }
-            ir::OidComponent::NamedNumber { name, span, .. } => {
-                refs.push(OidRef {
-                    name: name.clone(),
-                    span: *span,
-                });
-            }
-            ir::OidComponent::QualifiedName { name, span, .. } => {
-                refs.push(OidRef {
-                    name: name.clone(),
-                    span: *span,
-                });
-            }
-            ir::OidComponent::QualifiedNamedNumber { name, span, .. } => {
+            ir::OidComponent::Name { name, span }
+            | ir::OidComponent::NamedNumber { name, span, .. }
+            | ir::OidComponent::QualifiedName { name, span, .. }
+            | ir::OidComponent::QualifiedNamedNumber { name, span, .. } => {
                 refs.push(OidRef {
                     name: name.clone(),
                     span: *span,
