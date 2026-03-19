@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-19
+
+### Added
+
+- Add `inspect` CLI subcommand for deep-dive symbol inspection (type chains, provenance, group membership, diagnostics, column tables)
+- Add `imports_symbol()` and `import_source()` methods to Module handle
+- Add `index()` iterator to Object handle for raw INDEX entries
+
+### Changed
+
+- Make registration phase own resolver modules instead of borrowing
+- Add global fallbacks to `link_object_indexes` in permissive mode
+
+### Fixed
+
+- Fix `scan_module_names` skipping names when comments precede DEFINITIONS
+
 ## [0.7.1] - 2026-03-19
 
 ### Changed
@@ -170,7 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI tool with load, get, find, list, lint, paths, and dump commands
 - Tracing integration for debug and trace logging
 
-[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/lukeod/mib-rs/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/lukeod/mib-rs/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/lukeod/mib-rs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/lukeod/mib-rs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lukeod/mib-rs/compare/v0.5.0...v0.6.0
