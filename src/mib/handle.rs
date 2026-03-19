@@ -389,6 +389,18 @@ impl<'a> Module<'a> {
         self.data().line_col(offset)
     }
 
+    /// Return `true` if this module imports a symbol with the given name.
+    pub fn imports_symbol(self, name: &str) -> bool {
+        self.data().imports_symbol(name)
+    }
+
+    /// Return the resolved source module for an imported name.
+    pub fn import_source(self, name: &str) -> Option<Module<'a>> {
+        self.data()
+            .import_source(name)
+            .map(|id| Module::new(self.mib, id))
+    }
+
     /// Look up an object defined by this module.
     pub fn object(self, name: &str) -> Option<Object<'a>> {
         self.data()
@@ -659,6 +671,17 @@ impl<'a> Object<'a> {
             .iter()
             .copied()
             .map(|id| Object::new(self.mib, id))
+    }
+
+    /// Return the raw INDEX entries from this object's definition.
+    ///
+    /// Only non-empty for row objects that define an INDEX clause directly.
+    /// For augmented or inherited indexes, use [`effective_indexes`](Self::effective_indexes).
+    pub fn index(self) -> impl Iterator<Item = Index<'a>> + 'a {
+        self.data()
+            .index()
+            .iter()
+            .map(move |entry| Index::new(self.mib, self.id, entry))
     }
 
     /// Iterate the effective indexes for this row, column, or augmented row.

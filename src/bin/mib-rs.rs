@@ -7,7 +7,8 @@ use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
 use mib_rs::source::dir;
 use mib_rs::types::{
-    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, all_diagnostic_codes,
+    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, Span,
+    all_diagnostic_codes,
 };
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -158,6 +159,20 @@ enum Command {
         #[arg(long, default_value = "text")]
         format: OutputFormat,
     },
+    /// Deep-dive inspection of a MIB symbol
+    Inspect {
+        /// OID, name, qualified name, or type name to inspect
+        query: String,
+        /// Only load specific modules (repeatable, default: all)
+        #[arg(short = 'm', long = "module")]
+        modules: Vec<String>,
+        /// Use strict resolver mode
+        #[arg(long, conflicts_with = "permissive")]
+        strict: bool,
+        /// Use permissive resolver mode (default for inspect)
+        #[arg(long, conflicts_with = "strict")]
+        permissive: bool,
+    },
     /// Export resolved MIB data as JSON
     Dump {
         /// Module names to load (omit to load all available modules)
@@ -268,6 +283,12 @@ fn main() {
         } => cmd_find(
             &cli.paths, &pattern, modules, kind, base_type, count, strict, permissive, format,
         ),
+        Command::Inspect {
+            query,
+            modules,
+            strict,
+            permissive,
+        } => cmd_inspect(&cli.paths, &query, modules, strict, permissive),
         Command::Dump {
             modules,
             strict,
@@ -995,6 +1016,669 @@ fn non_empty(s: &str) -> Option<String> {
         None
     } else {
         Some(s.to_string())
+    }
+}
+
+// --- inspect ---
+
+fn cmd_inspect(
+    paths: &[String],
+    query: &str,
+    modules: Vec<String>,
+    strict: bool,
+    permissive: bool,
+) -> i32 {
+    let strictness = resolve_strictness(strict, permissive, ResolverStrictness::Permissive);
+    let diag_config = DiagnosticConfig::verbose();
+
+    let mib = match load_mib(paths, modules, strictness, diag_config) {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
+
+    // Try node resolution first.
+    if let Some(node) = mib.resolve_node(query) {
+        inspect_node(&mib, node);
+        return 0;
+    }
+
+    // Fall back to type lookup.
+    if let Some((mod_name, name)) = query.split_once("::") {
+        if let Some(module) = mib.module(mod_name)
+            && let Some(ty) = module.r#type(name)
+        {
+            inspect_standalone_type(&mib, ty);
+            return 0;
+        }
+    } else if let Some(ty) = mib.r#type(query) {
+        inspect_standalone_type(&mib, ty);
+        return 0;
+    }
+
+    eprintln!("not found: {query}");
+    1
+}
+
+fn inspect_node(mib: &Mib, node: mib_rs::mib::Node<'_>) {
+    print_identity(node);
+
+    if let Some(obj) = node.object() {
+        inspect_object(mib, obj);
+    } else if let Some(notif) = node.notification() {
+        inspect_notification(mib, notif);
+    } else if let Some(group) = node.group() {
+        inspect_group(mib, group);
+    } else if let Some(compliance) = node.compliance() {
+        inspect_compliance(mib, compliance);
+    } else if let Some(capability) = node.capability() {
+        inspect_capability(mib, capability);
+    } else {
+        inspect_bare_node(mib, node);
+    }
+}
+
+fn print_identity(node: mib_rs::mib::Node<'_>) {
+    let label = if node.name().is_empty() {
+        format!("({})", node.arc())
+    } else {
+        node.name().to_string()
+    };
+    println!("Name:    {label}");
+    if let Some(module) = node.module() {
+        println!("Module:  {}", module.name());
+    }
+    println!("OID:     {}", node.oid());
+    println!("Kind:    {}", node.kind());
+}
+
+fn inspect_object(mib: &Mib, obj: mib_rs::mib::Object<'_>) {
+    println!("Status:  {}", obj.status());
+    println!("Access:  {}", obj.access());
+
+    if !obj.units().is_empty() {
+        println!("Units:   {}", obj.units());
+    }
+
+    if let Some(dv) = obj.default_value() {
+        println!("DefVal:  {dv}");
+    }
+
+    // Type summary line.
+    if let Some(ty) = obj.ty() {
+        let type_name = if ty.name().is_empty() {
+            ty.effective_base().to_string()
+        } else {
+            ty.name().to_string()
+        };
+        let base = ty.effective_base().to_string();
+        if type_name != base {
+            println!("Type:    {type_name} ({base})");
+        } else {
+            println!("Type:    {type_name}");
+        }
+    }
+
+    // Index / augments.
+    let raw_indexes: Vec<String> = obj.index().map(|i| format_index_entry(i)).collect();
+    if !raw_indexes.is_empty() {
+        println!("Index:   [{}]", raw_indexes.join(", "));
+    }
+    if let Some(aug) = obj.augments() {
+        println!("Augments: {}", aug.name());
+    }
+    let aug_by: Vec<&str> = obj.augmented_by().map(|o| o.name()).collect();
+    if !aug_by.is_empty() {
+        println!("AugmentedBy: {}", aug_by.join(", "));
+    }
+    if obj.augments().is_some() {
+        let eff_indexes: Vec<String> = obj
+            .effective_indexes()
+            .map(|i| format_index_entry(i))
+            .collect();
+        if !eff_indexes.is_empty() {
+            println!("EffectiveIndex: [{}]", eff_indexes.join(", "));
+        }
+    }
+
+    // Column context.
+    if obj.is_column() {
+        println!("IsIndex: {}", obj.is_index());
+        if let Some(row) = obj.row()
+            && row.name() != obj.name()
+        {
+            println!("Row:     {}", row.name());
+        }
+        if let Some(tbl) = obj.table()
+            && tbl.name() != obj.name()
+        {
+            println!("Table:   {}", tbl.name());
+        }
+    }
+
+    // Type chain.
+    if let Some(ty) = obj.ty() {
+        print_type_chain(ty);
+    }
+
+    // Enum/BITS.
+    let enums = obj.effective_enums();
+    let bits = obj.effective_bits();
+    if !enums.is_empty() && bits.is_empty() {
+        println!("\nValues:");
+        for v in enums {
+            println!("  {}({})", v.label, v.value);
+        }
+    }
+    if !bits.is_empty() {
+        println!("\nBits:");
+        for b in bits {
+            println!("  {}({})", b.label, b.value);
+        }
+    }
+
+    // Column table for tables and rows.
+    if obj.is_table() || obj.is_row() {
+        let cols: Vec<_> = obj.columns().collect();
+        if !cols.is_empty() {
+            println!("\nColumns:");
+            print_column_table(&cols);
+        }
+    }
+
+    // Provenance.
+    print_provenance(obj.name(), obj.module(), obj.ty());
+
+    // Group membership.
+    print_group_membership(mib, obj.node());
+
+    // Diagnostics.
+    print_scoped_diagnostics(mib, obj.module(), obj.span());
+    print_related_unresolved(mib, obj.name());
+
+    // Description / Reference.
+    print_description_reference(obj.description(), obj.reference());
+}
+
+fn inspect_notification(mib: &Mib, notif: mib_rs::mib::Notification<'_>) {
+    println!("Status:  {}", notif.status());
+
+    if let Some(ti) = notif.trap_info() {
+        println!("Enterprise: {}", ti.enterprise);
+        println!("TrapNumber: {}", ti.trap_number);
+    }
+
+    let objects: Vec<_> = notif.objects().collect();
+    if !objects.is_empty() {
+        println!("\nObjects:");
+        for obj in &objects {
+            let mod_prefix = obj
+                .module()
+                .map(|m| format!("{}::", m.name()))
+                .unwrap_or_default();
+            println!("  {mod_prefix}{}  {}", obj.name(), obj.node().oid());
+        }
+    }
+
+    // Group membership.
+    if let Some(node) = notif.node() {
+        print_group_membership(mib, node);
+    }
+
+    // Diagnostics.
+    print_scoped_diagnostics(mib, notif.module(), notif.span());
+    print_related_unresolved(mib, notif.name());
+
+    print_description_reference(notif.description(), notif.reference());
+}
+
+fn inspect_group(mib: &Mib, g: mib_rs::mib::Group<'_>) {
+    println!("Status:  {}", g.status());
+    if g.is_notification_group() {
+        println!("Type:    notification-group");
+    } else {
+        println!("Type:    object-group");
+    }
+
+    let members: Vec<_> = g.members().collect();
+    if !members.is_empty() {
+        println!("\nMembers:");
+        for nd in &members {
+            let mod_prefix = nd
+                .module()
+                .map(|m| format!("{}::", m.name()))
+                .unwrap_or_default();
+            println!("  {mod_prefix}{}  {}  {}", nd.name(), nd.oid(), nd.kind());
+        }
+    }
+
+    // Which compliances reference this group.
+    print_compliance_references(mib, g.name());
+
+    // Diagnostics.
+    print_scoped_diagnostics(mib, g.module(), g.span());
+    print_related_unresolved(mib, g.name());
+
+    print_description_reference(g.description(), g.reference());
+}
+
+fn inspect_compliance(mib: &Mib, c: mib_rs::mib::Compliance<'_>) {
+    println!("Status:  {}", c.status());
+
+    for cm in c.modules() {
+        let mod_name = if cm.module_name.is_empty() {
+            "(this module)"
+        } else {
+            &cm.module_name
+        };
+        println!("\nModule: {mod_name}");
+        if !cm.mandatory_groups.is_empty() {
+            println!("  Mandatory groups: {}", cm.mandatory_groups.join(", "));
+        }
+        for cg in &cm.groups {
+            println!("  Group: {}", cg.group);
+            if !cg.description.is_empty() {
+                println!("    {}", normalize_and_truncate(&cg.description, 200));
+            }
+        }
+        for co in &cm.objects {
+            println!("  Object: {}", co.object);
+            if let Some(access) = co.min_access {
+                println!("    MIN-ACCESS: {access}");
+            }
+            if !co.description.is_empty() {
+                println!("    {}", normalize_and_truncate(&co.description, 200));
+            }
+        }
+    }
+
+    // Diagnostics.
+    print_scoped_diagnostics(mib, c.module(), c.span());
+    print_related_unresolved(mib, c.name());
+
+    print_description_reference(c.description(), c.reference());
+}
+
+fn inspect_capability(mib: &Mib, cap: mib_rs::mib::Capability<'_>) {
+    println!("Status:  {}", cap.status());
+
+    if !cap.product_release().is_empty() {
+        println!("Product: {}", cap.product_release());
+    }
+
+    for sm in cap.supports() {
+        println!("\nSupports: {}", sm.module_name);
+        if !sm.includes.is_empty() {
+            println!("  Includes: {}", sm.includes.join(", "));
+        }
+        for ov in &sm.object_variations {
+            println!("  Variation: {}", ov.object);
+            if let Some(access) = ov.access {
+                println!("    ACCESS: {access}");
+            }
+            if !ov.description.is_empty() {
+                println!("    {}", normalize_and_truncate(&ov.description, 200));
+            }
+        }
+        for nv in &sm.notification_variations {
+            println!("  Variation: {}", nv.notification);
+            if let Some(access) = nv.access {
+                println!("    ACCESS: {access}");
+            }
+            if !nv.description.is_empty() {
+                println!("    {}", normalize_and_truncate(&nv.description, 200));
+            }
+        }
+    }
+
+    // Diagnostics.
+    print_scoped_diagnostics(mib, cap.module(), cap.span());
+    print_related_unresolved(mib, cap.name());
+
+    print_description_reference(cap.description(), cap.reference());
+}
+
+fn inspect_bare_node(mib: &Mib, node: mib_rs::mib::Node<'_>) {
+    if node.kind() == Kind::ObjectIdentity {
+        if let Some(s) = node.status() {
+            println!("Status:  {s}");
+        }
+        println!("Macro:   OBJECT-IDENTITY");
+    }
+
+    print_scoped_diagnostics(mib, node.module(), node.span());
+    print_related_unresolved(mib, node.name());
+
+    print_description_reference(node.description(), node.reference());
+}
+
+fn inspect_standalone_type(mib: &Mib, ty: mib_rs::mib::Type<'_>) {
+    println!("Name:    {}", ty.name());
+    if let Some(module) = ty.module() {
+        println!("Module:  {}", module.name());
+    }
+    println!("Kind:    type");
+    let status = ty.status();
+    if status != mib_rs::types::Status::Current {
+        println!("Status:  {status}");
+    }
+    if ty.is_textual_convention() {
+        println!("Macro:   TEXTUAL-CONVENTION");
+    }
+    println!("Base:    {}", ty.effective_base());
+
+    print_type_chain(ty);
+
+    print_scoped_diagnostics(mib, ty.module(), ty.span());
+    print_related_unresolved(mib, ty.name());
+
+    print_description_reference(ty.description(), ty.reference());
+}
+
+fn print_type_chain(ty: mib_rs::mib::Type<'_>) {
+    println!("\nType chain:");
+    let mut cur = Some(ty);
+    let mut depth = 0;
+    while let Some(t) = cur {
+        if depth >= 100 {
+            break;
+        }
+
+        let name = if t.name().is_empty() {
+            "(inline)"
+        } else {
+            t.name()
+        };
+
+        let mod_name = t.module().map(|m| m.name().to_string()).unwrap_or_default();
+
+        // Build annotations.
+        let mut tags = Vec::new();
+        if t.is_textual_convention() {
+            tags.push("textual-convention".to_string());
+        }
+        let base = t.base();
+        if base != mib_rs::types::BaseType::Unknown {
+            tags.push(format!("base: {base}"));
+        }
+
+        let tag_str = if tags.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", tags.join(", "))
+        };
+
+        if !mod_name.is_empty() {
+            println!("  {:<28} {mod_name}{tag_str}", name);
+        } else {
+            println!("  {name}{tag_str}");
+        }
+
+        // Constraints declared at this level.
+        let hint = t.display_hint();
+        if !hint.is_empty() {
+            println!("    DISPLAY-HINT {hint:?}");
+        }
+        let sizes = t.sizes();
+        if !sizes.is_empty() {
+            println!("    SIZE ({})", format_range_list(sizes));
+        }
+        let ranges = t.ranges();
+        if !ranges.is_empty() {
+            println!("    RANGE ({})", format_range_list(ranges));
+        }
+        let enums = t.enums();
+        if !enums.is_empty() {
+            let labels: Vec<String> = enums
+                .iter()
+                .map(|e| format!("{}({})", e.label, e.value))
+                .collect();
+            println!("    VALUES: {}", labels.join(", "));
+        }
+        let bits = t.bits();
+        if !bits.is_empty() {
+            let labels: Vec<String> = bits
+                .iter()
+                .map(|b| format!("{}({})", b.label, b.value))
+                .collect();
+            println!("    BITS: {}", labels.join(", "));
+        }
+
+        cur = t.parent();
+        depth += 1;
+    }
+}
+
+fn format_index_entry(i: mib_rs::mib::Index<'_>) -> String {
+    let mut s = i.name().to_string();
+    if i.implied() {
+        s = format!("IMPLIED {s}");
+    }
+    let enc = i.encoding();
+    if enc != mib_rs::types::IndexEncoding::Unknown {
+        s = format!("{s} [{enc}]");
+    }
+    s
+}
+
+fn format_range_list(ranges: &[mib_rs::mib::types::Range]) -> String {
+    let parts: Vec<String> = ranges
+        .iter()
+        .map(|r| {
+            if r.min == r.max {
+                format!("{}", r.min)
+            } else {
+                format!("{}..{}", r.min, r.max)
+            }
+        })
+        .collect();
+    parts.join(" | ")
+}
+
+fn print_provenance(
+    name: &str,
+    module: Option<mib_rs::mib::Module<'_>>,
+    ty: Option<mib_rs::mib::Type<'_>>,
+) {
+    println!("\nProvenance:");
+    if let Some(m) = module {
+        println!("  {:<24} defined in {}", name, m.name());
+    }
+
+    let ty = match ty {
+        Some(t) => t,
+        None => return,
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut cur = Some(ty);
+    while let Some(t) = cur {
+        let t_name = t.name();
+        if !t_name.is_empty() && seen.insert(t_name.to_string()) {
+            let t_mod = t.module().map(|m| m.name().to_string()).unwrap_or_default();
+
+            // Check if this type was imported by the object's module.
+            let source = if let Some(ref m) = module {
+                let mod_name = m.name();
+                if !t_mod.is_empty() && t_mod != mod_name {
+                    if m.imports_symbol(t_name) {
+                        if let Some(src_mod) = m.import_source(t_name) {
+                            format!(
+                                "  imported from {} (via {} IMPORTS)",
+                                src_mod.name(),
+                                mod_name
+                            )
+                        } else {
+                            format!("  imported from {t_mod} (via {mod_name} IMPORTS)")
+                        }
+                    } else {
+                        format!("  defined in {t_mod}")
+                    }
+                } else if !t_mod.is_empty() {
+                    format!("  defined in {t_mod}")
+                } else {
+                    String::new()
+                }
+            } else if !t_mod.is_empty() {
+                format!("  defined in {t_mod}")
+            } else {
+                String::new()
+            };
+
+            let label = if t.is_textual_convention() {
+                format!("TC {t_name}")
+            } else {
+                format!("Type {t_name}")
+            };
+            println!("  {label:<24}{source}");
+        }
+        cur = t.parent();
+    }
+}
+
+fn print_group_membership(mib: &Mib, node: mib_rs::mib::Node<'_>) {
+    let mut groups = Vec::new();
+    for g in mib.groups() {
+        let is_member = g.members().any(|m| m == node);
+        if !is_member {
+            continue;
+        }
+        let mod_name = g.module().map(|m| m.name().to_string()).unwrap_or_default();
+        let kind = if g.is_notification_group() {
+            "notification-group"
+        } else {
+            "object-group"
+        };
+        groups.push(format!("  {}  ({}, {})", g.name(), mod_name, kind));
+    }
+    if !groups.is_empty() {
+        println!("\nGroup membership:");
+        for g in &groups {
+            println!("{g}");
+        }
+    }
+}
+
+fn print_compliance_references(mib: &Mib, group_name: &str) {
+    let mut refs = Vec::new();
+    for c in mib.compliances() {
+        for cm in c.modules() {
+            if cm.mandatory_groups.iter().any(|g| g == group_name) {
+                let mod_name = c.module().map(|m| m.name().to_string()).unwrap_or_default();
+                refs.push(format!("  {}  ({}, mandatory)", c.name(), mod_name));
+            }
+            for cg in &cm.groups {
+                if cg.group == group_name {
+                    let mod_name = c.module().map(|m| m.name().to_string()).unwrap_or_default();
+                    refs.push(format!("  {}  ({}, conditional)", c.name(), mod_name));
+                }
+            }
+        }
+    }
+    if !refs.is_empty() {
+        println!("\nReferenced by compliances:");
+        for r in &refs {
+            println!("{r}");
+        }
+    }
+}
+
+fn print_scoped_diagnostics(mib: &Mib, module: Option<mib_rs::mib::Module<'_>>, span: Span) {
+    let module = match module {
+        Some(m) => m,
+        None => return,
+    };
+    if span == Span::ZERO || span == Span::SYNTHETIC {
+        return;
+    }
+
+    let (start_line, _) = module.line_col(span.start);
+    let (end_line, _) = module.line_col(span.end);
+    if start_line == 0 {
+        return;
+    }
+
+    let module_name = module.name();
+    let scoped: Vec<_> = mib
+        .diagnostics()
+        .iter()
+        .filter(|d| {
+            d.module.as_deref() == Some(module_name)
+                && d.line.is_some_and(|l| l >= start_line && l <= end_line)
+        })
+        .collect();
+
+    if !scoped.is_empty() {
+        println!("\nDiagnostics:");
+        for d in &scoped {
+            println!("  [{}] {}: {}", d.severity, d.code, d.message);
+        }
+    }
+}
+
+fn print_related_unresolved(mib: &Mib, name: &str) {
+    let related: Vec<_> = mib
+        .unresolved()
+        .iter()
+        .filter(|u| u.symbol == name)
+        .collect();
+
+    if !related.is_empty() {
+        println!("\nUnresolved references:");
+        for u in &related {
+            let mut entry = format!("  [{}] {} in {}", u.kind, u.symbol, u.module);
+            if !u.reason.is_empty() {
+                entry += ": ";
+                entry += &u.reason;
+            }
+            println!("{entry}");
+        }
+    }
+}
+
+fn print_description_reference(desc: &str, reference: &str) {
+    if !desc.is_empty() {
+        println!("\nDescription:\n  {}", normalize_whitespace(desc));
+    }
+    if !reference.is_empty() {
+        println!("\nReference:\n  {}", normalize_whitespace(reference));
+    }
+}
+
+fn print_column_table(cols: &[mib_rs::mib::Object<'_>]) {
+    println!(
+        "  {:<28} {:<20} {:<18} {:<18} ROLE",
+        "COLUMN", "TYPE", "BASE", "ACCESS"
+    );
+    println!(
+        "  {:<28} {:<20} {:<18} {:<18} ----",
+        "------", "----", "----", "------"
+    );
+    for col in cols {
+        let type_name = col
+            .ty()
+            .map(|t| {
+                let n = t.name();
+                if n.is_empty() {
+                    t.effective_base().to_string()
+                } else {
+                    n.to_string()
+                }
+            })
+            .unwrap_or_default();
+        let base_type = col
+            .ty()
+            .map(|t| t.effective_base().to_string())
+            .unwrap_or_default();
+        let access = col.access().to_string();
+        let role = if col.is_index() { "index" } else { "data" };
+        println!(
+            "  {:<28} {:<20} {:<18} {:<18} {}",
+            col.name(),
+            type_name,
+            base_type,
+            access,
+            role
+        );
     }
 }
 
