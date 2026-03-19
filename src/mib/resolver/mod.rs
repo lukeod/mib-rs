@@ -54,10 +54,10 @@ pub fn resolve(
     );
     let _guard = span.enter();
 
-    let mut ctx = ResolverContext::new(modules, strictness, diag_config.clone());
+    let mut ctx = ResolverContext::new(strictness, diag_config.clone());
 
     run_phase("registration", || {
-        registration::register_modules(&mut ctx);
+        registration::register_modules(&mut ctx, modules);
         debug!(
             target: "mib_rs::resolver",
             component = "resolver",

@@ -2,8 +2,7 @@
 //!
 //! Creates synthetic base modules (SNMPv2-SMI, RFC1155-SMI, etc.), filters
 //! out user modules that collide with base names, registers all modules in
-//! the [`ResolverContext`], and builds definition name indexes used by
-//! later phases.
+//! the [`ResolverContext`], and builds per-module caches used by later phases.
 
 use std::collections::HashSet;
 
@@ -17,15 +16,16 @@ use crate::lower::base_modules;
 /// and build definition name indexes.
 ///
 /// Creates synthetic base modules, filters user modules that collide with
-/// base names, extracts MODULE-IDENTITY metadata, and populates
-/// [`ResolverContext::module_index`] and [`ResolverContext::module_def_names`].
-pub(super) fn register_modules(ctx: &mut ResolverContext) {
+/// base names, stores the final base+user module list in [`ResolverContext::modules`],
+/// extracts MODULE-IDENTITY metadata, forwards parse/lowering diagnostics, caches
+/// well-known base module ids, and populates the per-module definition indexes.
+pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir::Module>) {
     // Create synthetic base modules and prepend them.
     let base_mods = base_modules::create_base_modules();
     let base_names: HashSet<&str> = base_mods.iter().map(|m| m.name.as_str()).collect();
 
     // Filter user modules that collide with base module names.
-    let user_mods: Vec<ir::Module> = std::mem::take(&mut ctx.modules)
+    let user_mods: Vec<ir::Module> = input_modules
         .into_iter()
         .filter(|m| !base_names.contains(m.name.as_str()))
         .collect();

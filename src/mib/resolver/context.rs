@@ -1,8 +1,9 @@
 //! Resolver context: mutable state shared across all resolver phases.
 //!
 //! [`ResolverContext`] holds the in-progress [`Mib`], parsed IR modules,
-//! various lookup indexes, and unresolved reference tracking. Each phase
-//! reads and mutates this shared context.
+//! various lookup indexes, and unresolved reference tracking. Registration
+//! owns initial population of the module list; later phases read and mutate
+//! the shared context.
 
 use std::collections::{HashMap, HashSet};
 
@@ -138,28 +139,23 @@ pub(super) struct UnresolvedTracking {
 }
 
 impl ResolverContext {
-    /// Create a new resolver context from parsed IR modules.
-    pub fn new(
-        modules: Vec<ir::Module>,
-        strictness: ResolverStrictness,
-        diag_config: DiagnosticConfig,
-    ) -> Self {
-        let n = modules.len();
+    /// Create a new resolver context with no registered modules.
+    pub fn new(strictness: ResolverStrictness, diag_config: DiagnosticConfig) -> Self {
         Self {
             mib: Mib::new(),
-            modules,
-            module_index: HashMap::with_capacity(n),
-            module_to_resolved: HashMap::with_capacity(n),
-            resolved_to_module: HashMap::with_capacity(n),
-            module_symbol_to_node: HashMap::with_capacity(n),
-            module_imports: HashMap::with_capacity(n),
-            module_symbol_to_type: HashMap::with_capacity(n),
-            module_def_names: HashMap::with_capacity(n),
-            module_oid_def_names: HashMap::with_capacity(n),
+            modules: Vec::new(),
+            module_index: HashMap::new(),
+            module_to_resolved: HashMap::new(),
+            resolved_to_module: HashMap::new(),
+            module_symbol_to_node: HashMap::new(),
+            module_imports: HashMap::new(),
+            module_symbol_to_type: HashMap::new(),
+            module_def_names: HashMap::new(),
+            module_oid_def_names: HashMap::new(),
             snmpv2_smi: None,
             rfc1155_smi: None,
             snmpv2_tc: None,
-            used_imports: HashMap::with_capacity(n),
+            used_imports: HashMap::new(),
             unresolved_imports: Vec::new(),
             unresolved_types: Vec::new(),
             unresolved_oids: Vec::new(),
