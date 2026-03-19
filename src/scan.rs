@@ -46,9 +46,22 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
         let before = &rest[..idx];
         let mut pos = before.len();
 
-        // Skip whitespace.
-        while pos > 0 && matches!(before[pos - 1], b' ' | b'\t' | b'\r' | b'\n') {
-            pos -= 1;
+        // Skip whitespace and intervening comment lines.
+        loop {
+            while pos > 0 && matches!(before[pos - 1], b' ' | b'\t' | b'\r' | b'\n') {
+                pos -= 1;
+            }
+            // Check if we stopped at the end of a comment line.
+            // ASN.1 comments run from -- to end of line, so if the text
+            // before pos ends with a comment, skip back past the entire line.
+            if pos >= 2 && line_has_comment(before, pos) {
+                // Skip to start of this line.
+                while pos > 0 && before[pos - 1] != b'\n' {
+                    pos -= 1;
+                }
+                continue;
+            }
+            break;
         }
         let end = pos;
 
@@ -101,6 +114,18 @@ fn in_line_comment(content: &[u8], pos: usize) -> bool {
         i += 1;
     }
     in_comment
+}
+
+/// Check whether the line ending at `pos` (exclusive) in `content` contains
+/// an ASN.1 line comment (`--`). Used during backward scanning to detect
+/// comment lines that sit between a module name and `DEFINITIONS`.
+fn line_has_comment(content: &[u8], pos: usize) -> bool {
+    let mut line_start = pos;
+    while line_start > 0 && content[line_start - 1] != b'\n' {
+        line_start -= 1;
+    }
+    let line = &content[line_start..pos];
+    line.windows(2).any(|w| w == b"--")
 }
 
 fn is_ident_char(b: u8) -> bool {
@@ -158,6 +183,20 @@ mod tests {
         let content = b"badname DEFINITIONS ::= BEGIN\nEND";
         let names = scan_module_names(content);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn comment_between_name_and_definitions() {
+        let content = b"FROGFOOT-RESOURCES-MIB\n\n-- -*- mib -*-\n\nDEFINITIONS ::= BEGIN\nEND";
+        let names = scan_module_names(content);
+        assert_eq!(names, vec!["FROGFOOT-RESOURCES-MIB"]);
+    }
+
+    #[test]
+    fn multiple_comment_lines_between_name_and_definitions() {
+        let content = b"MY-MIB\n-- comment 1\n-- comment 2\n\nDEFINITIONS ::= BEGIN\nEND";
+        let names = scan_module_names(content);
+        assert_eq!(names, vec!["MY-MIB"]);
     }
 
     #[test]
