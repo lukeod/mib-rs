@@ -501,7 +501,7 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
         // Resolve AUGMENTS. Diagnostic for unresolved targets is emitted
         // by validate_table_semantics.
         if !augments.is_empty()
-            && let Some(target_obj_id) = lookup_object_in_module_scope(ctx, ir_id, &augments)
+            && let Some(target_obj_id) = lookup_object_by_name(ctx, ir_id, &augments)
         {
             ctx.mib.object_mut(obj_id).augments = Some(target_obj_id);
             ctx.mib.object_mut(target_obj_id).augmented_by.push(obj_id);
@@ -575,7 +575,7 @@ fn resolve_index_entry(
     }
 
     // Diagnostic for unresolved INDEX is emitted by validate_table_semantics.
-    let obj = lookup_object_in_module_scope(ctx, ir_mod, &item.object);
+    let obj = lookup_object_by_name(ctx, ir_mod, &item.object);
 
     let (type_id, encoding) = if let Some(obj_id) = obj {
         let o = ctx.mib.raw().object(obj_id);
