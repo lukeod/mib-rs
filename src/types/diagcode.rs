@@ -64,6 +64,8 @@ diag_codes! {
     lexer,      MissingHexBinSuffix,        "missing-hex-bin-suffix",               Error;
     lexer,      HexStringMul2,              "hex-string-mul2",                       Warning;
     lexer,      BinStringMul8,              "bin-string-mul8",                       Warning;
+    lexer,      HexStringInvalidChar,       "hex-string-invalid-char",               Warning;
+    lexer,      BinStringInvalidChar,       "bin-string-invalid-char",               Warning;
 
     // Parser
     parser,     IdentifierUnderscore,       "identifier-underscore",                 Style;

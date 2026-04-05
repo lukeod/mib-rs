@@ -375,11 +375,14 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         self.advance(); // consume opening quote
 
         let mut content_len = 0usize;
+        // Collect positions and characters of non-whitespace content for validation.
+        let mut content_chars: Vec<(usize, u8)> = Vec::new();
         loop {
             match self.peek() {
                 None | Some(b'\'') => break,
                 Some(b) => {
                     if !matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
+                        content_chars.push((self.pos, b));
                         content_len += 1;
                     }
                     self.advance();
@@ -402,6 +405,19 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         match suffix {
             Some(b'H' | b'h') => {
                 self.advance();
+                for &(char_pos, b) in &content_chars {
+                    if !b.is_ascii_hexdigit() {
+                        let span = Span::from_usize_offsets(char_pos, char_pos + 1);
+                        self.emit_diagnostic(
+                            DiagCode::HexStringInvalidChar,
+                            span,
+                            format!(
+                                "invalid character '{}' in hex string",
+                                char::from(b),
+                            ),
+                        );
+                    }
+                }
                 if content_len > 0 && !content_len.is_multiple_of(2) {
                     let span = self.span_from(start);
                     self.emit_diagnostic(
@@ -414,6 +430,19 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             }
             Some(b'B' | b'b') => {
                 self.advance();
+                for &(char_pos, b) in &content_chars {
+                    if !matches!(b, b'0' | b'1') {
+                        let span = Span::from_usize_offsets(char_pos, char_pos + 1);
+                        self.emit_diagnostic(
+                            DiagCode::BinStringInvalidChar,
+                            span,
+                            format!(
+                                "invalid character '{}' in binary string",
+                                char::from(b),
+                            ),
+                        );
+                    }
+                }
                 if content_len > 0 && !content_len.is_multiple_of(8) {
                     let span = self.span_from(start);
                     self.emit_diagnostic(
@@ -805,6 +834,54 @@ mod tests {
         assert_eq!(kinds(&tokens), vec![TokenKind::Error, TokenKind::Eof]);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::UnterminatedHexBinStr);
+    }
+
+    #[test]
+    fn hex_string_invalid_chars() {
+        // 0A is valid, GZ are not valid hex digits
+        let (tokens, diags) = tokenize_with_diags("'0AGZ'H");
+        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        let invalid_diags: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == DiagCode::HexStringInvalidChar)
+            .collect();
+        assert_eq!(invalid_diags.len(), 2);
+        assert!(invalid_diags[0].message.contains("'G'"));
+        assert!(invalid_diags[1].message.contains("'Z'"));
+    }
+
+    #[test]
+    fn bin_string_invalid_chars() {
+        let (tokens, diags) = tokenize_with_diags("'0102'B");
+        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        let invalid_diags: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == DiagCode::BinStringInvalidChar)
+            .collect();
+        assert_eq!(invalid_diags.len(), 1);
+        assert!(invalid_diags[0].message.contains("'2'"));
+    }
+
+    #[test]
+    fn hex_string_valid_no_invalid_char_diag() {
+        let (tokens, diags) = tokenize_with_diags("'0A1B'H");
+        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == DiagCode::HexStringInvalidChar),
+        );
+    }
+
+    #[test]
+    fn bin_string_valid_no_invalid_char_diag() {
+        let (tokens, diags) = tokenize_with_diags("'01010101'B");
+        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == DiagCode::BinStringInvalidChar),
+        );
     }
 
     #[test]
