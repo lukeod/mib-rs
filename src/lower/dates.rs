@@ -130,7 +130,8 @@ fn check_date(
     let digit = |i: usize| -> u32 { (bytes[i] - b'0') as u32 };
 
     let (year, offset) = if bytes.len() == 11 {
-        let y = digit(0) * 10 + digit(1) + 1900;
+        let yy = digit(0) * 10 + digit(1);
+        let y = if yy >= 70 { 1900 + yy } else { 2000 + yy };
         ctx.emit_diagnostic(
             DiagCode::DateYear2Digits,
             span,
@@ -291,6 +292,7 @@ fn now_utc() -> DateComponents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DiagnosticConfig;
 
     #[test]
     fn valid_dates() {
@@ -298,6 +300,62 @@ mod tests {
         assert!(!is_valid_date(2023, 2, 29)); // not leap year
         assert!(is_valid_date(2023, 12, 31));
         assert!(!is_valid_date(2023, 4, 31));
+    }
+
+    fn make_ctx(config: &DiagnosticConfig) -> LoweringContext<'_> {
+        LoweringContext::new(b"", config)
+    }
+
+    fn far_future() -> DateComponents {
+        DateComponents {
+            year: 2099,
+            month: 12,
+            day: 31,
+            hour: 23,
+            min: 59,
+        }
+    }
+
+    #[test]
+    fn two_digit_year_post_2000() {
+        let config = DiagnosticConfig::verbose();
+        let mut ctx = make_ctx(&config);
+        let dc = check_date(&mut ctx, "0501010000Z", Span::default(), far_future());
+        assert_eq!(dc.unwrap().year, 2005);
+        // The diagnostic message should mention 2005, not 1905.
+        let diag = ctx
+            .diagnostics
+            .iter()
+            .find(|d| d.code == DiagCode::DateYear2Digits)
+            .expect("expected DateYear2Digits diagnostic");
+        assert!(
+            diag.message.contains("2005"),
+            "expected 2005 in message: {}",
+            diag.message
+        );
+    }
+
+    #[test]
+    fn two_digit_year_boundary() {
+        let config = DiagnosticConfig::default();
+
+        // "69" should map to 2069
+        let mut ctx = make_ctx(&config);
+        let dc = check_date(&mut ctx, "6901010000Z", Span::default(), far_future());
+        assert_eq!(dc.unwrap().year, 2069);
+
+        // "70" should map to 1970
+        let mut ctx = make_ctx(&config);
+        let dc = check_date(&mut ctx, "7001010000Z", Span::default(), far_future());
+        assert_eq!(dc.unwrap().year, 1970);
+    }
+
+    #[test]
+    fn two_digit_year_high() {
+        let config = DiagnosticConfig::default();
+        let mut ctx = make_ctx(&config);
+        let dc = check_date(&mut ctx, "9901010000Z", Span::default(), far_future());
+        assert_eq!(dc.unwrap().year, 1999);
     }
 
     #[test]
