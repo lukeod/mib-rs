@@ -331,21 +331,11 @@ impl fmt::Display for DefVal {
                 write!(f, "\"{}\"", v.replace('"', "\\\""))
             }
             DefValValue::Bytes(b) => {
-                if b.is_empty() {
-                    write!(f, "0")
-                } else if b.len() <= 8 {
-                    let mut n: u64 = 0;
-                    for &byte in b {
-                        n = n << 8 | byte as u64;
-                    }
-                    write!(f, "{n}")
-                } else {
-                    write!(f, "0x")?;
-                    for byte in b {
-                        write!(f, "{byte:02X}")?;
-                    }
-                    Ok(())
+                write!(f, "0x")?;
+                for byte in b {
+                    write!(f, "{byte:02X}")?;
                 }
+                Ok(())
             }
             DefValValue::Enum(label) => f.write_str(label),
             DefValValue::Bits(labels) => {

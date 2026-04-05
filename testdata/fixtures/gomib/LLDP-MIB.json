@@ -554,7 +554,7 @@
         "High": 512
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x00000000",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",

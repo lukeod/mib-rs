@@ -406,7 +406,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -432,7 +432,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -536,7 +536,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -656,7 +656,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -682,7 +682,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -929,7 +929,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -955,7 +955,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -981,7 +981,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1007,7 +1007,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1162,7 +1162,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1188,7 +1188,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1214,7 +1214,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1240,7 +1240,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1342,7 +1342,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1368,7 +1368,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1394,7 +1394,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1420,7 +1420,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1446,7 +1446,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1472,7 +1472,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1602,7 +1602,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1628,7 +1628,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1654,7 +1654,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -1680,7 +1680,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -2031,7 +2031,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -2205,7 +2205,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -2231,7 +2231,7 @@
         "High": 32
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -2379,7 +2379,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
@@ -2405,7 +2405,7 @@
         "High": 255
       }
     ],
-    "DefaultValue": "0",
+    "DefaultValue": "0x",
     "Kind": "column",
     "Varbinds": null,
     "NodeType": "OBJECT-TYPE",
