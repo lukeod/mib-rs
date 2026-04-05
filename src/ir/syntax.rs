@@ -42,14 +42,13 @@ pub enum TypeSyntax {
         span: Span,
     },
     /// Explicit `OCTET STRING` type.
-    OctetString,
+    OctetString { span: Span },
     /// `OBJECT IDENTIFIER` type.
-    ObjectIdentifier,
+    ObjectIdentifier { span: Span },
 }
 
 impl TypeSyntax {
-    /// Returns the source span, or [`Span::ZERO`] for spanless variants
-    /// ([`OctetString`](Self::OctetString), [`ObjectIdentifier`](Self::ObjectIdentifier)).
+    /// Returns the source span of this type syntax node.
     pub fn span(&self) -> Span {
         match self {
             TypeSyntax::TypeRef { span, .. }
@@ -57,8 +56,9 @@ impl TypeSyntax {
             | TypeSyntax::Bits { span, .. }
             | TypeSyntax::Constrained { span, .. }
             | TypeSyntax::SequenceOf { span, .. }
-            | TypeSyntax::Sequence { span, .. } => *span,
-            TypeSyntax::OctetString | TypeSyntax::ObjectIdentifier => Span::ZERO,
+            | TypeSyntax::Sequence { span, .. }
+            | TypeSyntax::OctetString { span }
+            | TypeSyntax::ObjectIdentifier { span } => *span,
         }
     }
 }

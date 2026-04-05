@@ -357,12 +357,12 @@ fn resolve_type_syntax_into(
             }
         }
         ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
-        ir::TypeSyntax::OctetString => {
+        ir::TypeSyntax::OctetString { .. } => {
             if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
                 sc.type_id = Some(type_id);
             }
         }
-        ir::TypeSyntax::ObjectIdentifier => {
+        ir::TypeSyntax::ObjectIdentifier { .. } => {
             if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER") {
                 sc.type_id = Some(type_id);
             }

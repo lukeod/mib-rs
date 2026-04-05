@@ -652,7 +652,7 @@ fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext<'_>) ->
             def.span,
             "unknown type syntax <missing>, defaulting to OCTET STRING".to_string(),
         );
-        ir::TypeSyntax::OctetString
+        ir::TypeSyntax::OctetString { span: def.span }
     };
 
     ir::ObjectType {
@@ -1205,7 +1205,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
             if let Some(first) = alternatives.first() {
                 lower_type_syntax(&first.syntax, ctx)
             } else {
-                ir::TypeSyntax::OctetString
+                ir::TypeSyntax::OctetString { span: *span }
             }
         }
 
@@ -1225,8 +1225,10 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
             lower_type_syntax(underlying, ctx)
         }
 
-        ast::TypeSyntax::OctetString { .. } => ir::TypeSyntax::OctetString,
-        ast::TypeSyntax::ObjectIdentifier { .. } => ir::TypeSyntax::ObjectIdentifier,
+        ast::TypeSyntax::OctetString { span } => ir::TypeSyntax::OctetString { span: *span },
+        ast::TypeSyntax::ObjectIdentifier { span } => {
+            ir::TypeSyntax::ObjectIdentifier { span: *span }
+        }
     }
 }
 

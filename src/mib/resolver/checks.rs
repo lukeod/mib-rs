@@ -708,8 +708,8 @@ fn diagnostic_base_from_syntax(syntax: &ir::TypeSyntax) -> Option<BaseType> {
             }
         }
         ir::TypeSyntax::Bits { .. } => Some(BaseType::Bits),
-        ir::TypeSyntax::OctetString => Some(BaseType::OctetString),
-        ir::TypeSyntax::ObjectIdentifier => Some(BaseType::ObjectIdentifier),
+        ir::TypeSyntax::OctetString { .. } => Some(BaseType::OctetString),
+        ir::TypeSyntax::ObjectIdentifier { .. } => Some(BaseType::ObjectIdentifier),
         ir::TypeSyntax::Constrained { base, .. } => diagnostic_base_from_syntax(base),
         ir::TypeSyntax::TypeRef { name, .. } => diagnostic_base_from_name(name),
         ir::TypeSyntax::Sequence { .. } | ir::TypeSyntax::SequenceOf { .. } => None,
@@ -2231,8 +2231,8 @@ fn sequence_field_type_name(syntax: &ir::TypeSyntax) -> String {
         ir::TypeSyntax::TypeRef { name, .. } => name.clone(),
         ir::TypeSyntax::IntegerEnum { .. } => "INTEGER".to_string(),
         ir::TypeSyntax::Bits { .. } => "BITS".to_string(),
-        ir::TypeSyntax::OctetString => "OCTET STRING".to_string(),
-        ir::TypeSyntax::ObjectIdentifier => "OBJECT IDENTIFIER".to_string(),
+        ir::TypeSyntax::OctetString { .. } => "OCTET STRING".to_string(),
+        ir::TypeSyntax::ObjectIdentifier { .. } => "OBJECT IDENTIFIER".to_string(),
         ir::TypeSyntax::Constrained { base, .. } => sequence_field_type_name(base),
         _ => String::new(),
     }

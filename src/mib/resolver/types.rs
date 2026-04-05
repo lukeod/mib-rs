@@ -128,8 +128,8 @@ pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     match syntax {
         ir::TypeSyntax::IntegerEnum { .. } => BaseType::Integer32,
         ir::TypeSyntax::Bits { .. } => BaseType::Bits,
-        ir::TypeSyntax::OctetString => BaseType::OctetString,
-        ir::TypeSyntax::ObjectIdentifier => BaseType::ObjectIdentifier,
+        ir::TypeSyntax::OctetString { .. } => BaseType::OctetString,
+        ir::TypeSyntax::ObjectIdentifier { .. } => BaseType::ObjectIdentifier,
         ir::TypeSyntax::Constrained { base, .. } => syntax_to_base_type(base),
         ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => BaseType::Unknown,
         ir::TypeSyntax::TypeRef { name, .. } => base_type_from_name(name),
