@@ -475,8 +475,8 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
                 None => continue,
             };
 
-            let definer = resolve_ultimate_definer(ctx, start, &symbol);
-            if definer != start
+            if let Some(definer) = resolve_ultimate_definer(ctx, start, &symbol)
+                && definer != start
                 && let Some(imports) = ctx.module_imports.get_mut(&mod_id)
             {
                 imports.insert(symbol, definer);
@@ -485,17 +485,21 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
     }
 }
 
-fn resolve_ultimate_definer(ctx: &ResolverContext, start: IrModuleId, symbol: &str) -> IrModuleId {
+fn resolve_ultimate_definer(
+    ctx: &ResolverContext,
+    start: IrModuleId,
+    symbol: &str,
+) -> Option<IrModuleId> {
     let mut visited = HashSet::new();
     let mut current = start;
     loop {
         if !visited.insert(current) {
-            return current; // cycle
+            return None; // cycle - chain is broken
         }
         if let Some(defs) = ctx.module_def_names.get(&current)
             && defs.contains(symbol)
         {
-            return current;
+            return Some(current);
         }
         if let Some(next) = ctx
             .module_imports
@@ -505,7 +509,7 @@ fn resolve_ultimate_definer(ctx: &ResolverContext, start: IrModuleId, symbol: &s
             current = *next;
             continue;
         }
-        return current;
+        return None; // dead end - symbol not defined here and no further chain
     }
 }
 
