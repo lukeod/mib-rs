@@ -382,7 +382,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let next = self.peek_nth(1).kind;
 
             if (current.is_identifier() && next.is_macro_keyword())
-                || (current == TokenKind::UppercaseIdent && next == TokenKind::ColonColonEqual)
+                || (current.is_identifier() && next == TokenKind::ColonColonEqual)
                 || (current == TokenKind::UppercaseIdent && next == TokenKind::KwTextualConvention)
                 || (current == TokenKind::UppercaseIdent && next == TokenKind::KwMacro)
                 || (current.is_identifier()
