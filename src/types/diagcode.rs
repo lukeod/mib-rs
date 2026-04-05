@@ -114,6 +114,7 @@ diag_codes! {
     lower,      ModuleIdentityMultiple,     "module-identity-multiple",              Error;
     lower,      MacroNotImported,           "macro-not-imported",                    Minor;
     lower,      EmptyDescription,           "empty-description",                     Style;
+    lower,      EmptyRevisionDescription,   "empty-revision-description",            Style;
     lower,      EmptyReference,             "empty-reference",                       Style;
     lower,      EmptyOrganization,          "empty-organization",                    Style;
     lower,      EmptyContact,               "empty-contact",                         Style;

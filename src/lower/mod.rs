@@ -719,10 +719,19 @@ fn lower_module_identity(
     let revisions = def
         .revisions
         .iter()
-        .map(|r| ir::Revision {
-            date: r.date.value.clone(),
-            description: r.description.value.clone(),
-            span: r.span,
+        .map(|r| {
+            if r.description.value.is_empty() {
+                ctx.emit_diagnostic(
+                    DiagCode::EmptyRevisionDescription,
+                    r.span,
+                    format!("{:?}: empty REVISION DESCRIPTION clause", name),
+                );
+            }
+            ir::Revision {
+                date: r.date.value.clone(),
+                description: r.description.value.clone(),
+                span: r.span,
+            }
         })
         .collect();
 
@@ -1419,6 +1428,73 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|d| d.code == DiagCode::UnknownTypeSyntax)
+        );
+    }
+
+    #[test]
+    fn revision_empty_description_emits_diagnostic() {
+        let source = b"";
+        let mut module = ast::Module::new(
+            ast::Ident {
+                name: "TEST-MIB".to_string(),
+                span: Span::ZERO,
+            },
+            Span::ZERO,
+        );
+        module
+            .body
+            .push(ast::Definition::ModuleIdentity(ast::ModuleIdentityDef {
+                name: ast::Ident {
+                    name: "testMIB".to_string(),
+                    span: Span::ZERO,
+                },
+                span: Span::ZERO,
+                last_updated: ast::QuotedString {
+                    value: "200301090000Z".to_string(),
+                    span: Span::ZERO,
+                },
+                organization: ast::QuotedString {
+                    value: "Test Org".to_string(),
+                    span: Span::ZERO,
+                },
+                contact_info: ast::QuotedString {
+                    value: "Test Contact".to_string(),
+                    span: Span::ZERO,
+                },
+                description: ast::QuotedString {
+                    value: "Test module".to_string(),
+                    span: Span::ZERO,
+                },
+                revisions: vec![ast::RevisionClause {
+                    date: ast::QuotedString {
+                        value: "200301090000Z".to_string(),
+                        span: Span::ZERO,
+                    },
+                    description: ast::QuotedString {
+                        value: "".to_string(),
+                        span: Span::ZERO,
+                    },
+                    span: Span::ZERO,
+                }],
+                oid: ast::OidAssignment {
+                    components: vec![ast::OidComponent::Number {
+                        value: 1,
+                        span: Span::ZERO,
+                    }],
+                    span: Span::ZERO,
+                },
+            }));
+
+        let cfg = DiagnosticConfig::verbose();
+        let lowered = lower(module, source, &cfg);
+
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::EmptyRevisionDescription),
+            "expected EmptyRevisionDescription diagnostic, got: {:?}",
+            lowered.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
 }
