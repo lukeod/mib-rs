@@ -411,10 +411,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                         self.emit_diagnostic(
                             DiagCode::HexStringInvalidChar,
                             span,
-                            format!(
-                                "invalid character '{}' in hex string",
-                                char::from(b),
-                            ),
+                            format!("invalid character '{}' in hex string", char::from(b),),
                         );
                     }
                 }
@@ -436,10 +433,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                         self.emit_diagnostic(
                             DiagCode::BinStringInvalidChar,
                             span,
-                            format!(
-                                "invalid character '{}' in binary string",
-                                char::from(b),
-                            ),
+                            format!("invalid character '{}' in binary string", char::from(b),),
                         );
                     }
                 }

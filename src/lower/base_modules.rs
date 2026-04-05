@@ -187,7 +187,9 @@ fn constrained_uint_range(max: u64) -> ir::TypeSyntax {
 
 fn constrained_octet_size(ranges: Vec<ir::Range>) -> ir::TypeSyntax {
     ir::TypeSyntax::Constrained {
-        base: Box::new(ir::TypeSyntax::OctetString { span: Span::SYNTHETIC }),
+        base: Box::new(ir::TypeSyntax::OctetString {
+            span: Span::SYNTHETIC,
+        }),
         constraint: ir::Constraint::Size {
             ranges,
             span: Span::SYNTHETIC,
@@ -508,7 +510,9 @@ fn create_base_type_definitions() -> Vec<ir::Definition> {
         ),
         make_type_def(
             "Opaque",
-            ir::TypeSyntax::OctetString { span: Span::SYNTHETIC },
+            ir::TypeSyntax::OctetString {
+                span: Span::SYNTHETIC,
+            },
             Some(BaseType::Opaque),
             Status::Current,
             "An arbitrary ASN.1 value encoded as an OCTET STRING for transparent transport. Use of Opaque is discouraged in new MIB definitions.",
@@ -516,7 +520,9 @@ fn create_base_type_definitions() -> Vec<ir::Definition> {
         ),
         make_type_def(
             "ObjectName",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             None,
             Status::Current,
             "An OBJECT IDENTIFIER value that names a managed object.",
@@ -524,7 +530,9 @@ fn create_base_type_definitions() -> Vec<ir::Definition> {
         ),
         make_type_def(
             "NotificationName",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             None,
             Status::Current,
             "An OBJECT IDENTIFIER value that names a notification.",
@@ -635,7 +643,9 @@ fn create_smiv1_type_definitions() -> Vec<ir::Definition> {
         ),
         make_type_def(
             "Opaque",
-            ir::TypeSyntax::OctetString { span: Span::SYNTHETIC },
+            ir::TypeSyntax::OctetString {
+                span: Span::SYNTHETIC,
+            },
             Some(BaseType::Opaque),
             Status::Current,
             "An arbitrary ASN.1 value encoded as an OCTET STRING for transparent transport.",
@@ -643,7 +653,9 @@ fn create_smiv1_type_definitions() -> Vec<ir::Definition> {
         ),
         make_type_def(
             "ObjectName",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             None,
             Status::Current,
             "An OBJECT IDENTIFIER value that names a managed object.",
@@ -666,7 +678,9 @@ fn create_tc_definitions() -> Vec<ir::Definition> {
         make_tc(
             "PhysAddress",
             "1x:",
-            ir::TypeSyntax::OctetString { span: Span::SYNTHETIC },
+            ir::TypeSyntax::OctetString {
+                span: Span::SYNTHETIC,
+            },
             Status::Current,
             "A media- or physical-level address, represented as an OCTET STRING.",
         ),
@@ -756,35 +770,45 @@ fn create_tc_definitions() -> Vec<ir::Definition> {
         make_tc(
             "AutonomousType",
             "",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             Status::Current,
             "An OID that identifies a type or protocol independently of the place where it is defined.",
         ),
         make_tc(
             "InstancePointer",
             "",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             Status::Obsolete,
             "Obsolete. A pointer to a specific row in a conceptual table. Use VariablePointer instead.",
         ),
         make_tc(
             "VariablePointer",
             "",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             Status::Current,
             "A pointer to a specific object instance, including its index. The OID must have an instance suffix.",
         ),
         make_tc(
             "RowPointer",
             "",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             Status::Current,
             "A pointer to a conceptual row. The OID is the first accessible columnar object followed by the row's index values.",
         ),
         make_tc(
             "TDomain",
             "",
-            ir::TypeSyntax::ObjectIdentifier { span: Span::SYNTHETIC },
+            ir::TypeSyntax::ObjectIdentifier {
+                span: Span::SYNTHETIC,
+            },
             Status::Current,
             "An OID identifying a transport domain (e.g., snmpUDPDomain for SNMP over UDP/IPv4).",
         ),

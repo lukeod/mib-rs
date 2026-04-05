@@ -1494,7 +1494,11 @@ mod tests {
                 .iter()
                 .any(|d| d.code == DiagCode::EmptyRevisionDescription),
             "expected EmptyRevisionDescription diagnostic, got: {:?}",
-            lowered.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+            lowered
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
         );
     }
 }

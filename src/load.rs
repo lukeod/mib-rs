@@ -6,10 +6,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
-use dashmap::DashMap;
-use rayon::prelude::*;
 use tracing::{debug, debug_span, info, info_span, warn};
 
 use crate::error::LoadError;
@@ -62,6 +61,7 @@ pub struct Loader {
     resolver_strictness: ResolverStrictness,
     diag_config: DiagnosticConfig,
     system_paths: bool,
+    parallelism: Option<usize>,
 }
 
 impl Default for Loader {
@@ -81,6 +81,7 @@ impl Loader {
             resolver_strictness: ResolverStrictness::Normal,
             diag_config: DiagnosticConfig::default(),
             system_paths: false,
+            parallelism: None,
         }
     }
 
@@ -130,6 +131,15 @@ impl Loader {
     /// See [`searchpath::discover_system_paths`] for details.
     pub fn system_paths(mut self) -> Self {
         self.system_paths = true;
+        self
+    }
+
+    /// Set the number of threads used for parallel file loading and parsing.
+    ///
+    /// Defaults to the number of available logical CPUs. Set to `1` to
+    /// disable parallel loading entirely.
+    pub fn parallelism(mut self, threads: usize) -> Self {
+        self.parallelism = Some(threads.max(1));
         self
     }
 }
@@ -188,7 +198,7 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
         let mods = load_modules_by_name(&sources, &names, &diag_config)?;
         (mods, Some(names))
     } else {
-        let mods = load_all_modules(&sources, &diag_config)?;
+        let mods = load_all_modules(&sources, &diag_config, options.parallelism)?;
         (mods, None)
     };
 
@@ -236,6 +246,7 @@ impl Loader {
 fn load_all_modules(
     sources: &[Box<dyn Source>],
     diag_config: &DiagnosticConfig,
+    parallelism: Option<usize>,
 ) -> Result<Vec<ir::Module>, LoadError> {
     // Collect all module names, deduplicating (first source wins).
     let mut seen = HashSet::new();
@@ -263,53 +274,85 @@ fn load_all_modules(
     );
 
     // Cache decoded files by path to avoid re-parsing multi-module files.
-    let path_cache: DashMap<PathBuf, Arc<Vec<ir::Module>>> = DashMap::new();
+    let path_cache: Mutex<HashMap<PathBuf, Arc<Vec<ir::Module>>>> = Mutex::new(HashMap::new());
 
-    // Parallel load.
-    let results: Result<Vec<Option<ir::Module>>, LoadError> = all_modules
-        .par_iter()
-        .map(|(src_idx, name)| {
-            let span = debug_span!(
-                target: "mib_rs::load",
-                "load_module",
-                component = "load",
-                module = %name,
-                source_index = *src_idx,
-            );
-            let _guard = span.enter();
-            let src = &sources[*src_idx];
-            let result = match src.find(name).map_err(LoadError::Io)? {
-                Some(r) => r,
-                None => {
-                    debug!(
+    // Parallel load using std::thread::scope with an atomic work queue.
+    let thread_count =
+        parallelism.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    let next_idx = AtomicUsize::new(0);
+    let error: Mutex<Option<LoadError>> = Mutex::new(None);
+    let collected: Mutex<HashMap<String, ir::Module>> = Mutex::new(HashMap::new());
+
+    std::thread::scope(|s| {
+        for _ in 0..thread_count {
+            s.spawn(|| {
+                let mut local_modules: Vec<(String, ir::Module)> = Vec::new();
+                loop {
+                    let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                    if idx >= all_modules.len() {
+                        break;
+                    }
+                    // Check if another thread hit an error.
+                    if error.lock().unwrap().is_some() {
+                        break;
+                    }
+
+                    let (src_idx, name) = &all_modules[idx];
+                    let span = debug_span!(
                         target: "mib_rs::load",
+                        "load_module",
                         component = "load",
                         module = %name,
-                        reason = "not_found",
-                        "module not found",
+                        source_index = *src_idx,
                     );
-                    return Ok(None);
+                    let _guard = span.enter();
+                    let src = &sources[*src_idx];
+                    let result = match src.find(name) {
+                        Ok(Some(r)) => r,
+                        Ok(None) => {
+                            debug!(
+                                target: "mib_rs::load",
+                                component = "load",
+                                module = %name,
+                                reason = "not_found",
+                                "module not found",
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            *error.lock().unwrap() = Some(LoadError::Io(e));
+                            break;
+                        }
+                    };
+
+                    let cached = {
+                        let mut cache = path_cache.lock().unwrap();
+                        cache
+                            .entry(result.path.clone())
+                            .or_insert_with(|| {
+                                Arc::new(decode_modules(&result.content, &result.path, diag_config))
+                            })
+                            .clone()
+                    };
+
+                    // Return only the requested module from possibly multi-module file.
+                    if let Some(target) = cached.iter().find(|m| m.name == *name) {
+                        local_modules.push((name.clone(), target.clone()));
+                    }
                 }
-            };
+                // Merge local results.
+                let mut map = collected.lock().unwrap();
+                for (name, module) in local_modules {
+                    map.entry(name).or_insert(module);
+                }
+            });
+        }
+    });
 
-            let cached = path_cache
-                .entry(result.path.clone())
-                .or_insert_with(|| {
-                    Arc::new(decode_modules(&result.content, &result.path, diag_config))
-                })
-                .clone();
-
-            // Return only the requested module from possibly multi-module file.
-            let target = cached.iter().find(|m| m.name == *name).cloned();
-            Ok(target)
-        })
-        .collect();
-
-    let results = results?;
-    let mut modules: HashMap<String, ir::Module> = HashMap::new();
-    for module in results.into_iter().flatten() {
-        modules.entry(module.name.clone()).or_insert(module);
+    if let Some(e) = error.into_inner().unwrap() {
+        return Err(e);
     }
+    let modules = collected.into_inner().unwrap();
 
     info!(
         target: "mib_rs::load",
