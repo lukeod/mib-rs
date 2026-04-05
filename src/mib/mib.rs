@@ -176,22 +176,44 @@ impl Mib {
     /// Look up a node by name, returning the [`NodeId`].
     ///
     /// When multiple nodes share the same name (which can happen when
-    /// different modules define overlapping OID assignments), prefers the
-    /// one with an attached object, then notifications, then any remaining node.
+    /// different modules define overlapping OID assignments), uses a 6-tier
+    /// priority matching [`Mib::symbol_by_name`]: object, notification,
+    /// group, compliance, capability, then any remaining node.
     #[must_use]
     pub fn node_by_name(&self, name: &str) -> Option<NodeId> {
         let nodes = self.name_to_nodes.get(name)?;
+
+        let mut notification = None;
+        let mut group = None;
+        let mut compliance = None;
+        let mut capability = None;
+        let mut fallback = None;
+
         for &id in nodes {
-            if self.tree.get(id).object.is_some() {
+            let entry = self.tree.get(id);
+            fallback.get_or_insert(id);
+            if entry.object.is_some() {
                 return Some(id);
             }
-        }
-        for &id in nodes {
-            if self.tree.get(id).notification.is_some() {
-                return Some(id);
+            if notification.is_none() && entry.notification.is_some() {
+                notification = Some(id);
+            }
+            if group.is_none() && entry.group.is_some() {
+                group = Some(id);
+            }
+            if compliance.is_none() && entry.compliance.is_some() {
+                compliance = Some(id);
+            }
+            if capability.is_none() && entry.capability.is_some() {
+                capability = Some(id);
             }
         }
-        nodes.first().copied()
+
+        notification
+            .or(group)
+            .or(compliance)
+            .or(capability)
+            .or(fallback)
     }
 
     /// Look up an object by name, returning the [`ObjectId`].
