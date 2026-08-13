@@ -309,6 +309,43 @@ fn type_parent_chain() {
 }
 
 #[test]
+fn large_flat_type_set_links_all_parents() {
+    const DERIVED_TYPE_COUNT: usize = 4096;
+
+    let mut module_source = String::from("LARGE-TYPE-MIB DEFINITIONS ::= BEGIN\n");
+    module_source.push_str("BaseType ::= INTEGER\n");
+    for index in 0..DERIVED_TYPE_COUNT {
+        module_source.push_str(&format!("DerivedType{index} ::= BaseType\n"));
+    }
+    module_source.push_str("END\n");
+
+    let mib = load(
+        Loader::new()
+            .source(memory_modules([("LARGE-TYPE-MIB", module_source)]))
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::silent())
+            .modules(["LARGE-TYPE-MIB"]),
+    )
+    .expect("load failed");
+
+    let module = mib.module("LARGE-TYPE-MIB").expect("module not found");
+    let derived_types: Vec<_> = module
+        .types()
+        .filter(|typ| typ.name().starts_with("DerivedType"))
+        .collect();
+    assert_eq!(derived_types.len(), DERIVED_TYPE_COUNT);
+    for typ in derived_types {
+        assert_eq!(
+            typ.parent().map(|parent| parent.name()),
+            Some("BaseType"),
+            "{} has the wrong parent",
+            typ.name()
+        );
+        assert_eq!(typ.effective_base(), BaseType::Integer32);
+    }
+}
+
+#[test]
 fn type_cycles_leave_parents_unlinked_and_record_cycle_metadata() {
     let source = memory_modules([(
         "TYPE-CYCLE-MIB",

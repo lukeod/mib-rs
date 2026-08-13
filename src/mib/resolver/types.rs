@@ -384,12 +384,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> 
             continue;
         }
 
-        // Find the parent ref for this type.
-        let parent_info = type_to_parent_ref
-            .iter()
-            .find(|(tid, _, _, _)| *tid == type_id);
-
-        if let Some((_, ir_id, ref_name, span)) = parent_info {
+        if let Some((ir_id, ref_name, span)) = parent_ref_by_type.get(&type_id) {
             if let Some((parent_type_id, used_import)) =
                 ctx.lookup_type_for_module(*ir_id, ref_name)
             {
