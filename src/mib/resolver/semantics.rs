@@ -24,6 +24,7 @@ use super::super::compliance::ComplianceData;
 use super::super::group::GroupData;
 use super::super::notification::NotificationData;
 use super::super::object::ObjectData;
+use super::super::typedef::TypeData;
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 
@@ -209,6 +210,10 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         obj.bits = resolved.bits;
         obj.sizes = resolved.sizes;
         obj.ranges = resolved.ranges;
+        obj.declared_sizes = resolved.declared_sizes;
+        obj.declared_ranges = resolved.declared_ranges;
+        obj.sizes_constrained = resolved.sizes_constrained;
+        obj.ranges_constrained = resolved.ranges_constrained;
 
         // Convert DEFVAL.
         if let Some(dv) = &defval {
@@ -269,11 +274,39 @@ fn resolve_type_syntax(
     let mut sc = SyntaxConstraints {
         type_id: None,
         sizes: Vec::new(),
+        declared_sizes: Vec::new(),
+        sizes_constrained: false,
         ranges: Vec::new(),
+        declared_ranges: Vec::new(),
+        ranges_constrained: false,
         enums: Vec::new(),
         bits: Vec::new(),
     };
     resolve_type_syntax_into(ctx, ir_mod, syntax, referrer, span, &mut sc);
+    if let Some(type_id) = sc.type_id {
+        let typ = ctx.mib.raw().type_(type_id);
+        let types = ctx.mib.types_slice();
+        if sc.sizes_constrained {
+            let inherited = inline_parent_constraint(typ, types, true, span);
+            if inherited.present {
+                sc.sizes = if inherited.values.is_empty() {
+                    Vec::new()
+                } else {
+                    super::types::intersect_constraints(&sc.sizes, &inherited.values)
+                };
+            }
+        }
+        if sc.ranges_constrained {
+            let inherited = inline_parent_constraint(typ, types, false, span);
+            if inherited.present {
+                sc.ranges = if inherited.values.is_empty() {
+                    Vec::new()
+                } else {
+                    super::types::intersect_constraints(&sc.ranges, &inherited.values)
+                };
+            }
+        }
+    }
     sc
 }
 
@@ -357,16 +390,14 @@ fn resolve_type_syntax_into(
             resolve_type_syntax_into(ctx, ir_mod, base, referrer, span, sc);
             match constraint {
                 ir::Constraint::Size { ranges, .. } => {
-                    sc.sizes = ranges
-                        .iter()
-                        .filter_map(super::types::resolve_range)
-                        .collect();
+                    sc.sizes = ranges.iter().map(super::types::resolve_range).collect();
+                    sc.declared_sizes = sc.sizes.clone();
+                    sc.sizes_constrained = true;
                 }
                 ir::Constraint::Range { ranges, .. } => {
-                    sc.ranges = ranges
-                        .iter()
-                        .filter_map(super::types::resolve_range)
-                        .collect();
+                    sc.ranges = ranges.iter().map(super::types::resolve_range).collect();
+                    sc.declared_ranges = sc.ranges.clone();
+                    sc.ranges_constrained = true;
                 }
             }
         }
@@ -381,6 +412,48 @@ fn resolve_type_syntax_into(
                 sc.type_id = Some(type_id);
             }
         }
+    }
+}
+
+struct InlineParentConstraint {
+    values: Vec<Range>,
+    present: bool,
+}
+
+fn inline_parent_constraint(
+    typ: &TypeData,
+    types: &[TypeData],
+    is_size: bool,
+    span: Span,
+) -> InlineParentConstraint {
+    let (values, present) = if is_size {
+        (
+            typ.effective_sizes(types),
+            typ.effective_sizes_constrained(),
+        )
+    } else {
+        (
+            typ.effective_ranges(types),
+            typ.effective_ranges_constrained(),
+        )
+    };
+    if present {
+        return InlineParentConstraint {
+            values: values.to_vec(),
+            present: true,
+        };
+    }
+
+    let base = typ.effective_base(types);
+    match super::types::base_constraint(base, is_size, span) {
+        Some(range) => InlineParentConstraint {
+            values: vec![range],
+            present: true,
+        },
+        None => InlineParentConstraint {
+            values: Vec::new(),
+            present: false,
+        },
     }
 }
 
@@ -399,12 +472,16 @@ fn compute_effective_values(ctx: &ResolverContext, obj: &mut ObjectData) {
         obj.hint = t.effective_display_hint(types).to_string();
     }
 
-    // Sizes, ranges, enums, bits: object-level takes precedence.
-    if obj.sizes.is_empty() {
+    // Inline constraints were narrowed while resolving syntax. Absent inline
+    // constraints inherit the type's effective constraint directly. Presence
+    // is tracked separately because an empty intersection is still constrained.
+    if !obj.sizes_constrained {
         obj.sizes = t.effective_sizes(types).to_vec();
+        obj.sizes_constrained = t.effective_sizes_constrained();
     }
-    if obj.ranges.is_empty() {
+    if !obj.ranges_constrained {
         obj.ranges = t.effective_ranges(types).to_vec();
+        obj.ranges_constrained = t.effective_ranges_constrained();
     }
     if obj.enums.is_empty() {
         obj.enums = t.effective_enums(types).to_vec();
@@ -600,17 +677,10 @@ fn resolve_index_entry(
                 .type_(tid)
                 .effective_base(ctx.mib.types_slice())
         });
-        let sizes = if !o.sizes.is_empty() {
-            &o.sizes
-        } else if let Some(tid) = o.typ {
-            ctx.mib
-                .raw()
-                .type_(tid)
-                .effective_sizes(ctx.mib.types_slice())
-        } else {
-            &[]
-        };
-        (type_id, classify_index_encoding(base, item.implied, sizes))
+        (
+            type_id,
+            classify_index_encoding(base, item.implied, o.effective_sizes()),
+        )
     } else {
         return None;
     };

@@ -77,6 +77,10 @@ pub struct ObjectData {
     pub(crate) hint: String,
     pub(crate) sizes: Vec<Range>,
     pub(crate) ranges: Vec<Range>,
+    pub(crate) declared_sizes: Vec<Range>,
+    pub(crate) declared_ranges: Vec<Range>,
+    pub(crate) sizes_constrained: bool,
+    pub(crate) ranges_constrained: bool,
     pub(crate) enums: Vec<NamedValue>,
     pub(crate) bits: Vec<NamedValue>,
     pub(crate) sequence_type_name: String,
@@ -101,6 +105,10 @@ impl ObjectData {
             hint: String::new(),
             sizes: Vec::new(),
             ranges: Vec::new(),
+            declared_sizes: Vec::new(),
+            declared_ranges: Vec::new(),
+            sizes_constrained: false,
+            ranges_constrained: false,
             enums: Vec::new(),
             bits: Vec::new(),
             sequence_type_name: String::new(),
@@ -200,14 +208,50 @@ impl ObjectData {
         &self.hint
     }
 
+    /// Return SIZE constraints declared directly on this object.
+    pub fn sizes(&self) -> &[Range] {
+        &self.declared_sizes
+    }
+
+    /// Return SIZE constraints declared directly on this object.
+    pub fn declared_sizes(&self) -> &[Range] {
+        &self.declared_sizes
+    }
+
     /// Return the effective SIZE constraints, inherited from the resolved type chain.
     pub fn effective_sizes(&self) -> &[Range] {
         &self.sizes
     }
 
+    /// Return whether this object has an effective SIZE constraint.
+    ///
+    /// A true result with an empty effective constraint slice means the
+    /// declared constraints have an empty intersection.
+    pub fn effective_sizes_constrained(&self) -> bool {
+        self.sizes_constrained
+    }
+
+    /// Return value range constraints declared directly on this object.
+    pub fn ranges(&self) -> &[Range] {
+        &self.declared_ranges
+    }
+
+    /// Return value range constraints declared directly on this object.
+    pub fn declared_ranges(&self) -> &[Range] {
+        &self.declared_ranges
+    }
+
     /// Return the effective range constraints, inherited from the resolved type chain.
     pub fn effective_ranges(&self) -> &[Range] {
         &self.ranges
+    }
+
+    /// Return whether this object has an effective value range constraint.
+    ///
+    /// A true result with an empty effective constraint slice means the
+    /// declared constraints have an empty intersection.
+    pub fn effective_ranges_constrained(&self) -> bool {
+        self.ranges_constrained
     }
 
     /// Return the effective enumeration values, inherited from the resolved type chain.

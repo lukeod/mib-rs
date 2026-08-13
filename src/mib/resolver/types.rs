@@ -193,44 +193,35 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
 fn extract_constraint(constraint: &ir::Constraint, td: &mut TypeData) {
     match constraint {
         ir::Constraint::Size { ranges, .. } => {
-            td.sizes = ranges.iter().filter_map(resolve_range).collect();
+            td.sizes = ranges.iter().map(resolve_range).collect();
         }
         ir::Constraint::Range { ranges, .. } => {
-            td.ranges = ranges.iter().filter_map(resolve_range).collect();
+            td.ranges = ranges.iter().map(resolve_range).collect();
         }
     }
 }
 
-/// Convert an IR range constraint to the resolved [`Range`] type.
+/// Convert an IR range constraint to the resolved [`Range`] type without
+/// narrowing unsigned literals or inventing values for `MIN` and `MAX`.
 ///
-/// Returns `None` if a range bound cannot be converted to `i64`.
 /// Used by both the type phase and the semantics phase (for inline
 /// OBJECT-TYPE constraints).
-pub(super) fn resolve_range(r: &ir::syntax::Range) -> Option<Range> {
-    let min = range_value_to_i64(&r.min)?;
-    let max = match &r.max {
-        Some(v) => range_value_to_i64(v)?,
-        None => min,
-    };
-    Some(Range {
+pub(super) fn resolve_range(r: &ir::syntax::Range) -> Range {
+    let min = resolve_range_bound(&r.min);
+    let max = r.max.as_ref().map(resolve_range_bound).unwrap_or(min);
+    Range {
         min,
         max,
         span: r.span,
-    })
+    }
 }
 
-fn range_value_to_i64(v: &ir::syntax::RangeValue) -> Option<i64> {
+fn resolve_range_bound(v: &ir::syntax::RangeValue) -> RangeBound {
     match v {
-        ir::syntax::RangeValue::Signed(n) => Some(*n),
-        ir::syntax::RangeValue::Unsigned(n) => {
-            if *n > i64::MAX as u64 {
-                Some(i64::MAX)
-            } else {
-                Some(*n as i64)
-            }
-        }
-        ir::syntax::RangeValue::Min => Some(i64::MIN),
-        ir::syntax::RangeValue::Max => Some(i64::MAX),
+        ir::syntax::RangeValue::Signed(value) => RangeBound::Signed(*value),
+        ir::syntax::RangeValue::Unsigned(value) => RangeBound::Unsigned(*value),
+        ir::syntax::RangeValue::Min => RangeBound::Min,
+        ir::syntax::RangeValue::Max => RangeBound::Max,
     }
 }
 
@@ -240,6 +231,7 @@ fn resolve_type_bases(ctx: &mut ResolverContext) {
     link_primitive_syntax_parents(ctx, &cycle_type_ids);
     link_rfc1213_types_to_tcs(ctx, &cycle_type_ids);
     inherit_base_types(ctx);
+    compute_effective_constraints(ctx);
 }
 
 /// Build a dependency graph of types and resolve parent references in topo order.
@@ -573,6 +565,187 @@ fn resolve_base_from_chain(types: &[TypeData], type_id: TypeId) -> Option<BaseTy
         depth += 1;
     }
     None
+}
+
+fn compute_effective_constraints(ctx: &mut ResolverContext) {
+    let inputs: Vec<_> = ctx
+        .mib
+        .types_slice()
+        .iter()
+        .map(|typ| (typ.sizes.clone(), typ.ranges.clone(), typ.parent, typ.base))
+        .collect();
+    let mut resolved = vec![None; inputs.len()];
+
+    for index in 0..inputs.len() {
+        resolve_effective_constraints(index, &inputs, &mut resolved, 0);
+    }
+    for (index, constraints) in resolved.into_iter().enumerate() {
+        let (sizes, ranges) = constraints.unwrap_or_default();
+        let typ = ctx.mib.type_mut(TypeId::new(index as u32));
+        typ.effective_sizes = sizes.values;
+        typ.effective_ranges = ranges.values;
+        typ.effective_sizes_constrained = sizes.present;
+        typ.effective_ranges_constrained = ranges.present;
+    }
+}
+
+#[derive(Clone, Default)]
+struct EffectiveConstraint {
+    values: Vec<Range>,
+    present: bool,
+}
+
+#[allow(clippy::type_complexity)]
+fn resolve_effective_constraints(
+    index: usize,
+    inputs: &[(Vec<Range>, Vec<Range>, Option<TypeId>, BaseType)],
+    resolved: &mut [Option<(EffectiveConstraint, EffectiveConstraint)>],
+    depth: usize,
+) -> (EffectiveConstraint, EffectiveConstraint) {
+    if let Some(constraints) = &resolved[index] {
+        return constraints.clone();
+    }
+    let (own_sizes, own_ranges, parent, base) = &inputs[index];
+    let (mut parent_sizes, mut parent_ranges) = if depth < 1000 {
+        parent
+            .map(|parent_id| {
+                resolve_effective_constraints(
+                    parent_id.index() as usize,
+                    inputs,
+                    resolved,
+                    depth + 1,
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        (
+            EffectiveConstraint::default(),
+            EffectiveConstraint::default(),
+        )
+    };
+    if !parent_sizes.present
+        && !own_sizes.is_empty()
+        && let Some(range) = base_constraint(*base, true, own_sizes[0].span)
+    {
+        parent_sizes = EffectiveConstraint {
+            values: vec![range],
+            present: true,
+        };
+    }
+    if !parent_ranges.present
+        && !own_ranges.is_empty()
+        && let Some(range) = base_constraint(*base, false, own_ranges[0].span)
+    {
+        parent_ranges = EffectiveConstraint {
+            values: vec![range],
+            present: true,
+        };
+    }
+    let constraints = (
+        effective_constraints(own_sizes, &parent_sizes),
+        effective_constraints(own_ranges, &parent_ranges),
+    );
+    resolved[index] = Some(constraints.clone());
+    constraints
+}
+
+pub(super) fn base_constraint(base: BaseType, is_size: bool, span: Span) -> Option<Range> {
+    let (min, max) = if is_size {
+        (RangeBound::Unsigned(0), RangeBound::Unsigned(65535))
+    } else {
+        match base {
+            BaseType::Integer32 => (
+                RangeBound::Signed(i64::from(i32::MIN)),
+                RangeBound::Signed(i64::from(i32::MAX)),
+            ),
+            BaseType::Unsigned32
+            | BaseType::Gauge32
+            | BaseType::TimeTicks
+            | BaseType::Counter32 => (
+                RangeBound::Unsigned(0),
+                RangeBound::Unsigned(u64::from(u32::MAX)),
+            ),
+            BaseType::Counter64 => (RangeBound::Unsigned(0), RangeBound::Unsigned(u64::MAX)),
+            _ => return None,
+        }
+    };
+    Some(Range { min, max, span })
+}
+
+fn effective_constraints(own: &[Range], parent: &EffectiveConstraint) -> EffectiveConstraint {
+    if own.is_empty() {
+        return parent.clone();
+    }
+    if !parent.present {
+        return EffectiveConstraint {
+            values: own.to_vec(),
+            present: true,
+        };
+    }
+    EffectiveConstraint {
+        values: if parent.values.is_empty() {
+            Vec::new()
+        } else {
+            intersect_constraints(own, &parent.values)
+        },
+        present: true,
+    }
+}
+
+pub(super) fn intersect_constraints(own: &[Range], parent: &[Range]) -> Vec<Range> {
+    if own.is_empty() {
+        return Vec::new();
+    }
+    if parent.is_empty() {
+        return own.to_vec();
+    }
+
+    let parent_min = parent
+        .iter()
+        .map(|range| range.min)
+        .min_by(|left, right| left.cmp_value(*right))
+        .expect("non-empty parent constraint");
+    let parent_max = parent
+        .iter()
+        .map(|range| range.max)
+        .max_by(|left, right| left.cmp_value(*right))
+        .expect("non-empty parent constraint");
+
+    own.iter()
+        .flat_map(|child| {
+            let min = resolve_relative_bound(child.min, parent_min, parent_max);
+            let max = resolve_relative_bound(child.max, parent_min, parent_max);
+            parent.iter().filter_map(move |parent| {
+                let lower = if min.cmp_value(parent.min).is_gt() {
+                    min
+                } else {
+                    parent.min
+                };
+                let upper = if max.cmp_value(parent.max).is_lt() {
+                    max
+                } else {
+                    parent.max
+                };
+                (lower.cmp_value(upper).is_le()).then_some(Range {
+                    min: lower,
+                    max: upper,
+                    span: child.span,
+                })
+            })
+        })
+        .collect()
+}
+
+fn resolve_relative_bound(
+    bound: RangeBound,
+    parent_min: RangeBound,
+    parent_max: RangeBound,
+) -> RangeBound {
+    match bound {
+        RangeBound::Min => parent_min,
+        RangeBound::Max => parent_max,
+        concrete => concrete,
+    }
 }
 
 fn is_application_base_type(b: BaseType) -> bool {

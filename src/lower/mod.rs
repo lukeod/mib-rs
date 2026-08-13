@@ -1294,8 +1294,24 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> 
         ast::RangeValue::Signed(v) => ir::RangeValue::Signed(*v),
         ast::RangeValue::Unsigned(v) => ir::RangeValue::Unsigned(*v),
         ast::RangeValue::Named(ident) => match ident.name.as_str() {
-            "MIN" => ir::RangeValue::Min,
-            "MAX" => ir::RangeValue::Max,
+            "MIN" => {
+                ctx.emit_diagnostic(
+                    DiagCode::MinMaxRange,
+                    ident.span,
+                    "MIN is not valid in SMI constraints; preserving it as an open endpoint"
+                        .to_string(),
+                );
+                ir::RangeValue::Min
+            }
+            "MAX" => {
+                ctx.emit_diagnostic(
+                    DiagCode::MinMaxRange,
+                    ident.span,
+                    "MAX is not valid in SMI constraints; preserving it as an open endpoint"
+                        .to_string(),
+                );
+                ir::RangeValue::Max
+            }
             _ => {
                 ctx.emit_diagnostic(
                     DiagCode::UnknownRangeValue,

@@ -300,7 +300,7 @@ impl<'a> Index<'a> {
                 if let Some(obj) = self.object() {
                     let sizes = obj.effective_sizes();
                     if super::types::is_fixed_size(sizes) {
-                        return (sizes[0].min as usize, true);
+                        return (sizes[0].min.as_u64().unwrap_or(0) as usize, true);
                     }
                 }
                 (0, false)
@@ -555,14 +555,44 @@ impl<'a> Object<'a> {
         self.data().effective_display_hint()
     }
 
+    /// Return SIZE constraints declared directly on this object.
+    pub fn sizes(self) -> &'a [Range] {
+        self.data().sizes()
+    }
+
+    /// Return SIZE constraints declared directly on this object.
+    pub fn declared_sizes(self) -> &'a [Range] {
+        self.data().declared_sizes()
+    }
+
     /// Return the effective SIZE constraints from the type chain.
     pub fn effective_sizes(self) -> &'a [Range] {
         self.data().effective_sizes()
     }
 
+    /// Return whether this object has an effective SIZE constraint.
+    pub fn effective_sizes_constrained(self) -> bool {
+        self.data().effective_sizes_constrained()
+    }
+
+    /// Return value range constraints declared directly on this object.
+    pub fn ranges(self) -> &'a [Range] {
+        self.data().ranges()
+    }
+
+    /// Return value range constraints declared directly on this object.
+    pub fn declared_ranges(self) -> &'a [Range] {
+        self.data().declared_ranges()
+    }
+
     /// Return the effective range constraints from the type chain.
     pub fn effective_ranges(self) -> &'a [Range] {
         self.data().effective_ranges()
+    }
+
+    /// Return whether this object has an effective value range constraint.
+    pub fn effective_ranges_constrained(self) -> bool {
+        self.data().effective_ranges_constrained()
     }
 
     /// Return the effective enumeration values from the type chain.
@@ -849,9 +879,19 @@ impl<'a> Type<'a> {
         self.data().effective_sizes(self.mib.types_slice())
     }
 
+    /// Return whether this type has an effective SIZE constraint.
+    pub fn effective_sizes_constrained(self) -> bool {
+        self.data().effective_sizes_constrained()
+    }
+
     /// Return the effective range constraints from the type chain.
     pub fn effective_ranges(self) -> &'a [Range] {
         self.data().effective_ranges(self.mib.types_slice())
+    }
+
+    /// Return whether this type has an effective value range constraint.
+    pub fn effective_ranges_constrained(self) -> bool {
+        self.data().effective_ranges_constrained()
     }
 
     /// Return the effective enumeration values from the type chain.

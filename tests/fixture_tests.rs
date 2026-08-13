@@ -596,10 +596,14 @@ fn fixture_ranges() {
             let obj = mib.raw().object(obj_id);
             let mut got: Vec<(i64, i64)> = Vec::new();
             for r in obj.effective_ranges() {
-                got.push((r.min, r.max));
+                if let (Some(min), Some(max)) = (r.min.as_i64(), r.max.as_i64()) {
+                    got.push((min, max));
+                }
             }
             for r in obj.effective_sizes() {
-                got.push((r.min, r.max));
+                if let (Some(min), Some(max)) = (r.min.as_i64(), r.max.as_i64()) {
+                    got.push((min, max));
+                }
             }
             let fix: Vec<(i64, i64)> = fn_
                 .ranges

@@ -134,11 +134,16 @@ pub struct ExportType {
 
 /// Collected SIZE, range, enum, and BITS constraints for a type or object.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportConstraints {
     /// SIZE constraints (for OCTET STRING and similar).
     pub sizes: Vec<ExportRange>,
     /// Value range constraints (for INTEGER-based types).
     pub ranges: Vec<ExportRange>,
+    /// Whether a SIZE constraint is present, including an empty intersection.
+    pub sizes_constrained: bool,
+    /// Whether a value range constraint is present, including an empty intersection.
+    pub ranges_constrained: bool,
     /// Named integer enum values (e.g. `up(1)`, `down(2)`).
     pub enums: Vec<ExportEnum>,
     /// Named bit positions (e.g. `flag1(0)`, `flag2(1)`).
@@ -147,9 +152,14 @@ pub struct ExportConstraints {
 
 /// A min/max range element (SIZE or value range), serialized as strings.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportRange {
     pub min: String,
     pub max: String,
+    /// Endpoint representation: `signed`, `unsigned`, `min`, or `max`.
+    pub min_kind: String,
+    /// Endpoint representation: `signed`, `unsigned`, `min`, or `max`.
+    pub max_kind: String,
 }
 
 /// A named enum value, e.g. `up(1)`.
@@ -587,27 +597,37 @@ fn is_user_defined_type(mib: &Mib, td: &TypeData) -> bool {
 
 // --- Export building ---
 
+fn range_bound_kind(bound: RangeBound) -> &'static str {
+    match bound {
+        RangeBound::Signed(_) => "signed",
+        RangeBound::Unsigned(_) => "unsigned",
+        RangeBound::Min => "min",
+        RangeBound::Max => "max",
+    }
+}
+
+fn make_export_range(range: &Range) -> ExportRange {
+    ExportRange {
+        min: range.min.to_string(),
+        max: range.max.to_string(),
+        min_kind: range_bound_kind(range.min).to_string(),
+        max_kind: range_bound_kind(range.max).to_string(),
+    }
+}
+
 fn make_constraints(
     sizes: &[Range],
     ranges: &[Range],
+    sizes_constrained: bool,
+    ranges_constrained: bool,
     enums: &[NamedValue],
     bits: &[NamedValue],
 ) -> ExportConstraints {
     ExportConstraints {
-        sizes: sizes
-            .iter()
-            .map(|r| ExportRange {
-                min: r.min.to_string(),
-                max: r.max.to_string(),
-            })
-            .collect(),
-        ranges: ranges
-            .iter()
-            .map(|r| ExportRange {
-                min: r.min.to_string(),
-                max: r.max.to_string(),
-            })
-            .collect(),
+        sizes: sizes.iter().map(make_export_range).collect(),
+        ranges: ranges.iter().map(make_export_range).collect(),
+        sizes_constrained,
+        ranges_constrained,
         enums: enums
             .iter()
             .map(|e| ExportEnum {
@@ -795,6 +815,8 @@ fn make_effective_syntax_from_object(mib: &Mib, obj_id: ObjectId) -> Option<Expo
         constraints: make_constraints(
             obj.effective_sizes(),
             obj.effective_ranges(),
+            obj.effective_sizes_constrained(),
+            obj.effective_ranges_constrained(),
             obj.effective_enums(),
             obj.effective_bits(),
         ),
@@ -825,7 +847,14 @@ fn make_syntax_constraints(mib: &Mib, sc: &SyntaxConstraints) -> ExportEffective
         type_ref,
         base: base_type_str(base).to_string(),
         display_hint,
-        constraints: make_constraints(&sc.sizes, &sc.ranges, &sc.enums, &sc.bits),
+        constraints: make_constraints(
+            &sc.sizes,
+            &sc.ranges,
+            sc.sizes_constrained,
+            sc.ranges_constrained,
+            &sc.enums,
+            &sc.bits,
+        ),
     }
 }
 
@@ -943,7 +972,14 @@ pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayloa
                 description: opt_string(t.description()),
                 reference: opt_string(t.reference()),
                 is_textual_convention: t.is_textual_convention(),
-                constraints: make_constraints(t.sizes(), t.ranges(), t.enums(), t.bits()),
+                constraints: make_constraints(
+                    t.sizes(),
+                    t.ranges(),
+                    !t.sizes().is_empty(),
+                    !t.ranges().is_empty(),
+                    t.enums(),
+                    t.bits(),
+                ),
             }
         })
         .collect();
@@ -1475,6 +1511,8 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
                     constraints: make_constraints(
                         td.effective_sizes(types),
                         td.effective_ranges(types),
+                        td.effective_sizes_constrained(),
+                        td.effective_ranges_constrained(),
                         td.effective_enums(types),
                         td.effective_bits(types),
                     ),
@@ -1484,7 +1522,7 @@ fn make_index_entry(mib: &Mib, idx: &IndexEntry) -> ExportIndex {
                     type_ref: None,
                     base: "Unknown".to_string(),
                     display_hint: None,
-                    constraints: make_constraints(&[], &[], &[], &[]),
+                    constraints: make_constraints(&[], &[], false, false, &[], &[]),
                 })
             };
             ExportIndex {
@@ -1501,6 +1539,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::load::{Loader, load};
+    use crate::mib::types::{Range, RangeBound};
     use crate::source::{dir as dir_source, memory_modules};
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
@@ -1518,6 +1557,38 @@ mod tests {
             .diagnostic_config(DiagnosticConfig::silent())
             .modules(modules.iter().copied());
         load(opts).expect("load failed")
+    }
+
+    #[test]
+    fn export_range_preserves_endpoint_kinds() {
+        let ranges = [
+            Range {
+                min: RangeBound::Signed(1),
+                max: RangeBound::Unsigned(1),
+                span: crate::types::Span::SYNTHETIC,
+            },
+            Range {
+                min: RangeBound::Min,
+                max: RangeBound::Max,
+                span: crate::types::Span::SYNTHETIC,
+            },
+        ];
+        let json = serde_json::to_value(
+            ranges
+                .iter()
+                .map(super::make_export_range)
+                .collect::<Vec<_>>(),
+        )
+        .expect("range serialization failed");
+
+        assert_eq!(json[0]["min"], "1");
+        assert_eq!(json[0]["max"], "1");
+        assert_eq!(json[0]["minKind"], "signed");
+        assert_eq!(json[0]["maxKind"], "unsigned");
+        assert_eq!(json[1]["min"], "MIN");
+        assert_eq!(json[1]["max"], "MAX");
+        assert_eq!(json[1]["minKind"], "min");
+        assert_eq!(json[1]["maxKind"], "max");
     }
 
     fn load_scoped_export_mibs() -> crate::mib::Mib {
@@ -1554,6 +1625,137 @@ mod tests {
                 .iter()
                 .any(|n| n.module == "SNMPv2-SMI" && n.name == "internet"),
             "expected SNMPv2-SMI::internet in exported nodes"
+        );
+    }
+
+    #[test]
+    fn export_preserves_empty_constraint_intersections() {
+        let source = memory_modules([(
+            "EMPTY-CONSTRAINT-MIB",
+            br#"EMPTY-CONSTRAINT-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+emptyConstraintMIB MODULE-IDENTITY
+    LAST-UPDATED "202603220000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { enterprises 99995 }
+
+ParentSize ::= OCTET STRING (SIZE (4))
+UnconstrainedSize ::= OCTET STRING
+
+emptySizeObject OBJECT-TYPE
+    SYNTAX ParentSize (SIZE (5))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Empty size intersection"
+    ::= { emptyConstraintMIB 1 }
+
+unconstrainedObject OBJECT-TYPE
+    SYNTAX UnconstrainedSize
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Unconstrained size"
+    ::= { emptyConstraintMIB 2 }
+
+emptyCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "Empty constraint compliance"
+    MODULE EMPTY-CONSTRAINT-MIB
+        OBJECT emptySizeObject
+            SYNTAX ParentSize (SIZE (5))
+            DESCRIPTION "Empty size intersection"
+    ::= { emptyConstraintMIB 3 }
+
+emptyCapability AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Empty constraint capability"
+    SUPPORTS EMPTY-CONSTRAINT-MIB
+        INCLUDES { }
+        VARIATION emptySizeObject
+            SYNTAX ParentSize (SIZE (5))
+            DESCRIPTION "Empty size intersection"
+    ::= { emptyConstraintMIB 4 }
+END
+"#,
+        )]);
+        let mib = load(
+            Loader::new()
+                .source(source)
+                .resolver_strictness(ResolverStrictness::Permissive)
+                .diagnostic_config(DiagnosticConfig::silent())
+                .modules(["EMPTY-CONSTRAINT-MIB"]),
+        )
+        .expect("load failed");
+        let payload = export_payload(&mib, ResolverStrictness::Permissive);
+
+        let empty = payload
+            .objects
+            .iter()
+            .find(|obj| obj.name == "emptySizeObject")
+            .and_then(|obj| obj.syntax.as_ref())
+            .expect("emptySizeObject syntax missing");
+        assert!(empty.constraints.sizes.is_empty());
+        assert!(empty.constraints.sizes_constrained);
+        assert!(!empty.constraints.ranges_constrained);
+
+        let unconstrained = payload
+            .objects
+            .iter()
+            .find(|obj| obj.name == "unconstrainedObject")
+            .and_then(|obj| obj.syntax.as_ref())
+            .expect("unconstrainedObject syntax missing");
+        assert!(unconstrained.constraints.sizes.is_empty());
+        assert!(!unconstrained.constraints.sizes_constrained);
+
+        let compliance_constraints = &payload
+            .compliances
+            .iter()
+            .find(|compliance| compliance.name == "emptyCompliance")
+            .expect("emptyCompliance missing")
+            .modules[0]
+            .objects[0]
+            .syntax
+            .as_ref()
+            .expect("compliance syntax missing")
+            .constraints;
+        assert!(compliance_constraints.sizes.is_empty());
+        assert!(compliance_constraints.sizes_constrained);
+
+        let variation_constraints = &payload
+            .capabilities
+            .iter()
+            .find(|capability| capability.name == "emptyCapability")
+            .expect("emptyCapability missing")
+            .supports[0]
+            .object_variations[0]
+            .syntax
+            .as_ref()
+            .expect("variation syntax missing")
+            .constraints;
+        assert!(variation_constraints.sizes.is_empty());
+        assert!(variation_constraints.sizes_constrained);
+
+        let json = serde_json::to_value(&payload).expect("payload serialization failed");
+        let empty_json = json["objects"]
+            .as_array()
+            .expect("objects is not an array")
+            .iter()
+            .find(|obj| obj["name"] == "emptySizeObject")
+            .expect("serialized emptySizeObject missing");
+        assert_eq!(
+            empty_json["syntax"]["constraints"]["sizesConstrained"],
+            true
+        );
+        assert_eq!(
+            empty_json["syntax"]["constraints"]["rangesConstrained"],
+            false
         );
     }
 

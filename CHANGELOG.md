@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Represent resolved range endpoints with `RangeBound` instead of `i64`
+
+### Changed
+
+- Preserve signed, unsigned, `MIN`, and `MAX` range endpoints and intersect derived constraints with parent constraints
+
 ### Fixed
 
 - Detect SMI versions from unambiguous syntax and base module names as well as imports

@@ -486,8 +486,10 @@
 //! - **Range** constrains the numeric value of integer-like types.
 //!   Example: `(1..2147483647)` means the value must be at least 1.
 //!
-//! The `effective_*` variants walk the parent chain to find inherited
-//! constraints.
+//! The `effective_*` variants intersect constraints declared across the
+//! parent chain. An empty effective slice can mean either no constraint or an
+//! unsatisfiable intersection; the corresponding `*_constrained` accessor
+//! distinguishes those cases.
 //!
 //! ## Display hints
 //!
@@ -515,9 +517,9 @@
 //!   return only what this specific type declares. These are empty/None
 //!   if the type inherits everything from its parent.
 //! - **Effective** (`effective_base`, `effective_display_hint`,
-//!   `effective_enums`, `effective_sizes`, `effective_ranges`) - walk up
-//!   the parent chain and return the first non-empty value. These give
-//!   you the "resolved" answer.
+//!   `effective_enums`, `effective_sizes`, `effective_ranges`) - return the
+//!   resolved answer. SIZE and range constraints are intersected across the
+//!   parent chain; other values use the first non-empty value.
 //!
 //! **In most cases, use the `effective_*` methods.** They give you the
 //! answer you actually want: "what base type does this ultimately
@@ -537,7 +539,7 @@
 //! | [`Type::enums`] | This type's own enum values |
 //! | [`Type::effective_enums`] | First non-empty enums in the chain - use this one |
 //! | [`Type::sizes`] / [`Type::ranges`] | This type's own constraints |
-//! | [`Type::effective_sizes`] / [`Type::effective_ranges`] | Inherited constraints - use these |
+//! | [`Type::effective_sizes`] / [`Type::effective_ranges`] | Constraints intersected across the parent chain |
 //! | [`Type::is_textual_convention`] | Whether defined as a TEXTUAL-CONVENTION |
 //!
 //! Convenience predicates: [`Type::is_counter`], [`Type::is_gauge`],

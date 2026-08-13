@@ -4,8 +4,8 @@
 //! form parent chains via [`TypeData::parent`]; the chain terminates at a
 //! base SMI type such as `INTEGER` or `OCTET STRING`.
 //!
-//! The `effective_*` methods walk the parent chain to find the nearest
-//! non-empty value for constraints, display hints, and enumeration values.
+//! The `effective_*` constraint methods return constraints intersected across
+//! the parent chain. Other effective values use the nearest non-empty value.
 //! These require a reference to the full type arena (`&[TypeData]`).
 //!
 //! For handle-oriented access with automatic arena threading, see
@@ -21,9 +21,10 @@ const MAX_TYPE_CHAIN_DEPTH: usize = 1000;
 /// refinement.
 ///
 /// Types form parent chains via [`TypeData::parent`]; the chain terminates at
-/// a base SMI type. The `effective_*` methods walk this chain to find the
-/// first non-empty value. Access through [`TypeData`] methods or the
-/// [`Type`](super::handle::Type) handle.
+/// a base SMI type. Effective SIZE and range constraints are intersected
+/// across this chain; other effective values use the first non-empty value.
+/// Access through [`TypeData`] methods or the [`Type`](super::handle::Type)
+/// handle.
 #[derive(Debug, Clone)]
 pub struct TypeData {
     pub(crate) name: String,
@@ -38,6 +39,10 @@ pub struct TypeData {
     pub(crate) reference: String,
     pub(crate) sizes: Vec<Range>,
     pub(crate) ranges: Vec<Range>,
+    pub(crate) effective_sizes: Vec<Range>,
+    pub(crate) effective_ranges: Vec<Range>,
+    pub(crate) effective_sizes_constrained: bool,
+    pub(crate) effective_ranges_constrained: bool,
     pub(crate) enums: Vec<NamedValue>,
     pub(crate) bits: Vec<NamedValue>,
     pub(crate) is_tc: bool,
@@ -58,6 +63,10 @@ impl TypeData {
             reference: String::new(),
             sizes: Vec::new(),
             ranges: Vec::new(),
+            effective_sizes: Vec::new(),
+            effective_ranges: Vec::new(),
+            effective_sizes_constrained: false,
+            effective_ranges_constrained: false,
             enums: Vec::new(),
             bits: Vec::new(),
             is_tc: false,
@@ -208,14 +217,32 @@ impl TypeData {
         .unwrap_or("")
     }
 
-    /// Walk the parent type chain and return the first non-empty size constraints.
-    pub fn effective_sizes<'a>(&'a self, types: &'a [TypeData]) -> &'a [Range] {
-        self.effective_slice(types, |t| &t.sizes)
+    /// Return SIZE constraints intersected across the resolved parent chain.
+    ///
+    /// An empty slice means either that no SIZE constraint exists or that the
+    /// declared constraints have an empty intersection. Use
+    /// [`Self::effective_sizes_constrained`] to distinguish those cases.
+    pub fn effective_sizes<'a>(&'a self, _types: &'a [TypeData]) -> &'a [Range] {
+        &self.effective_sizes
     }
 
-    /// Walk the parent type chain and return the first non-empty range constraints.
-    pub fn effective_ranges<'a>(&'a self, types: &'a [TypeData]) -> &'a [Range] {
-        self.effective_slice(types, |t| &t.ranges)
+    /// Return whether an effective SIZE constraint was explicitly declared.
+    pub fn effective_sizes_constrained(&self) -> bool {
+        self.effective_sizes_constrained
+    }
+
+    /// Return value ranges intersected across the resolved parent chain.
+    ///
+    /// An empty slice means either that no range constraint exists or that the
+    /// declared constraints have an empty intersection. Use
+    /// [`Self::effective_ranges_constrained`] to distinguish those cases.
+    pub fn effective_ranges<'a>(&'a self, _types: &'a [TypeData]) -> &'a [Range] {
+        &self.effective_ranges
+    }
+
+    /// Return whether an effective value range constraint was explicitly declared.
+    pub fn effective_ranges_constrained(&self) -> bool {
+        self.effective_ranges_constrained
     }
 
     /// Walk the parent type chain and return the first non-empty enumeration values.

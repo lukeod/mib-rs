@@ -100,6 +100,7 @@ diag_codes! {
     lower,      UnknownTypeSyntax,          "unknown-type-syntax",                   Warning;
     lower,      UnknownConstraintType,      "unknown-constraint-type",               Warning;
     lower,      UnknownRangeValue,          "unknown-range-value",                   Warning;
+    lower,      MinMaxRange,                "min-max-range",                         Warning;
     lower,      UnknownOidComponent,        "unknown-oid-component-type",            Warning;
     lower,      UnknownDefvalType,          "unknown-defval-type",                   Warning;
     lower,      BitsNumberNegative,         "bits-number-negative",                  Error;
@@ -160,6 +161,7 @@ diag_codes! {
     resolver,   CounterDefvalIllegal,       "counter-defval-illegal",                Warning;
     resolver,   IndexCounterIllegal,        "index-counter-illegal",                 Warning;
     resolver,   RangeBounds,                "range-bounds",                          Error;
+    resolver,   ConstraintEmptyIntersection,"constraint-empty-intersection",          Warning;
     resolver,   RangeExchanged,             "range-exchanged",                       Error;
     resolver,   RangeOverlap,               "range-overlap",                         Error;
     resolver,   RangeAscending,             "range-ascending",                       Warning;

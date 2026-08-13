@@ -34,22 +34,107 @@ pub struct Import {
     pub symbols: Vec<ImportSymbol>,
 }
 
+/// An endpoint in a resolved SIZE or value range constraint.
+///
+/// Signed and unsigned literals remain distinct so values above [`i64::MAX`]
+/// are represented exactly. `MIN` and `MAX` are retained when no parent or
+/// base-type bound is available to give them a concrete value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RangeBound {
+    /// A signed integer literal.
+    Signed(i64),
+    /// An unsigned integer literal.
+    Unsigned(u64),
+    /// The `MIN` keyword.
+    Min,
+    /// The `MAX` keyword.
+    Max,
+}
+
+impl RangeBound {
+    /// Return the endpoint as `i64` when it is concrete and representable.
+    pub fn as_i64(self) -> Option<i64> {
+        match self {
+            Self::Signed(value) => Some(value),
+            Self::Unsigned(value) => i64::try_from(value).ok(),
+            Self::Min | Self::Max => None,
+        }
+    }
+
+    /// Return the endpoint as `u64` when it is concrete and non-negative.
+    pub fn as_u64(self) -> Option<u64> {
+        match self {
+            Self::Signed(value) => u64::try_from(value).ok(),
+            Self::Unsigned(value) => Some(value),
+            Self::Min | Self::Max => None,
+        }
+    }
+
+    pub(crate) fn cmp_value(self, other: Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Self::Min, Self::Min) | (Self::Max, Self::Max) => Ordering::Equal,
+            (Self::Min, _) | (_, Self::Max) => Ordering::Less,
+            (Self::Max, _) | (_, Self::Min) => Ordering::Greater,
+            (Self::Signed(left), Self::Signed(right)) => left.cmp(&right),
+            (Self::Unsigned(left), Self::Unsigned(right)) => left.cmp(&right),
+            (Self::Signed(left), Self::Unsigned(right)) => {
+                if left < 0 {
+                    Ordering::Less
+                } else {
+                    (left as u64).cmp(&right)
+                }
+            }
+            (Self::Unsigned(left), Self::Signed(right)) => {
+                if right < 0 {
+                    Ordering::Greater
+                } else {
+                    left.cmp(&(right as u64))
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Display for RangeBound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Signed(value) => write!(f, "{value}"),
+            Self::Unsigned(value) => write!(f, "{value}"),
+            Self::Min => f.write_str("MIN"),
+            Self::Max => f.write_str("MAX"),
+        }
+    }
+}
+
 /// A min..max constraint range, used for both SIZE and value constraints.
 ///
 /// For single-value constraints (e.g. `SIZE (6)`), `min` equals `max`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
     /// Lower bound (inclusive).
-    pub min: i64,
+    pub min: RangeBound,
     /// Upper bound (inclusive). Equal to `min` for single-value ranges.
-    pub max: i64,
+    pub max: RangeBound,
     /// Source location of this constraint.
     pub span: Span,
 }
 
+impl Range {
+    pub(crate) fn contains_i64(self, value: i64) -> bool {
+        let value = RangeBound::Signed(value);
+        self.min.cmp_value(value).is_le() && self.max.cmp_value(value).is_ge()
+    }
+
+    pub(crate) fn contains_u64(self, value: u64) -> bool {
+        let value = RangeBound::Unsigned(value);
+        self.min.cmp_value(value).is_le() && self.max.cmp_value(value).is_ge()
+    }
+}
+
 impl fmt::Display for Range {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.min == self.max {
+        if self.min.cmp_value(self.max).is_eq() {
             write!(f, "{}", self.min)
         } else {
             write!(f, "{}..{}", self.min, self.max)
@@ -147,7 +232,9 @@ pub(crate) fn classify_index_encoding(
 }
 
 pub(crate) fn is_fixed_size(sizes: &[Range]) -> bool {
-    sizes.len() == 1 && sizes[0].min == sizes[0].max && sizes[0].min > 0
+    sizes.len() == 1
+        && sizes[0].min.cmp_value(sizes[0].max).is_eq()
+        && sizes[0].min.as_u64().is_some_and(|value| value > 0)
 }
 
 /// Discriminant for the kind of value in a [`DefVal`].
@@ -468,10 +555,24 @@ pub struct NotificationVariation {
 pub struct SyntaxConstraints {
     /// Resolved type, if any.
     pub type_id: Option<TypeId>,
-    /// SIZE constraints.
+    /// Effective SIZE constraints after intersection with the resolved type.
     pub sizes: Vec<Range>,
-    /// Value range constraints.
+    /// SIZE constraints declared directly in this syntax clause.
+    pub declared_sizes: Vec<Range>,
+    /// Whether a SIZE constraint was explicitly declared.
+    ///
+    /// When this is true and `sizes` is empty, the declared constraint has an
+    /// empty intersection with the inherited or base-type constraint.
+    pub sizes_constrained: bool,
+    /// Effective value range constraints after intersection with the resolved type.
     pub ranges: Vec<Range>,
+    /// Value range constraints declared directly in this syntax clause.
+    pub declared_ranges: Vec<Range>,
+    /// Whether a value range constraint was explicitly declared.
+    ///
+    /// When this is true and `ranges` is empty, the declared constraint has an
+    /// empty intersection with the inherited or base-type constraint.
+    pub ranges_constrained: bool,
     /// Restricted enumeration values.
     pub enums: Vec<NamedValue>,
     /// Restricted BITS values.

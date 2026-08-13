@@ -558,20 +558,11 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
 
     if let Some(obj) = node.object() {
         if let Some(ty) = obj.ty() {
-            let ranges = format_ranges(obj.effective_ranges());
-            let sizes = format_ranges(obj.effective_sizes());
-            let constraint = if !ranges.is_empty() {
-                format!(" ({})", ranges)
-            } else if !sizes.is_empty() {
-                format!(" (SIZE({}))", sizes)
-            } else {
-                String::new()
-            };
             println!(
                 "Type:    {} ({}){}",
                 ty.name(),
                 ty.effective_base(),
-                constraint
+                format_object_constraint(obj)
             );
         }
         println!("Access:  {}", obj.access());
@@ -697,21 +688,32 @@ fn print_node_detail(node: mib_rs::mib::Node<'_>, full: bool) {
     }
 }
 
-fn format_ranges(ranges: &[mib_rs::mib::types::Range]) -> String {
-    if ranges.is_empty() {
-        return String::new();
+fn format_object_constraint(obj: mib_rs::mib::Object<'_>) -> String {
+    let ranges = format_ranges(obj.effective_ranges());
+    if !ranges.is_empty() {
+        return format!(" ({ranges})");
     }
-    let parts: Vec<String> = ranges
+    if obj.effective_ranges_constrained() {
+        return " (empty RANGE intersection)".to_string();
+    }
+
+    let sizes = format_ranges(obj.effective_sizes());
+    if !sizes.is_empty() {
+        return format!(" (SIZE({sizes}))");
+    }
+    if obj.effective_sizes_constrained() {
+        return " (empty SIZE intersection)".to_string();
+    }
+
+    String::new()
+}
+
+fn format_ranges(ranges: &[mib_rs::mib::types::Range]) -> String {
+    ranges
         .iter()
-        .map(|r| {
-            if r.min == r.max {
-                format!("{}", r.min)
-            } else {
-                format!("{}..{}", r.min, r.max)
-            }
-        })
-        .collect();
-    parts.join("|")
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn print_description(desc: &str, full: bool) {
@@ -1461,17 +1463,11 @@ fn format_index_entry(i: mib_rs::mib::Index<'_>) -> String {
 }
 
 fn format_range_list(ranges: &[mib_rs::mib::types::Range]) -> String {
-    let parts: Vec<String> = ranges
+    ranges
         .iter()
-        .map(|r| {
-            if r.min == r.max {
-                format!("{}", r.min)
-            } else {
-                format!("{}..{}", r.min, r.max)
-            }
-        })
-        .collect();
-    parts.join(" | ")
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn print_provenance(
@@ -2702,7 +2698,54 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use mib_rs::load::{Loader, load};
+    use mib_rs::source::memory_modules;
+    use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
+
+    use super::{format_object_constraint, glob_match};
+
+    #[test]
+    fn node_detail_formats_empty_size_intersection() {
+        let source = memory_modules([(
+            "EMPTY-SIZE-MIB",
+            br#"EMPTY-SIZE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, enterprises
+        FROM SNMPv2-SMI;
+
+emptySizeMIB MODULE-IDENTITY
+    LAST-UPDATED "202603220000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { enterprises 99994 }
+
+ParentSize ::= OCTET STRING (SIZE (4))
+
+emptySizeObject OBJECT-TYPE
+    SYNTAX ParentSize (SIZE (5))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Empty size intersection"
+    ::= { emptySizeMIB 1 }
+END
+"#,
+        )]);
+        let mib = load(
+            Loader::new()
+                .source(source)
+                .resolver_strictness(ResolverStrictness::Permissive)
+                .diagnostic_config(DiagnosticConfig::silent())
+                .modules(["EMPTY-SIZE-MIB"]),
+        )
+        .expect("load failed");
+        let object = mib.object("emptySizeObject").expect("object missing");
+
+        assert_eq!(
+            format_object_constraint(object),
+            " (empty SIZE intersection)"
+        );
+    }
 
     #[test]
     fn glob_match_matches_literals_and_wildcards() {

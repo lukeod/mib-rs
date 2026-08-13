@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ir;
 use crate::types::{Access, AccessKeyword, BaseType, DiagCode, Kind, Language, Span, Status};
 
-use super::super::types::{ModuleId, NodeId, ObjectId, TypeId};
+use super::super::types::{ModuleId, NodeId, ObjectId, RangeBound, TypeId};
 use super::context::{IrModuleId, ResolverContext};
 
 struct Diag {
@@ -653,17 +653,14 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                     if matches!(td.syntax, ir::TypeSyntax::Sequence { .. }) {
                         continue;
                     }
-                    let base = ctx
+                    let typ = ctx
                         .module_symbol_to_type
                         .get(&ir_id)
                         .and_then(|syms| syms.get(&td.name))
                         .copied()
-                        .map(|tid| {
-                            ctx.mib
-                                .raw()
-                                .type_(tid)
-                                .effective_base(ctx.mib.types_slice())
-                        })
+                        .map(|tid| ctx.mib.raw().type_(tid));
+                    let base = typ
+                        .map(|typ| typ.effective_base(ctx.mib.types_slice()))
                         .and_then(|base| {
                             if base == BaseType::Unknown {
                                 diagnostic_base_from_syntax(&td.syntax)
@@ -673,22 +670,40 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                         })
                         .or_else(|| diagnostic_base_from_syntax(&td.syntax));
                     collect_range_diags(&mut diags, ir_id, &td.name, &td.syntax, td.span, base);
+                    if let Some(typ) = typ {
+                        collect_empty_intersection_diag(
+                            &mut diags,
+                            ir_id,
+                            &td.name,
+                            &td.syntax,
+                            td.syntax_span,
+                            typ.effective_sizes(ctx.mib.types_slice()),
+                            typ.effective_ranges(ctx.mib.types_slice()),
+                        );
+                    }
                 }
                 ir::Definition::ObjectType(ot) => {
-                    let base = ctx
-                        .module_symbol_to_node
-                        .get(&ir_id)
-                        .and_then(|syms| syms.get(&ot.name))
-                        .copied()
-                        .and_then(|nid| ctx.mib.tree().get(nid).object)
-                        .and_then(|oid| ctx.mib.raw().object(oid).typ)
-                        .map(|tid| {
-                            ctx.mib
-                                .raw()
-                                .type_(tid)
-                                .effective_base(ctx.mib.types_slice())
-                        });
+                    let object = ctx
+                        .lookup_object_for_module(ir_id, &ot.name)
+                        .map(|(object_id, _)| ctx.mib.raw().object(object_id));
+                    let base = object.and_then(|object| object.typ).map(|tid| {
+                        ctx.mib
+                            .raw()
+                            .type_(tid)
+                            .effective_base(ctx.mib.types_slice())
+                    });
                     collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.span, base);
+                    if let Some(object) = object {
+                        collect_empty_intersection_diag(
+                            &mut diags,
+                            ir_id,
+                            &ot.name,
+                            &ot.syntax,
+                            ot.syntax_span,
+                            object.effective_sizes(),
+                            object.effective_ranges(),
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -696,6 +711,35 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
     }
 
     emit_all(ctx, diags);
+}
+
+fn collect_empty_intersection_diag(
+    diags: &mut Vec<Diag>,
+    ir_id: IrModuleId,
+    name: &str,
+    syntax: &ir::TypeSyntax,
+    span: Span,
+    effective_sizes: &[super::super::types::Range],
+    effective_ranges: &[super::super::types::Range],
+) {
+    let ir::TypeSyntax::Constrained { constraint, .. } = syntax else {
+        return;
+    };
+    let (effective, label) = match constraint {
+        ir::Constraint::Size { ranges, .. } if !ranges.is_empty() => (effective_sizes, "SIZE"),
+        ir::Constraint::Range { ranges, .. } if !ranges.is_empty() => (effective_ranges, "range"),
+        _ => return,
+    };
+    if effective.is_empty() {
+        diags.push(Diag {
+            code: DiagCode::ConstraintEmptyIntersection,
+            ir_id: Some(ir_id),
+            span,
+            message: format!(
+                "{name:?}: {label} constraint has an empty intersection with its parent"
+            ),
+        });
+    }
 }
 
 fn diagnostic_base_from_syntax(syntax: &ir::TypeSyntax) -> Option<BaseType> {
@@ -784,7 +828,7 @@ fn collect_range_diags(
         }
 
         let bounds = if is_size {
-            Some((0i64, 65535i64))
+            Some((RangeBound::Unsigned(0), RangeBound::Unsigned(65535)))
         } else {
             base.and_then(basetype_bounds)
         };
@@ -854,45 +898,38 @@ fn check_range_bound(
     span: Span,
     name: &str,
     value: &ir::RangeValue,
-    bounds_min: i64,
-    bounds_max: i64,
+    bounds_min: RangeBound,
+    bounds_max: RangeBound,
     which: &str,
 ) {
-    // MIN/MAX keywords are always valid.
-    let v = match value {
-        ir::RangeValue::Signed(v) => *v,
-        ir::RangeValue::Unsigned(v) => {
-            if *v > i64::MAX as u64 {
-                // Value exceeds i64 range, definitely out of bounds for any basetype.
-                diags.push(Diag {
-                    code: DiagCode::RangeBounds,
-                    ir_id: Some(ir_id),
-                    span,
-                    message: format!("{name:?}: range {which} bound {v} exceeds basetype"),
-                });
-                return;
-            }
-            *v as i64
-        }
+    let value = match value {
+        ir::RangeValue::Signed(value) => RangeBound::Signed(*value),
+        ir::RangeValue::Unsigned(value) => RangeBound::Unsigned(*value),
         ir::RangeValue::Min | ir::RangeValue::Max => return,
     };
-    if v < bounds_min || v > bounds_max {
+    if value.cmp_value(bounds_min).is_lt() || value.cmp_value(bounds_max).is_gt() {
         diags.push(Diag {
             code: DiagCode::RangeBounds,
             ir_id: Some(ir_id),
             span,
-            message: format!("{name:?}: range {which} bound {v} exceeds basetype"),
+            message: format!("{name:?}: range {which} bound {value} exceeds basetype"),
         });
     }
 }
 
-fn basetype_bounds(base: BaseType) -> Option<(i64, i64)> {
+fn basetype_bounds(base: BaseType) -> Option<(RangeBound, RangeBound)> {
     match base {
-        BaseType::Integer32 => Some((i32::MIN as i64, i32::MAX as i64)),
+        BaseType::Integer32 => Some((
+            RangeBound::Signed(i64::from(i32::MIN)),
+            RangeBound::Signed(i64::from(i32::MAX)),
+        )),
         BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks | BaseType::Counter32 => {
-            Some((0, u32::MAX as i64))
+            Some((
+                RangeBound::Unsigned(0),
+                RangeBound::Unsigned(u64::from(u32::MAX)),
+            ))
         }
-        BaseType::Counter64 => Some((0, i64::MAX)),
+        BaseType::Counter64 => Some((RangeBound::Unsigned(0), RangeBound::Unsigned(u64::MAX))),
         _ => None,
     }
 }
@@ -2282,6 +2319,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
         base: BaseType,
         dv_value: DefValValue,
         ranges: Vec<crate::mib::types::Range>,
+        ranges_constrained: bool,
         enums: Vec<crate::mib::types::NamedValue>,
         bits: Vec<crate::mib::types::NamedValue>,
     }
@@ -2311,6 +2349,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
             base,
             dv_value: dv.value.clone(),
             ranges: obj.effective_ranges().to_vec(),
+            ranges_constrained: obj.effective_ranges_constrained(),
             enums: obj.effective_enums().to_vec(),
             bits: obj.effective_bits().to_vec(),
         });
@@ -2338,6 +2377,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
                     *v,
                     check.base,
                     &check.ranges,
+                    check.ranges_constrained,
                     &check.enums,
                 );
             }
@@ -2350,6 +2390,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
                     *uv,
                     check.base,
                     &check.ranges,
+                    check.ranges_constrained,
                     &check.enums,
                 );
             }
@@ -2395,6 +2436,7 @@ fn check_defval_numeric(
     v: i64,
     base: BaseType,
     ranges: &[crate::mib::types::Range],
+    ranges_constrained: bool,
     enums: &[crate::mib::types::NamedValue],
 ) {
     // Check basetype limits.
@@ -2422,7 +2464,7 @@ fn check_defval_numeric(
         _ => {}
     }
     // Check RANGE constraints.
-    if !ranges.is_empty() && !value_in_ranges(v, ranges) {
+    if ranges_constrained && !value_in_ranges(v, ranges) {
         ctx.emit_diagnostic(
             DiagCode::DefvalRange,
             ir_mod,
@@ -2450,6 +2492,7 @@ fn check_defval_unsigned(
     v: u64,
     base: BaseType,
     ranges: &[crate::mib::types::Range],
+    ranges_constrained: bool,
     enums: &[crate::mib::types::NamedValue],
 ) {
     match base {
@@ -2475,22 +2518,13 @@ fn check_defval_unsigned(
         }
         _ => {}
     }
-    if !ranges.is_empty() && v <= i64::MAX as u64 {
-        let in_range = ranges.iter().any(|r| {
-            if r.max < 0 {
-                return false;
-            }
-            let min = if r.min > 0 { r.min as u64 } else { 0 };
-            v >= min && v <= r.max as u64
-        });
-        if !in_range {
-            ctx.emit_diagnostic(
-                DiagCode::DefvalRange,
-                ir_mod,
-                span,
-                format!("{name:?}: DEFVAL {v} outside RANGE constraint"),
-            );
-        }
+    if ranges_constrained && !ranges.iter().any(|range| range.contains_u64(v)) {
+        ctx.emit_diagnostic(
+            DiagCode::DefvalRange,
+            ir_mod,
+            span,
+            format!("{name:?}: DEFVAL {v} outside RANGE constraint"),
+        );
     }
     if !enums.is_empty() {
         let found = enums.iter().any(|e| e.value >= 0 && e.value as u64 == v);
@@ -2506,7 +2540,7 @@ fn check_defval_unsigned(
 }
 
 fn value_in_ranges(v: i64, ranges: &[crate::mib::types::Range]) -> bool {
-    ranges.iter().any(|r| v >= r.min && v <= r.max)
+    ranges.iter().any(|range| range.contains_i64(v))
 }
 
 // --- Index validation ---
@@ -2614,7 +2648,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
 
             // OCTET STRING/Opaque index elements must have SIZE.
             if base == BaseType::OctetString || base == BaseType::Opaque {
-                if idx_obj.effective_sizes().is_empty() {
+                if idx_obj.effective_sizes().is_empty() && !idx_obj.effective_sizes_constrained() {
                     diags.push(Diag {
                         code: DiagCode::IndexElementNoSize,
                         ir_id: ir_mod,
@@ -2654,23 +2688,26 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                 continue;
             }
 
-            // No range restriction on an integer index.
+            // No range restriction on an integer index. A constrained empty
+            // range is an unsatisfiable intersection diagnosed separately.
             if ranges.is_empty() {
-                diags.push(Diag {
-                    code: DiagCode::IndexIntegerNoRange,
-                    ir_id: ir_mod,
-                    span,
-                    message: format!(
-                        "INDEX {:?} of {:?} has no range restriction",
-                        idx_name, obj_name
-                    ),
-                });
+                if !idx_obj.effective_ranges_constrained() {
+                    diags.push(Diag {
+                        code: DiagCode::IndexIntegerNoRange,
+                        ir_id: ir_mod,
+                        span,
+                        message: format!(
+                            "INDEX {:?} of {:?} has no range restriction",
+                            idx_name, obj_name
+                        ),
+                    });
+                }
                 continue;
             }
 
             // Range includes negative values.
             for r in ranges {
-                if r.min < 0 {
+                if r.min.as_i64().is_some_and(|min| min < 0) {
                     diags.push(Diag {
                         code: DiagCode::IndexNegativeRange,
                         ir_id: ir_mod,
@@ -2763,7 +2800,10 @@ fn index_element_sub_ids(
             if sizes.is_empty() {
                 return None;
             }
-            Some(sizes[0].max as usize)
+            sizes[0]
+                .max
+                .as_u64()
+                .and_then(|max| usize::try_from(max).ok())
         }
         IndexEncoding::LengthPrefixed => {
             let base = obj.typ.map(|tid| {
@@ -2775,8 +2815,12 @@ fn index_element_sub_ids(
             if base == BaseType::ObjectIdentifier {
                 return Some(129);
             }
-            let max = obj.effective_sizes().iter().map(|r| r.max).max()?;
-            usize::try_from(max).ok().map(|n| n + 1)
+            let max = obj
+                .effective_sizes()
+                .iter()
+                .filter_map(|range| range.max.as_u64())
+                .max()?;
+            usize::try_from(max).ok().and_then(|n| n.checked_add(1))
         }
         IndexEncoding::Implied => {
             let base = obj.typ.map(|tid| {
@@ -2788,7 +2832,11 @@ fn index_element_sub_ids(
             if base == BaseType::ObjectIdentifier {
                 return Some(128);
             }
-            let max = obj.effective_sizes().iter().map(|r| r.max).max()?;
+            let max = obj
+                .effective_sizes()
+                .iter()
+                .filter_map(|range| range.max.as_u64())
+                .max()?;
             usize::try_from(max).ok()
         }
         IndexEncoding::Unknown => None,

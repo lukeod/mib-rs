@@ -3,10 +3,11 @@
 mod common;
 
 use mib_rs::load::{Loader, load};
-use mib_rs::mib::{Oid, UnresolvedKind};
+use mib_rs::mib::{Oid, RangeBound, UnresolvedKind};
 use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
-    Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness, Severity,
+    Access, BaseType, DiagCode, DiagnosticConfig, IndexEncoding, Kind, Language,
+    ResolverStrictness, Severity,
 };
 
 use common::{corpus_dir, problems_dir};
@@ -457,6 +458,370 @@ END
             })
             .count(),
         2
+    );
+}
+
+#[test]
+fn range_endpoints_preserve_semantics_and_intersect_parent_constraints() {
+    let source = memory_modules([(
+        "RANGE-SEMANTICS-MIB",
+        br#"RANGE-SEMANTICS-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Counter64
+        FROM SNMPv2-SMI;
+
+rangeSemantics MODULE-IDENTITY
+    LAST-UPDATED "202603210000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { 1 3 6 1 4 1 99997 }
+
+ParentRange ::= Integer32 (-10..20)
+ChildRange ::= ParentRange (MIN..MAX)
+NarrowRange ::= ParentRange (0..MAX)
+DisjointRange ::= ParentRange (30..40)
+DisjointDerived ::= DisjointRange
+MultiRange ::= Integer32 (0..10 | 20..30)
+MaxOnly ::= MultiRange (MAX)
+MinOnly ::= MultiRange (MIN)
+MinUpper ::= MultiRange (MIN..25)
+MaxLower ::= MultiRange (5..MAX)
+OpenRange ::= INTEGER (MIN..MAX)
+OpenSize ::= OCTET STRING (SIZE (MIN..MAX))
+HugeRange ::= Counter64 (0..18446744073709551615)
+
+rangeObject OBJECT-TYPE
+    SYNTAX ChildRange (MIN..10)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Range test"
+    ::= { rangeSemantics 1 }
+
+hugeObject OBJECT-TYPE
+    SYNTAX HugeRange
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Unsigned range and DEFVAL test"
+    DEFVAL { 18446744073709551615 }
+    ::= { rangeSemantics 2 }
+
+disjointObject OBJECT-TYPE
+    SYNTAX ParentRange (30..40)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Empty intersection and DEFVAL test"
+    DEFVAL { 5 }
+    ::= { rangeSemantics 3 }
+
+openObject OBJECT-TYPE
+    SYNTAX INTEGER (MIN..MAX)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Primitive range fallback test"
+    ::= { rangeSemantics 4 }
+
+openSizeObject OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (MIN..MAX))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Primitive size fallback test"
+    ::= { rangeSemantics 5 }
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["RANGE-SEMANTICS-MIB"]),
+    )
+    .expect("load failed");
+    let module = mib.module("RANGE-SEMANTICS-MIB").expect("module missing");
+
+    let child = module.r#type("ChildRange").expect("ChildRange missing");
+    assert_eq!(child.ranges()[0].min, RangeBound::Min);
+    assert_eq!(child.ranges()[0].max, RangeBound::Max);
+    assert_eq!(child.effective_ranges()[0].min.as_i64(), Some(-10));
+    assert_eq!(child.effective_ranges()[0].max.as_i64(), Some(20));
+
+    let narrow = module.r#type("NarrowRange").expect("NarrowRange missing");
+    assert_eq!(narrow.effective_ranges()[0].min.as_i64(), Some(0));
+    assert_eq!(narrow.effective_ranges()[0].max.as_i64(), Some(20));
+
+    let disjoint = module
+        .r#type("DisjointRange")
+        .expect("DisjointRange missing");
+    assert!(disjoint.effective_ranges().is_empty());
+    assert!(disjoint.effective_ranges_constrained());
+    let disjoint_derived = module
+        .r#type("DisjointDerived")
+        .expect("DisjointDerived missing");
+    assert!(disjoint_derived.effective_ranges().is_empty());
+    assert!(disjoint_derived.effective_ranges_constrained());
+
+    let max_only = module.r#type("MaxOnly").expect("MaxOnly missing");
+    assert_eq!(max_only.effective_ranges().len(), 1);
+    assert_eq!(max_only.effective_ranges()[0].min.as_i64(), Some(30));
+    assert_eq!(max_only.effective_ranges()[0].max.as_i64(), Some(30));
+    let min_only = module.r#type("MinOnly").expect("MinOnly missing");
+    assert_eq!(min_only.effective_ranges().len(), 1);
+    assert_eq!(min_only.effective_ranges()[0].min.as_i64(), Some(0));
+    assert_eq!(min_only.effective_ranges()[0].max.as_i64(), Some(0));
+    let min_upper = module.r#type("MinUpper").expect("MinUpper missing");
+    assert_eq!(min_upper.effective_ranges().len(), 2);
+    assert_eq!(min_upper.effective_ranges()[0].min.as_i64(), Some(0));
+    assert_eq!(min_upper.effective_ranges()[0].max.as_i64(), Some(10));
+    assert_eq!(min_upper.effective_ranges()[1].min.as_i64(), Some(20));
+    assert_eq!(min_upper.effective_ranges()[1].max.as_i64(), Some(25));
+    let max_lower = module.r#type("MaxLower").expect("MaxLower missing");
+    assert_eq!(max_lower.effective_ranges().len(), 2);
+    assert_eq!(max_lower.effective_ranges()[0].min.as_i64(), Some(5));
+    assert_eq!(max_lower.effective_ranges()[0].max.as_i64(), Some(10));
+    assert_eq!(max_lower.effective_ranges()[1].min.as_i64(), Some(20));
+    assert_eq!(max_lower.effective_ranges()[1].max.as_i64(), Some(30));
+
+    let open = module.r#type("OpenRange").expect("OpenRange missing");
+    assert_eq!(open.ranges()[0].min, RangeBound::Min);
+    assert_eq!(open.ranges()[0].max, RangeBound::Max);
+    assert_eq!(
+        open.effective_ranges()[0].min.as_i64(),
+        Some(i64::from(i32::MIN))
+    );
+    assert_eq!(
+        open.effective_ranges()[0].max.as_i64(),
+        Some(i64::from(i32::MAX))
+    );
+    let size = module.r#type("OpenSize").expect("OpenSize missing");
+    assert_eq!(size.sizes()[0].min, RangeBound::Min);
+    assert_eq!(size.sizes()[0].max, RangeBound::Max);
+    assert_eq!(size.effective_sizes()[0].min.as_u64(), Some(0));
+    assert_eq!(size.effective_sizes()[0].max.as_u64(), Some(65535));
+
+    let huge = module.r#type("HugeRange").expect("HugeRange missing");
+    assert_eq!(huge.effective_ranges()[0].min.as_u64(), Some(0));
+    assert_eq!(huge.effective_ranges()[0].max.as_u64(), Some(u64::MAX));
+    assert_eq!(huge.effective_ranges()[0].max.as_i64(), None);
+
+    let object = mib.object("rangeObject").expect("rangeObject missing");
+    assert_eq!(object.ranges()[0].min, RangeBound::Min);
+    assert_eq!(object.ranges()[0].max, RangeBound::Unsigned(10));
+    assert_eq!(object.effective_ranges()[0].min.as_i64(), Some(-10));
+    assert_eq!(object.effective_ranges()[0].max.as_i64(), Some(10));
+    let huge_object = mib.object("hugeObject").expect("hugeObject missing");
+    assert_eq!(
+        huge_object.effective_ranges()[0].max.as_u64(),
+        Some(u64::MAX)
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::DefvalRange && diagnostic.message.contains("hugeObject")
+    }));
+
+    let disjoint_object = mib
+        .object("disjointObject")
+        .expect("disjointObject missing");
+    assert!(disjoint_object.effective_ranges().is_empty());
+    assert!(disjoint_object.effective_ranges_constrained());
+    assert!(mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::DefvalRange && diagnostic.message.contains("disjointObject")
+    }));
+
+    let empty_intersection_diags = mib
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::ConstraintEmptyIntersection)
+        .collect::<Vec<_>>();
+    assert_eq!(empty_intersection_diags.len(), 2);
+    assert!(empty_intersection_diags.iter().any(|diagnostic| {
+        diagnostic.message.contains("DisjointRange")
+            && diagnostic
+                .message
+                .contains("range constraint has an empty intersection")
+    }));
+    assert!(empty_intersection_diags.iter().any(|diagnostic| {
+        diagnostic.message.contains("disjointObject")
+            && diagnostic
+                .message
+                .contains("range constraint has an empty intersection")
+    }));
+    assert!(
+        empty_intersection_diags
+            .iter()
+            .all(|diagnostic| diagnostic.severity == Severity::Warning)
+    );
+
+    let open_object = mib.object("openObject").expect("openObject missing");
+    assert_eq!(open_object.ranges()[0].min, RangeBound::Min);
+    assert_eq!(open_object.ranges()[0].max, RangeBound::Max);
+    assert_eq!(
+        open_object.effective_ranges()[0].min.as_i64(),
+        Some(i64::from(i32::MIN))
+    );
+    assert_eq!(
+        open_object.effective_ranges()[0].max.as_i64(),
+        Some(i64::from(i32::MAX))
+    );
+    let open_size_object = mib
+        .object("openSizeObject")
+        .expect("openSizeObject missing");
+    assert_eq!(open_size_object.sizes()[0].min, RangeBound::Min);
+    assert_eq!(open_size_object.sizes()[0].max, RangeBound::Max);
+    assert_eq!(open_size_object.effective_sizes()[0].min.as_u64(), Some(0));
+    assert_eq!(
+        open_size_object.effective_sizes()[0].max.as_u64(),
+        Some(65535)
+    );
+
+    let min_max_diags = mib
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::MinMaxRange)
+        .count();
+    assert_eq!(min_max_diags, 16);
+}
+
+#[test]
+fn min_max_range_diagnostic_obeys_policy() {
+    let source = memory_modules([(
+        "SILENT-RANGE-MIB",
+        br#"SILENT-RANGE-MIB DEFINITIONS ::= BEGIN
+OpenRange ::= INTEGER (MIN..MAX)
+ParentRange ::= INTEGER (0..10)
+EmptyRange ::= ParentRange (20..30)
+END
+"#,
+    )]);
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::silent())
+            .modules(["SILENT-RANGE-MIB"]),
+    )
+    .expect("load failed");
+
+    assert!(mib.diagnostics().is_empty());
+    let typ = mib
+        .module("SILENT-RANGE-MIB")
+        .and_then(|module| module.r#type("OpenRange"))
+        .expect("OpenRange missing");
+    assert_eq!(typ.ranges()[0].min, RangeBound::Min);
+    assert_eq!(typ.ranges()[0].max, RangeBound::Max);
+    assert_eq!(
+        typ.effective_ranges()[0].min.as_i64(),
+        Some(i64::from(i32::MIN))
+    );
+    assert_eq!(
+        typ.effective_ranges()[0].max.as_i64(),
+        Some(i64::from(i32::MAX))
+    );
+    let empty = mib
+        .module("SILENT-RANGE-MIB")
+        .and_then(|module| module.r#type("EmptyRange"))
+        .expect("EmptyRange missing");
+    assert!(empty.effective_ranges_constrained());
+    assert!(empty.effective_ranges().is_empty());
+}
+
+#[test]
+fn empty_intersection_diagnostic_can_be_ignored() {
+    let source = memory_modules([(
+        "IGNORED-RANGE-MIB",
+        br#"IGNORED-RANGE-MIB DEFINITIONS ::= BEGIN
+ParentRange ::= INTEGER (0..10)
+EmptyRange ::= ParentRange (20..30)
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    diagnostics
+        .ignore
+        .push("constraint-empty-intersection".to_string());
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["IGNORED-RANGE-MIB"]),
+    )
+    .expect("load failed");
+
+    assert!(
+        !mib.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::ConstraintEmptyIntersection)
+    );
+    let empty = mib
+        .module("IGNORED-RANGE-MIB")
+        .and_then(|module| module.r#type("EmptyRange"))
+        .expect("EmptyRange missing");
+    assert!(empty.effective_ranges_constrained());
+    assert!(empty.effective_ranges().is_empty());
+}
+
+#[test]
+fn duplicate_oid_empty_intersection_uses_declared_object() {
+    let source = memory_modules([(
+        "DUPLICATE-CONSTRAINT-MIB",
+        br#"DUPLICATE-CONSTRAINT-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE
+        FROM SNMPv2-SMI;
+
+duplicateConstraintMIB MODULE-IDENTITY
+    LAST-UPDATED "202603220000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { 1 3 6 1 4 1 99995 }
+
+ParentRange ::= INTEGER (0..10)
+
+firstObject OBJECT-TYPE
+    SYNTAX ParentRange (0..5)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Satisfiable declaration"
+    ::= { duplicateConstraintMIB 1 }
+
+secondObject OBJECT-TYPE
+    SYNTAX ParentRange (20..30)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Empty declaration"
+    ::= { duplicateConstraintMIB 1 }
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["DUPLICATE-CONSTRAINT-MIB"]),
+    )
+    .expect("load failed");
+
+    let empty_intersections = mib
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::ConstraintEmptyIntersection)
+        .collect::<Vec<_>>();
+    assert_eq!(empty_intersections.len(), 1);
+    assert!(empty_intersections[0].message.contains("secondObject"));
+    assert!(!empty_intersections[0].message.contains("firstObject"));
+    assert!(
+        mib.module("DUPLICATE-CONSTRAINT-MIB")
+            .and_then(|module| module.object("secondObject"))
+            .expect("secondObject missing")
+            .effective_ranges()
+            .is_empty()
     );
 }
 
@@ -1052,15 +1417,24 @@ fn compliance_object_syntax_with_size_constraint() {
     );
     // SIZE(0|4|16) produces three single-value ranges
     assert!(
-        syntax.sizes.iter().any(|r| r.min == 0 && r.max == 0),
+        syntax
+            .sizes
+            .iter()
+            .any(|r| r.min.as_i64() == Some(0) && r.max.as_i64() == Some(0)),
         "should have size 0"
     );
     assert!(
-        syntax.sizes.iter().any(|r| r.min == 4 && r.max == 4),
+        syntax
+            .sizes
+            .iter()
+            .any(|r| r.min.as_i64() == Some(4) && r.max.as_i64() == Some(4)),
         "should have size 4"
     );
     assert!(
-        syntax.sizes.iter().any(|r| r.min == 16 && r.max == 16),
+        syntax
+            .sizes
+            .iter()
+            .any(|r| r.min.as_i64() == Some(16) && r.max.as_i64() == Some(16)),
         "should have size 16"
     );
 
@@ -1208,8 +1582,8 @@ fn variation_syntax_with_range_and_defval() {
     let syntax = var.syntax.as_ref().expect("syntax should be resolved");
     assert!(syntax.type_id.is_some(), "syntax should have resolved type");
     assert_eq!(syntax.ranges.len(), 1, "syntax should have 1 range");
-    assert_eq!(syntax.ranges[0].min, 0);
-    assert_eq!(syntax.ranges[0].max, 50);
+    assert_eq!(syntax.ranges[0].min.as_i64(), Some(0));
+    assert_eq!(syntax.ranges[0].max.as_i64(), Some(50));
 
     // WRITE-SYNTAX Integer32 (1..25)
     let ws = var
@@ -1221,13 +1595,146 @@ fn variation_syntax_with_range_and_defval() {
         "write_syntax should have resolved type"
     );
     assert_eq!(ws.ranges.len(), 1, "write_syntax should have 1 range");
-    assert_eq!(ws.ranges[0].min, 1);
-    assert_eq!(ws.ranges[0].max, 25);
+    assert_eq!(ws.ranges[0].min.as_i64(), Some(1));
+    assert_eq!(ws.ranges[0].max.as_i64(), Some(25));
 
     // DEFVAL { 10 }
     let dv = var.def_val.as_ref().expect("def_val should be resolved");
     assert!(!dv.is_unset(), "def_val should not be unset");
     assert_eq!(dv.to_string(), "10");
+}
+
+#[test]
+fn compliance_and_variation_primitive_min_max_use_base_bounds() {
+    let source = memory_modules([(
+        "INLINE-PRIMITIVE-MIB",
+        br#"INLINE-PRIMITIVE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+inlinePrimitive MODULE-IDENTITY
+    LAST-UPDATED "202603210000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { 1 3 6 1 4 1 99996 }
+
+inlineInteger OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "Integer test"
+    ::= { inlinePrimitive 1 }
+
+inlineOctets OBJECT-TYPE
+    SYNTAX OCTET STRING
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "Size test"
+    ::= { inlinePrimitive 2 }
+
+inlineCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "Compliance test"
+    MODULE
+        MANDATORY-GROUPS { }
+        OBJECT inlineInteger
+            SYNTAX INTEGER (MIN..MAX)
+            DESCRIPTION "Integer refinement"
+        OBJECT inlineOctets
+            SYNTAX OCTET STRING (SIZE (MIN..MAX))
+            DESCRIPTION "Size refinement"
+    ::= { inlinePrimitive 3 }
+
+inlineCapability AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Variation test"
+    SUPPORTS INLINE-PRIMITIVE-MIB
+        INCLUDES { }
+        VARIATION inlineInteger
+            SYNTAX INTEGER (MIN..MAX)
+            DESCRIPTION "Integer variation"
+        VARIATION inlineOctets
+            SYNTAX OCTET STRING (SIZE (MIN..MAX))
+            DESCRIPTION "Size variation"
+    ::= { inlinePrimitive 4 }
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["INLINE-PRIMITIVE-MIB"]),
+    )
+    .expect("load failed");
+
+    let compliance = mib.raw().compliance(
+        mib.compliance_by_name("inlineCompliance")
+            .expect("compliance missing"),
+    );
+    let compliance_objects = &compliance.modules()[0].objects;
+    let compliance_integer = compliance_objects
+        .iter()
+        .find(|object| object.object == "inlineInteger")
+        .and_then(|object| object.syntax.as_ref())
+        .expect("compliance integer syntax missing");
+    assert_eq!(compliance_integer.declared_ranges[0].min, RangeBound::Min);
+    assert_eq!(compliance_integer.declared_ranges[0].max, RangeBound::Max);
+    assert_eq!(
+        compliance_integer.ranges[0].min.as_i64(),
+        Some(i64::from(i32::MIN))
+    );
+    assert_eq!(
+        compliance_integer.ranges[0].max.as_i64(),
+        Some(i64::from(i32::MAX))
+    );
+    let compliance_octets = compliance_objects
+        .iter()
+        .find(|object| object.object == "inlineOctets")
+        .and_then(|object| object.syntax.as_ref())
+        .expect("compliance octet syntax missing");
+    assert_eq!(compliance_octets.declared_sizes[0].min, RangeBound::Min);
+    assert_eq!(compliance_octets.declared_sizes[0].max, RangeBound::Max);
+    assert_eq!(compliance_octets.sizes[0].min.as_u64(), Some(0));
+    assert_eq!(compliance_octets.sizes[0].max.as_u64(), Some(65535));
+
+    let capability = mib.raw().capability(
+        mib.capability_by_name("inlineCapability")
+            .expect("capability missing"),
+    );
+    let variations = &capability.supports()[0].object_variations;
+    let variation_integer = variations
+        .iter()
+        .find(|variation| variation.object == "inlineInteger")
+        .and_then(|variation| variation.syntax.as_ref())
+        .expect("variation integer syntax missing");
+    assert_eq!(variation_integer.declared_ranges[0].min, RangeBound::Min);
+    assert_eq!(variation_integer.declared_ranges[0].max, RangeBound::Max);
+    assert_eq!(
+        variation_integer.ranges[0].min.as_i64(),
+        Some(i64::from(i32::MIN))
+    );
+    assert_eq!(
+        variation_integer.ranges[0].max.as_i64(),
+        Some(i64::from(i32::MAX))
+    );
+    let variation_octets = variations
+        .iter()
+        .find(|variation| variation.object == "inlineOctets")
+        .and_then(|variation| variation.syntax.as_ref())
+        .expect("variation octet syntax missing");
+    assert_eq!(variation_octets.declared_sizes[0].min, RangeBound::Min);
+    assert_eq!(variation_octets.declared_sizes[0].max, RangeBound::Max);
+    assert_eq!(variation_octets.sizes[0].min.as_u64(), Some(0));
+    assert_eq!(variation_octets.sizes[0].max.as_u64(), Some(65535));
 }
 
 // --- SMIv1 tests ---
@@ -1801,6 +2308,111 @@ fn index_fixed_size() {
     let (size, ok) = indexes[0].fixed_size();
     assert!(ok, "integer index should have fixed size");
     assert_eq!(size, 1, "integer index fixed size should be 1");
+}
+
+#[test]
+fn disjoint_inline_index_constraints_are_not_reported_as_missing() {
+    let source = memory_modules([(
+        "INDEX-CONSTRAINT-MIB",
+        br#"INDEX-CONSTRAINT-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, enterprises
+        FROM SNMPv2-SMI;
+
+indexConstraintMIB MODULE-IDENTITY
+    LAST-UPDATED "202603220000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= { enterprises 99996 }
+
+ParentSize ::= OCTET STRING (SIZE (4))
+ParentInteger ::= INTEGER (0..10)
+
+indexConstraintTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF IndexConstraintEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table"
+    ::= { indexConstraintMIB 1 }
+
+indexConstraintEntry OBJECT-TYPE
+    SYNTAX IndexConstraintEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Entry"
+    INDEX { indexSizeIndex, indexIntegerIndex }
+    ::= { indexConstraintTable 1 }
+
+IndexConstraintEntry ::= SEQUENCE {
+    indexSizeIndex ParentSize,
+    indexIntegerIndex ParentInteger
+}
+
+indexSizeIndex OBJECT-TYPE
+    SYNTAX ParentSize (SIZE (5))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Size index"
+    ::= { indexConstraintEntry 1 }
+
+indexIntegerIndex OBJECT-TYPE
+    SYNTAX ParentInteger (20..30)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Integer index"
+    ::= { indexConstraintEntry 2 }
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["INDEX-CONSTRAINT-MIB"]),
+    )
+    .expect("load failed");
+
+    let size_index = mib
+        .object("indexSizeIndex")
+        .expect("indexSizeIndex missing");
+    assert!(size_index.effective_sizes_constrained());
+    assert!(size_index.effective_sizes().is_empty());
+    let integer_index = mib
+        .object("indexIntegerIndex")
+        .expect("indexIntegerIndex missing");
+    assert!(integer_index.effective_ranges_constrained());
+    assert!(integer_index.effective_ranges().is_empty());
+
+    for name in ["indexSizeIndex", "indexIntegerIndex"] {
+        assert!(mib.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagCode::ConstraintEmptyIntersection
+                && diagnostic.message.contains(name)
+        }));
+    }
+    assert!(
+        !mib.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::IndexElementNoSize)
+    );
+    assert!(
+        !mib.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::IndexIntegerNoRange)
+    );
+
+    let row = mib
+        .object("indexConstraintEntry")
+        .expect("indexConstraintEntry missing");
+    let index = row
+        .effective_indexes()
+        .next()
+        .expect("indexSizeIndex missing from INDEX");
+    assert_eq!(index.encoding(), IndexEncoding::LengthPrefixed);
+    assert_eq!(index.fixed_size(), (0, false));
 }
 
 #[test]

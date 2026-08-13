@@ -340,8 +340,8 @@ fn strict_imported_metadata_preserved() {
     );
     assert_eq!(display.effective_display_hint(), "255a");
     assert_eq!(display.effective_sizes().len(), 1);
-    assert_eq!(display.effective_sizes()[0].min, 0);
-    assert_eq!(display.effective_sizes()[0].max, 255);
+    assert_eq!(display.effective_sizes()[0].min.as_i64(), Some(0));
+    assert_eq!(display.effective_sizes()[0].max.as_i64(), Some(255));
 
     let row_status = require_object(&mib, "problemStrictRowStatus");
     assert!(row_status.enum_by_label("active").is_some());
@@ -352,19 +352,19 @@ fn strict_imported_metadata_preserved() {
     let mac = require_object(&mib, "problemStrictMacAddress");
     assert_eq!(mac.effective_display_hint(), "1x:");
     assert_eq!(mac.effective_sizes().len(), 1);
-    assert_eq!(mac.effective_sizes()[0].min, 6);
-    assert_eq!(mac.effective_sizes()[0].max, 6);
+    assert_eq!(mac.effective_sizes()[0].min.as_i64(), Some(6));
+    assert_eq!(mac.effective_sizes()[0].max.as_i64(), Some(6));
 
     let bridge = require_object(&mib, "problemStrictBridgeId");
     assert_eq!(bridge.effective_sizes().len(), 1);
-    assert_eq!(bridge.effective_sizes()[0].min, 8);
-    assert_eq!(bridge.effective_sizes()[0].max, 8);
+    assert_eq!(bridge.effective_sizes()[0].min.as_i64(), Some(8));
+    assert_eq!(bridge.effective_sizes()[0].max.as_i64(), Some(8));
 
     let timeout = require_object(&mib, "problemStrictTimeout");
     assert_eq!(timeout.effective_display_hint(), "d");
     assert_eq!(timeout.effective_ranges().len(), 1);
-    assert_eq!(timeout.effective_ranges()[0].min, 100);
-    assert_eq!(timeout.effective_ranges()[0].max, 1000);
+    assert_eq!(timeout.effective_ranges()[0].min.as_i64(), Some(100));
+    assert_eq!(timeout.effective_ranges()[0].max.as_i64(), Some(1000));
 }
 
 #[test]
