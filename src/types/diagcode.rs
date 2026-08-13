@@ -129,6 +129,7 @@ diag_codes! {
     resolver,   ImportNotFound,             "import-not-found",                      Error;
     resolver,   ImportModuleNotFound,       "import-module-not-found",               Error;
     resolver,   TypeUnknown,                "type-unknown",                          Error;
+    resolver,   TypeCycle,                  "type-cycle",                            Error;
     resolver,   OidOrphan,                  "oid-orphan",                            Error;
     resolver,   TrapNumberOverflow,         "trap-number-overflow",                  Error;
     resolver,   IndexUnresolved,            "index-unresolved",                      Error;

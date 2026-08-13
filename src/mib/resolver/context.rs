@@ -488,27 +488,42 @@ impl ResolverContext {
         referrer: impl AsRef<str>,
         symbol: impl Into<String>,
         module: impl Into<String>,
+        reason: UnresolvedReason,
         ir_mod: IrModuleId,
         span: Span,
     ) {
+        debug_assert!(matches!(
+            reason,
+            UnresolvedReason::TypeNotFound | UnresolvedReason::DependencyCycle
+        ));
         let symbol = symbol.into();
         let module = module.into();
         self.unresolved_types.push(UnresolvedTracking {
             kind: UnresolvedKind::Type,
             symbol: symbol.clone(),
             module,
-            reason: UnresolvedReason::TypeNotFound,
+            reason,
         });
-        self.emit_diagnostic(
-            DiagCode::TypeUnknown,
-            Some(ir_mod),
-            span,
-            format!(
-                "unresolved type: {:?} references unknown type {:?}",
-                referrer.as_ref(),
-                symbol
-            ),
-        );
+        let (code, message) = if reason == UnresolvedReason::DependencyCycle {
+            (
+                DiagCode::TypeCycle,
+                format!(
+                    "type cycle: {:?} references {:?} in a dependency cycle",
+                    referrer.as_ref(),
+                    symbol
+                ),
+            )
+        } else {
+            (
+                DiagCode::TypeUnknown,
+                format!(
+                    "unresolved type: {:?} references unknown type {:?}",
+                    referrer.as_ref(),
+                    symbol
+                ),
+            )
+        };
+        self.emit_diagnostic(code, Some(ir_mod), span, message);
     }
 
     /// Record an unresolved OID component and emit a diagnostic.

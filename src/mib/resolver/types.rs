@@ -12,7 +12,7 @@
 //! Types involved in dependency cycles are recorded as unresolved with
 //! appropriate diagnostics.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tracing::{Level, enabled, trace};
 
@@ -22,7 +22,7 @@ use crate::types::{BaseType, DiagCode, Language, Span};
 
 use super::super::typedef::TypeData;
 use super::super::types::*;
-use super::context::{IrModuleId, ResolverContext};
+use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 
 /// Phase 3: Build the type system.
 ///
@@ -236,14 +236,14 @@ fn range_value_to_i64(v: &ir::syntax::RangeValue) -> Option<i64> {
 
 /// Resolve type parents and inherit base types.
 fn resolve_type_bases(ctx: &mut ResolverContext) {
-    resolve_type_ref_parents_graph(ctx);
-    link_primitive_syntax_parents(ctx);
-    link_rfc1213_types_to_tcs(ctx);
+    let cycle_type_ids = resolve_type_ref_parents_graph(ctx);
+    link_primitive_syntax_parents(ctx, &cycle_type_ids);
+    link_rfc1213_types_to_tcs(ctx, &cycle_type_ids);
     inherit_base_types(ctx);
 }
 
 /// Build a dependency graph of types and resolve parent references in topo order.
-fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
+fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> {
     // Build graph: type_id -> parent type name reference.
     let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, Span)> = Vec::new();
 
@@ -333,7 +333,13 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
         }
     }
 
-    // Record unresolved diagnostics for cycle members (gomib parity).
+    // Record cycle members as unresolved and leave their parent links unset.
+    let cycle_type_ids: HashSet<TypeId> = result
+        .cycles
+        .iter()
+        .flatten()
+        .filter_map(|sym| graph_symbol_to_type_id.get(sym).copied())
+        .collect();
     let parent_ref_by_type: HashMap<TypeId, (IrModuleId, String, Span)> = type_to_parent_ref
         .iter()
         .map(|(tid, ir_id, ref_name, span)| (*tid, (*ir_id, ref_name.clone(), *span)))
@@ -348,7 +354,20 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             };
             let mod_name = ctx.modules[ir_id.index()].name.clone();
             let type_name = ctx.mib.raw().type_(tid).name().to_string();
-            ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
+            if ctx
+                .lookup_type_for_module(*ir_id, ref_name)
+                .is_some_and(|(_, used_import)| used_import)
+            {
+                ctx.mark_import_used(*ir_id, ref_name);
+            }
+            ctx.record_unresolved_type(
+                &type_name,
+                ref_name,
+                &mod_name,
+                UnresolvedReason::DependencyCycle,
+                *ir_id,
+                *span,
+            );
         }
     }
 
@@ -364,6 +383,9 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             Some(&tid) => tid,
             None => continue,
         };
+        if cycle_type_ids.contains(&type_id) {
+            continue;
+        }
 
         // Find the parent ref for this type.
         let parent_info = type_to_parent_ref
@@ -383,10 +405,19 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) {
             } else {
                 let type_name = ctx.mib.raw().type_(type_id).name().to_string();
                 let mod_name = ctx.modules[ir_id.index()].name.clone();
-                ctx.record_unresolved_type(&type_name, ref_name, &mod_name, *ir_id, *span);
+                ctx.record_unresolved_type(
+                    &type_name,
+                    ref_name,
+                    &mod_name,
+                    UnresolvedReason::TypeNotFound,
+                    *ir_id,
+                    *span,
+                );
             }
         }
     }
+
+    cycle_type_ids
 }
 
 /// Extract the type reference name from a type syntax (the name being referenced).
@@ -434,7 +465,7 @@ fn collect_syntax_base_type_refs(
 
 /// Link types with primitive syntax (OCTET STRING {...}, INTEGER {...}, BITS)
 /// to their corresponding primitive parent.
-fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
+fn link_primitive_syntax_parents(ctx: &mut ResolverContext, cycle_type_ids: &HashSet<TypeId>) {
     let smi_id = match ctx.snmpv2_smi {
         Some(id) => id,
         None => return,
@@ -457,7 +488,7 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
     for i in 0..type_count {
         let tid = TypeId::new(i as u32);
         let t = ctx.mib.raw().type_(tid);
-        if t.parent.is_some() {
+        if t.parent.is_some() || cycle_type_ids.contains(&tid) {
             continue;
         }
         let base = t.base;
@@ -473,7 +504,7 @@ fn link_primitive_syntax_parents(ctx: &mut ResolverContext) {
 }
 
 /// Link RFC1213-MIB's DisplayString and PhysAddress to SNMPv2-TC's versions.
-fn link_rfc1213_types_to_tcs(ctx: &mut ResolverContext) {
+fn link_rfc1213_types_to_tcs(ctx: &mut ResolverContext, cycle_type_ids: &HashSet<TypeId>) {
     let tc_id = match ctx.snmpv2_tc {
         Some(id) => id,
         None => return,
@@ -501,7 +532,9 @@ fn link_rfc1213_types_to_tcs(ctx: &mut ResolverContext) {
             .and_then(|m| m.get(*tc_name))
             .copied();
 
-        if let (Some(rfc_tid), Some(tc_tid)) = (rfc_type, tc_type) {
+        if let (Some(rfc_tid), Some(tc_tid)) = (rfc_type, tc_type)
+            && !cycle_type_ids.contains(&rfc_tid)
+        {
             ctx.mib.type_mut(rfc_tid).parent = Some(tc_tid);
         }
     }

@@ -308,6 +308,159 @@ fn type_parent_chain() {
 }
 
 #[test]
+fn type_cycles_leave_parents_unlinked_and_record_cycle_metadata() {
+    let source = memory_modules([(
+        "TYPE-CYCLE-MIB",
+        br#"TYPE-CYCLE-MIB DEFINITIONS ::= BEGIN
+TypeA ::= TypeB
+TypeB ::= TypeA
+SelfType ::= SelfType
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["TYPE-CYCLE-MIB"]),
+    )
+    .expect("load failed");
+
+    let module = mib.module("TYPE-CYCLE-MIB").expect("module not found");
+    for name in ["TypeA", "TypeB", "SelfType"] {
+        let typ = module.r#type(name).expect("type not found");
+        assert!(typ.parent().is_none(), "{name} retained a cycle parent");
+        assert_eq!(typ.effective_base(), BaseType::Unknown);
+    }
+
+    let unresolved: Vec<_> = mib
+        .unresolved()
+        .iter()
+        .filter(|unresolved| {
+            unresolved.kind == UnresolvedKind::Type && unresolved.module == "TYPE-CYCLE-MIB"
+        })
+        .collect();
+    assert_eq!(unresolved.len(), 3);
+    for (referrer, referenced) in [
+        ("TypeA", "TypeB"),
+        ("TypeB", "TypeA"),
+        ("SelfType", "SelfType"),
+    ] {
+        assert!(unresolved.iter().any(|unresolved| {
+            unresolved.symbol == referenced && unresolved.reason == "dependency_cycle"
+        }));
+        assert!(mib.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagCode::TypeCycle
+                && diagnostic.module.as_deref() == Some("TYPE-CYCLE-MIB")
+                && diagnostic.message.contains(referrer)
+                && diagnostic.message.contains(referenced)
+        }));
+    }
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::TypeUnknown
+            && diagnostic.module.as_deref() == Some("TYPE-CYCLE-MIB")
+    }));
+}
+
+#[test]
+fn cross_module_type_cycle_marks_imports_used_without_linking_parents() {
+    let source = memory_modules([
+        (
+            "TYPE-CYCLE-A-MIB",
+            &br#"TYPE-CYCLE-A-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    BType FROM TYPE-CYCLE-B-MIB;
+AType ::= BType
+END
+"#[..],
+        ),
+        (
+            "TYPE-CYCLE-B-MIB",
+            &br#"TYPE-CYCLE-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    AType FROM TYPE-CYCLE-A-MIB;
+BType ::= AType
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["TYPE-CYCLE-A-MIB", "TYPE-CYCLE-B-MIB"]),
+    )
+    .expect("load failed");
+
+    for (module_name, type_name, referenced_name) in [
+        ("TYPE-CYCLE-A-MIB", "AType", "BType"),
+        ("TYPE-CYCLE-B-MIB", "BType", "AType"),
+    ] {
+        let module = mib.module(module_name).expect("module not found");
+        let typ = module.r#type(type_name).expect("type not found");
+        assert!(
+            typ.parent().is_none(),
+            "{type_name} retained a cycle parent"
+        );
+        assert_eq!(typ.effective_base(), BaseType::Unknown);
+        assert!(
+            mib.raw()
+                .module(module.id())
+                .is_import_used(referenced_name),
+            "{module_name} import of {referenced_name} was not marked used"
+        );
+        assert!(mib.unresolved().iter().any(|unresolved| {
+            unresolved.kind == UnresolvedKind::Type
+                && unresolved.module == module_name
+                && unresolved.symbol == referenced_name
+                && unresolved.reason == "dependency_cycle"
+        }));
+        assert!(!mib.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagCode::ImportUnused
+                && diagnostic.module.as_deref() == Some(module_name)
+                && diagnostic.message.contains(referenced_name)
+        }));
+    }
+}
+
+#[test]
+fn type_cycle_diagnostic_respects_diagnostic_config() {
+    let source = memory_modules([(
+        "SILENT-TYPE-CYCLE-MIB",
+        br#"SILENT-TYPE-CYCLE-MIB DEFINITIONS ::= BEGIN
+TypeA ::= TypeB
+TypeB ::= TypeA
+END
+"#,
+    )]);
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::silent())
+            .modules(["SILENT-TYPE-CYCLE-MIB"]),
+    )
+    .expect("load failed");
+
+    assert!(mib.diagnostics().is_empty());
+    assert_eq!(
+        mib.unresolved()
+            .iter()
+            .filter(|unresolved| {
+                unresolved.kind == UnresolvedKind::Type && unresolved.reason == "dependency_cycle"
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn textual_convention_display_hint() {
     let r = load_corpus(&["IF-MIB"]);
     let mib = &r;

@@ -294,7 +294,14 @@ fn resolve_type_syntax_into(
                 }
             } else if !is_sequence_type_def(ctx, ir_mod, name) {
                 let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                ctx.record_unresolved_type(referrer, name, &mod_name, ir_mod, span);
+                ctx.record_unresolved_type(
+                    referrer,
+                    name,
+                    &mod_name,
+                    UnresolvedReason::TypeNotFound,
+                    ir_mod,
+                    span,
+                );
             }
         }
         ir::TypeSyntax::IntegerEnum {
@@ -310,7 +317,14 @@ fn resolve_type_syntax_into(
                     }
                 } else {
                     let mod_name = ctx.modules[ir_mod.index()].name.clone();
-                    ctx.record_unresolved_type(referrer, base, &mod_name, ir_mod, span);
+                    ctx.record_unresolved_type(
+                        referrer,
+                        base,
+                        &mod_name,
+                        UnresolvedReason::TypeNotFound,
+                        ir_mod,
+                        span,
+                    );
                 }
             } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
                 sc.type_id = Some(type_id);
