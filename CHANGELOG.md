@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exclude entities without object types from CLI `find --type` results
 - Reject CLI lint severity numbers outside the supported `0..=6` range
 - Gate the JSON export example and its embedded documentation on the `serde` feature
 - Resolve definition names independently of preferred OID-tree attachments when OIDs are shared

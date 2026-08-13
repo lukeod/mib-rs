@@ -175,7 +175,7 @@ enum Command {
         /// Filter by kind
         #[arg(long)]
         kind: Option<CliKind>,
-        /// Filter by base type name (case-insensitive)
+        /// Filter objects by base type name (case-insensitive)
         #[arg(long = "type")]
         base_type: Option<String>,
         /// Print only count
@@ -2371,7 +2371,7 @@ fn cmd_find(
     }
 
     for notif in mib.notifications() {
-        if !glob_match(pattern, notif.name()) {
+        if base_lower.is_some() || !glob_match(pattern, notif.name()) {
             continue;
         }
         if let Some(node) = notif.node() {
@@ -2394,7 +2394,7 @@ fn cmd_find(
     }
 
     for grp in mib.groups() {
-        if !glob_match(pattern, grp.name()) {
+        if base_lower.is_some() || !glob_match(pattern, grp.name()) {
             continue;
         }
         if let Some(node) = grp.node() {
@@ -2417,7 +2417,7 @@ fn cmd_find(
     }
 
     for comp in mib.compliances() {
-        if !glob_match(pattern, comp.name()) {
+        if base_lower.is_some() || !glob_match(pattern, comp.name()) {
             continue;
         }
         if let Some(node) = comp.node() {
@@ -2440,7 +2440,7 @@ fn cmd_find(
     }
 
     for cap in mib.capabilities() {
-        if !glob_match(pattern, cap.name()) {
+        if base_lower.is_some() || !glob_match(pattern, cap.name()) {
             continue;
         }
         if let Some(node) = cap.node() {
@@ -2465,7 +2465,7 @@ fn cmd_find(
     // Walk the OID tree for nodes not covered above (module-identity, object-identity, plain nodes)
     for node in mib.root_node().subtree() {
         let name = node.name();
-        if name.is_empty() || !glob_match(pattern, name) {
+        if base_lower.is_some() || name.is_empty() || !glob_match(pattern, name) {
             continue;
         }
         let node_id = node.id();

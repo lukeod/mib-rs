@@ -172,6 +172,7 @@ mib-rs find "*Entry" --kind table       # filter by kind
 mib-rs find "*Group" --kind group       # kinds: node, scalar, table, row, column,
                                         #   notification, group, compliance, capability,
                                         #   module-identity, object-identity
+mib-rs find "if*" --type Integer32      # base-type filter (objects only)
 mib-rs find "if*" --count               # print match count only
 mib-rs find "if*" -m IF-MIB            # only load specific modules
 
