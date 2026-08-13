@@ -594,6 +594,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                     self.state = LexerState::Normal;
                     return self.token(TokenKind::Semicolon, start);
                 }
+                _ if self.is_comment_start() => {
+                    self.skip_comment_inline();
+                }
                 _ => {
                     self.advance();
                 }
@@ -1119,6 +1122,26 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn exports_body_ignores_comment_semicolons() {
+        for input in [
+            "EXPORTS foo -- ignored;\nbar; next",
+            "EXPORTS foo -- ignored; -- bar; next",
+        ] {
+            let tokens = tokenize(input);
+            assert_eq!(
+                kinds(&tokens),
+                vec![
+                    TokenKind::KwExports,
+                    TokenKind::Semicolon,
+                    TokenKind::LowercaseIdent,
+                    TokenKind::Eof,
+                ]
+            );
+            assert_eq!(tokens[1].span.start.0 as usize, input.rfind(';').unwrap());
+        }
     }
 
     #[test]

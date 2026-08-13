@@ -2539,6 +2539,25 @@ END
     }
 
     #[test]
+    fn exports_comment_semicolons_do_not_expose_the_remaining_body() {
+        for exports_body in ["foo -- ignored;\nbar;", "foo -- ignored; -- bar;"] {
+            let input = format!(
+                "TEST-MIB DEFINITIONS ::= BEGIN\nEXPORTS {exports_body}\ntestObj OBJECT IDENTIFIER ::= {{ iso 3 }}\nEND\n"
+            );
+
+            let modules = parse_str(&input);
+
+            assert_eq!(modules.len(), 1);
+            assert!(modules[0].diagnostics.is_empty());
+            assert_eq!(modules[0].body.len(), 1);
+            assert!(matches!(
+                &modules[0].body[0],
+                Definition::ValueAssignment(d) if d.name.name == "testObj"
+            ));
+        }
+    }
+
+    #[test]
     fn value_assignment() {
         let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
 testObj OBJECT IDENTIFIER ::= { iso 3 }
