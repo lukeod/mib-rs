@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tracing::{debug, debug_span, info, info_span, warn};
 
@@ -225,6 +225,87 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
     Ok(mib)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Barrier, Condvar, mpsc};
+    use std::time::Duration;
+
+    fn cache_key(index: usize) -> FileCacheKey {
+        (0, format!("TEST-{index}"), index, PathBuf::from("<test>"))
+    }
+
+    #[test]
+    fn cache_initializes_distinct_entries_concurrently() {
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let mut handles = Vec::new();
+
+        for index in 0..2 {
+            let cache = Arc::clone(&cache);
+            let gate = Arc::clone(&gate);
+            let started_tx = started_tx.clone();
+            handles.push(std::thread::spawn(move || {
+                cached_modules(&cache, cache_key(index), || {
+                    started_tx.send(index).unwrap();
+                    let (released, wake) = &*gate;
+                    let mut released = released.lock().unwrap();
+                    while !*released {
+                        released = wake.wait(released).unwrap();
+                    }
+                    Vec::new()
+                })
+            }));
+        }
+        drop(started_tx);
+
+        let first_started = started_rx.recv_timeout(Duration::from_secs(5));
+        let second_started = started_rx.recv_timeout(Duration::from_secs(5));
+
+        let (released, wake) = &*gate;
+        *released.lock().unwrap() = true;
+        wake.notify_all();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert!(first_started.is_ok(), "no cache initializer started");
+        assert!(
+            second_started.is_ok(),
+            "distinct cache entry was blocked by another entry's initializer"
+        );
+    }
+
+    #[test]
+    fn cache_initializes_shared_entry_once() {
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let start = Arc::new(Barrier::new(3));
+        let initialization_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for _ in 0..2 {
+            let cache = Arc::clone(&cache);
+            let start = Arc::clone(&start);
+            let initialization_count = Arc::clone(&initialization_count);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                cached_modules(&cache, cache_key(0), || {
+                    initialization_count.fetch_add(1, Ordering::Relaxed);
+                    Vec::new()
+                })
+            }));
+        }
+        start.wait();
+
+        let first = handles.remove(0).join().unwrap();
+        let second = handles.remove(0).join().unwrap();
+        assert_eq!(initialization_count.load(Ordering::Relaxed), 1);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+}
+
 impl Loader {
     /// Execute the full load pipeline and return the resolved [`Mib`].
     ///
@@ -243,7 +324,24 @@ impl Loader {
 }
 
 type FileCacheKey = (usize, String, usize, PathBuf);
-type SharedModuleCache = Mutex<HashMap<FileCacheKey, Arc<Vec<ir::Module>>>>;
+type ModuleCacheEntry = Arc<OnceLock<Arc<Vec<ir::Module>>>>;
+type SharedModuleCache = Mutex<HashMap<FileCacheKey, ModuleCacheEntry>>;
+
+fn cached_modules(
+    cache: &SharedModuleCache,
+    key: FileCacheKey,
+    decode: impl FnOnce() -> Vec<ir::Module>,
+) -> Arc<Vec<ir::Module>> {
+    let entry = {
+        let mut cache = cache.lock().unwrap();
+        cache
+            .entry(key)
+            .or_insert_with(|| Arc::new(OnceLock::new()))
+            .clone()
+    };
+
+    entry.get_or_init(|| Arc::new(decode())).clone()
+}
 
 #[derive(Debug)]
 struct ModuleCandidate {
@@ -340,24 +438,16 @@ fn load_all_modules(
                                     break 'sources;
                                 }
                             };
-                            let cached = {
-                                let mut cache = path_cache.lock().unwrap();
-                                cache
-                                    .entry((
-                                        candidate.source_index,
-                                        name.clone(),
-                                        candidate_index,
-                                        result.path.clone(),
-                                    ))
-                                    .or_insert_with(|| {
-                                        Arc::new(decode_modules(
-                                            &result.content,
-                                            &result.path,
-                                            diag_config,
-                                        ))
-                                    })
-                                    .clone()
-                            };
+                            let cached = cached_modules(
+                                &path_cache,
+                                (
+                                    candidate.source_index,
+                                    name.clone(),
+                                    candidate_index,
+                                    result.path.clone(),
+                                ),
+                                || decode_modules(&result.content, &result.path, diag_config),
+                            );
 
                             // A source advertisement is only a candidate until
                             // its decoded content contains the requested module.
