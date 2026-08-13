@@ -19,6 +19,38 @@ enum CliReportingLevel {
     Verbose,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliSeverity {
+    #[value(name = "0")]
+    Fatal,
+    #[value(name = "1")]
+    Severe,
+    #[value(name = "2")]
+    Error,
+    #[value(name = "3")]
+    Minor,
+    #[value(name = "4")]
+    Style,
+    #[value(name = "5")]
+    Warning,
+    #[value(name = "6")]
+    Info,
+}
+
+impl From<CliSeverity> for Severity {
+    fn from(severity: CliSeverity) -> Self {
+        match severity {
+            CliSeverity::Fatal => Severity::Fatal,
+            CliSeverity::Severe => Severity::Severe,
+            CliSeverity::Error => Severity::Error,
+            CliSeverity::Minor => Severity::Minor,
+            CliSeverity::Style => Severity::Style,
+            CliSeverity::Warning => Severity::Warning,
+            CliSeverity::Info => Severity::Info,
+        }
+    }
+}
+
 impl From<CliReportingLevel> for ReportingLevel {
     fn from(level: CliReportingLevel) -> Self {
         match level {
@@ -107,10 +139,10 @@ enum Command {
         modules: Vec<String>,
         /// Report diagnostics up to this severity level (0=fatal..6=info, default: 3)
         #[arg(long, default_value = "3")]
-        level: u8,
+        level: CliSeverity,
         /// Exit 1 if any diagnostic at this severity or below (0=fatal..6=info, default: 2)
         #[arg(long, default_value = "2")]
-        fail_on: u8,
+        fail_on: CliSeverity,
         /// Ignore diagnostic codes matching pattern (glob, repeatable)
         #[arg(long)]
         ignore: Vec<String>,
@@ -1787,8 +1819,8 @@ struct LintResult {
 fn cmd_lint(
     paths: &[String],
     modules: Vec<String>,
-    level: u8,
-    fail_on: u8,
+    level: CliSeverity,
+    fail_on: CliSeverity,
     ignore: Vec<String>,
     only: Vec<String>,
     format: LintFormat,
@@ -1815,8 +1847,8 @@ fn cmd_lint(
     let diags = mib.diagnostics();
 
     // Filter diagnostics
-    let level_sev = severity_from_num(level);
-    let fail_sev = severity_from_num(fail_on);
+    let level_sev = Severity::from(level);
+    let fail_sev = Severity::from(fail_on);
 
     let mut result = LintResult {
         diagnostics: Vec::new(),
@@ -1831,9 +1863,7 @@ fn cmd_lint(
 
     for d in diags {
         // Filter by level
-        if let Some(max_sev) = level_sev
-            && d.severity > max_sev
-        {
+        if d.severity > level_sev {
             continue;
         }
 
@@ -1863,9 +1893,7 @@ fn cmd_lint(
         result.summary.total += 1;
 
         // Check fail threshold
-        if let Some(fail_threshold) = fail_sev
-            && d.severity <= fail_threshold
-        {
+        if d.severity <= fail_sev {
             result.exit_code = 1;
         }
 
@@ -1892,19 +1920,6 @@ fn cmd_lint(
     }
 
     result.exit_code
-}
-
-fn severity_from_num(n: u8) -> Option<Severity> {
-    match n {
-        0 => Some(Severity::Fatal),
-        1 => Some(Severity::Severe),
-        2 => Some(Severity::Error),
-        3 => Some(Severity::Minor),
-        4 => Some(Severity::Style),
-        5 => Some(Severity::Warning),
-        6 => Some(Severity::Info),
-        _ => None,
-    }
 }
 
 const SEVERITY_ORDER: &[&str] = &[
@@ -2698,11 +2713,41 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use mib_rs::load::{Loader, load};
     use mib_rs::source::memory_modules;
     use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
 
-    use super::{format_object_constraint, glob_match};
+    use super::{Cli, format_object_constraint, glob_match};
+
+    #[test]
+    fn lint_level_requires_supported_severity_number() {
+        assert_lint_severity_range("--level");
+    }
+
+    #[test]
+    fn lint_fail_on_requires_supported_severity_number() {
+        assert_lint_severity_range("--fail-on");
+    }
+
+    fn assert_lint_severity_range(flag: &str) {
+        for value in ["-1", "7"] {
+            let argument = format!("{flag}={value}");
+            let error = match Cli::try_parse_from(["mib-rs", "lint", &argument]) {
+                Ok(_) => panic!("{argument} should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        }
+
+        for value in ["0", "6"] {
+            let argument = format!("{flag}={value}");
+            assert!(
+                Cli::try_parse_from(["mib-rs", "lint", &argument]).is_ok(),
+                "{argument} should be accepted"
+            );
+        }
+    }
 
     #[test]
     fn node_detail_formats_empty_size_intersection() {
