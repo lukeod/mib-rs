@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Stop enabling the `cli` feature by default; install the binary with `cargo install mib-rs --features cli`
+
 ## [0.9.0] - 2026-08-13
 
 ### Breaking Changes

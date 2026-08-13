@@ -50,6 +50,18 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+  feature-sets:
+    name: Feature Sets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test default features
+        run: cargo test
+      - name: Test without default features
+        run: cargo test --no-default-features
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
