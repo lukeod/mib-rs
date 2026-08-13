@@ -6,7 +6,7 @@ use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Oid, UnresolvedKind};
 use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
-    Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
+    Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness, Severity,
 };
 
 use common::{corpus_dir, problems_dir};
@@ -360,6 +360,178 @@ fn notification_resolved() {
         .expect("linkDown not found");
     let notif = mib.raw().notification(notif_id);
     assert_eq!(notif.name(), "linkDown");
+}
+
+#[test]
+fn import_forwarding_requires_an_ultimate_definer() {
+    let source = memory_modules([
+        (
+            "FORWARD-IMPORTER-MIB",
+            &br#"FORWARD-IMPORTER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    missing FROM FORWARD-RELAY-MIB;
+END
+"#[..],
+        ),
+        (
+            "FORWARD-RELAY-MIB",
+            &br#"FORWARD-RELAY-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    missing FROM FORWARD-DEAD-END-MIB;
+END
+"#[..],
+        ),
+        (
+            "FORWARD-DEAD-END-MIB",
+            &br#"FORWARD-DEAD-END-MIB DEFINITIONS ::= BEGIN
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["FORWARD-IMPORTER-MIB"]),
+    )
+    .expect("load failed");
+
+    let importer = mib
+        .module("FORWARD-IMPORTER-MIB")
+        .expect("importer module not found");
+    assert!(importer.import_source("missing").is_none());
+    assert!(mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::Import
+            && unresolved.module == "FORWARD-IMPORTER-MIB"
+            && unresolved.symbol == "missing"
+            && unresolved.reason == "symbol_not_exported"
+    }));
+    assert!(mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ImportNotFound
+            && diagnostic.module.as_deref() == Some("FORWARD-IMPORTER-MIB")
+            && diagnostic.message.contains("FORWARD-RELAY-MIB")
+    }));
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ImportUnused
+            && diagnostic.module.as_deref() == Some("FORWARD-IMPORTER-MIB")
+    }));
+}
+
+#[test]
+fn cyclic_import_forwarding_is_rejected() {
+    let source = memory_modules([
+        (
+            "CYCLE-IMPORTER-MIB",
+            &br#"CYCLE-IMPORTER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    missing FROM CYCLE-B-MIB;
+END
+"#[..],
+        ),
+        (
+            "CYCLE-B-MIB",
+            &br#"CYCLE-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    missing FROM CYCLE-C-MIB;
+END
+"#[..],
+        ),
+        (
+            "CYCLE-C-MIB",
+            &br#"CYCLE-C-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    missing FROM CYCLE-B-MIB;
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Strict)
+            .diagnostic_config(diagnostics)
+            .modules(["CYCLE-IMPORTER-MIB"]),
+    )
+    .expect("load failed");
+
+    let importer = mib
+        .module("CYCLE-IMPORTER-MIB")
+        .expect("importer module not found");
+    assert!(importer.import_source("missing").is_none());
+    assert!(mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::Import
+            && unresolved.module == "CYCLE-IMPORTER-MIB"
+            && unresolved.symbol == "missing"
+            && unresolved.reason == "symbol_not_exported"
+    }));
+}
+
+#[test]
+fn multi_hop_import_forwarding_records_the_definer() {
+    let source = memory_modules([
+        (
+            "MULTI-IMPORTER-MIB",
+            &br#"MULTI-IMPORTER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    ForwardedType FROM MULTI-B-MIB;
+END
+"#[..],
+        ),
+        (
+            "MULTI-B-MIB",
+            &br#"MULTI-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    ForwardedType FROM MULTI-C-MIB;
+END
+"#[..],
+        ),
+        (
+            "MULTI-C-MIB",
+            &br#"MULTI-C-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    ForwardedType FROM MULTI-DEFINER-MIB;
+END
+"#[..],
+        ),
+        (
+            "MULTI-DEFINER-MIB",
+            &br#"MULTI-DEFINER-MIB DEFINITIONS ::= BEGIN
+ForwardedType ::= OCTET STRING
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Strict)
+            .diagnostic_config(diagnostics)
+            .modules(["MULTI-IMPORTER-MIB"]),
+    )
+    .expect("load failed");
+
+    let importer = mib
+        .module("MULTI-IMPORTER-MIB")
+        .expect("importer module not found");
+    assert_eq!(
+        importer
+            .import_source("ForwardedType")
+            .expect("forwarded source not found")
+            .name(),
+        "MULTI-DEFINER-MIB"
+    );
+    assert!(!mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::Import
+            && unresolved.module == "MULTI-IMPORTER-MIB"
+            && unresolved.symbol == "ForwardedType"
+    }));
 }
 
 #[test]

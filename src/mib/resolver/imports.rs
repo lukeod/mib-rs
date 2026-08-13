@@ -328,40 +328,18 @@ fn try_import_forwarding(
     symbols: &[&(String, Span)],
 ) -> bool {
     for &cand in candidates {
-        let mut all_resolved = true;
         let mut forwarded: Vec<(String, IrModuleId)> = Vec::new();
 
         for (name, _) in symbols {
-            // Check if the candidate defines it directly.
-            if ctx
-                .module_def_names
-                .get(&cand)
-                .is_some_and(|dn| dn.contains(name.as_str()))
-            {
-                forwarded.push((name.to_string(), cand));
-                continue;
-            }
-            // Check if the candidate re-exports it via its own IMPORTS declarations.
-            let source_mod = candidate_import_source_module(ctx, cand, name);
-            if let Some(source_name) = source_mod {
-                let source_candidates = ctx
-                    .module_index
-                    .get(source_name)
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(fwd) = best_candidate(ctx, &source_candidates) {
-                    forwarded.push((name.to_string(), fwd));
-                } else {
-                    all_resolved = false;
-                    break;
-                }
-            } else {
-                all_resolved = false;
+            let mut visited = HashSet::new();
+            let Some(source) = resolve_imported_symbol_from_module(ctx, cand, name, &mut visited)
+            else {
                 break;
-            }
+            };
+            forwarded.push((name.to_string(), source));
         }
 
-        if all_resolved {
+        if forwarded.len() == symbols.len() {
             for (name, target) in forwarded {
                 ctx.module_imports
                     .entry(ir_mod)
@@ -386,16 +364,51 @@ fn candidate_import_source_module<'a>(
         .map(|imp| imp.module.as_str())
 }
 
-fn best_candidate(ctx: &ResolverContext, candidates: &[IrModuleId]) -> Option<IrModuleId> {
-    // Pick the module with the newest LAST-UPDATED timestamp.
-    // Falls back to the first candidate when no timestamps are present.
-    let mut scored: Vec<(IrModuleId, String)> = candidates
+fn resolve_imported_symbol_from_module(
+    ctx: &ResolverContext,
+    candidate: IrModuleId,
+    symbol: &str,
+    visited: &mut HashSet<IrModuleId>,
+) -> Option<IrModuleId> {
+    if ctx
+        .module_def_names
+        .get(&candidate)
+        .is_some_and(|defs| defs.contains(symbol))
+    {
+        return Some(candidate);
+    }
+    if !visited.insert(candidate) {
+        return None;
+    }
+
+    let result = candidate_import_source_module(ctx, candidate, symbol).and_then(|source_name| {
+        let source_candidates = ctx
+            .module_index
+            .get(source_name)
+            .cloned()
+            .unwrap_or_default();
+        resolve_imported_symbol_with_visited(ctx, &source_candidates, symbol, visited)
+    });
+    visited.remove(&candidate);
+    result
+}
+
+fn resolve_imported_symbol_with_visited(
+    ctx: &ResolverContext,
+    candidates: &[IrModuleId],
+    symbol: &str,
+    visited: &mut HashSet<IrModuleId>,
+) -> Option<IrModuleId> {
+    let mut ordered: Vec<(IrModuleId, String)> = candidates
         .iter()
         .copied()
         .map(|id| (id, normalize_timestamp(&ctx.extract_last_updated(id))))
         .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
-    scored.first().map(|s| s.0)
+    ordered.sort_by(|a, b| b.1.cmp(&a.1));
+
+    ordered.into_iter().find_map(|(candidate, _)| {
+        resolve_imported_symbol_from_module(ctx, candidate, symbol, visited)
+    })
 }
 
 /// Resolve symbols individually against candidates.
@@ -431,24 +444,12 @@ fn resolve_imported_symbol(
     candidates: &[IrModuleId],
     symbol: &str,
 ) -> Option<IrModuleId> {
-    for &cand in candidates {
-        if ctx
-            .module_def_names
-            .get(&cand)
-            .is_some_and(|defs| defs.contains(symbol))
+    for &candidate in candidates {
+        let mut visited = HashSet::new();
+        if let Some(source) =
+            resolve_imported_symbol_from_module(ctx, candidate, symbol, &mut visited)
         {
-            return Some(cand);
-        }
-
-        if let Some(source_name) = candidate_import_source_module(ctx, cand, symbol) {
-            let source_candidates = ctx
-                .module_index
-                .get(source_name)
-                .cloned()
-                .unwrap_or_default();
-            if let Some(source) = best_candidate(ctx, &source_candidates) {
-                return Some(source);
-            }
+            return Some(source);
         }
     }
 
@@ -461,28 +462,56 @@ fn resolve_imported_symbol(
 /// itself imports X from C. This pass rewrites the mapping so A's import
 /// of X points directly at C, eliminating the intermediate hop.
 pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
-    let mod_ids: Vec<IrModuleId> = ctx.module_imports.keys().copied().collect();
-    for mod_id in mod_ids {
-        let symbols: Vec<String> = ctx
-            .module_imports
-            .get(&mod_id)
-            .map(|m| m.keys().cloned().collect())
-            .unwrap_or_default();
+    let mut resolutions = Vec::new();
+    for (&mod_id, imports) in &ctx.module_imports {
+        for (symbol, &start) in imports {
+            resolutions.push((
+                mod_id,
+                symbol.clone(),
+                start,
+                resolve_ultimate_definer(ctx, start, symbol),
+            ));
+        }
+    }
 
-        for symbol in symbols {
-            let start = match ctx.module_imports.get(&mod_id).and_then(|m| m.get(&symbol)) {
-                Some(&s) => s,
-                None => continue,
-            };
-
-            if let Some(definer) = resolve_ultimate_definer(ctx, start, &symbol)
-                && definer != start
+    for (mod_id, symbol, start, definer) in resolutions {
+        if let Some(definer) = definer {
+            if definer != start
                 && let Some(imports) = ctx.module_imports.get_mut(&mod_id)
             {
                 imports.insert(symbol, definer);
             }
+            continue;
         }
+
+        if let Some(imports) = ctx.module_imports.get_mut(&mod_id) {
+            imports.remove(&symbol);
+        }
+        let (from_module, span) = original_import(ctx, mod_id, &symbol, start);
+        let importing_module = ctx.modules[mod_id.index()].name.clone();
+        ctx.record_unresolved_import(
+            symbol,
+            importing_module,
+            from_module,
+            UnresolvedReason::SymbolNotExported,
+            mod_id,
+            span,
+        );
     }
+}
+
+fn original_import(
+    ctx: &ResolverContext,
+    importing_module: IrModuleId,
+    symbol: &str,
+    fallback: IrModuleId,
+) -> (String, Span) {
+    ctx.modules[importing_module.index()]
+        .imports
+        .iter()
+        .find(|imp| imp.symbol == symbol)
+        .map(|imp| (imp.module.clone(), imp.span))
+        .unwrap_or_else(|| (ctx.modules[fallback.index()].name.clone(), Span::ZERO))
 }
 
 fn resolve_ultimate_definer(

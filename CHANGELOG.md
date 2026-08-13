@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ignore `END` keywords inside quoted strings when skipping MACRO bodies
 - Prevent malformed non-ASCII timestamps from panicking module preference resolution
 - Leave generic TRAP-TYPE definitions unresolved when incrementing their number would overflow
+- Reject import forwarding chains that do not end at a module defining the symbol
 
 ## [0.8.0] - 2026-03-19
 
