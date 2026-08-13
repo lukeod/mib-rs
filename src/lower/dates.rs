@@ -1,9 +1,12 @@
 //! ExtUTCTime date validation for MODULE-IDENTITY dates and revisions.
 //!
 //! Validates the `LAST-UPDATED` and `REVISION` date strings against the
-//! ExtUTCTime format defined in RFC 2578. Checks for correct length,
-//! character validity, calendar validity, chronological ordering, and
-//! emits style warnings for dates outside the reasonable SMI range.
+//! ExtUTCTime format defined in RFC 2578. For vendor compatibility, 2-digit
+//! years use a custom `00..69` → `2000..2069`, `70..99` → `1970..1999`
+//! pivot. This is not conventional ASN.1 UTCTime interpretation or strict RFC
+//! behavior; every 2-digit year still emits a diagnostic. Validation also
+//! checks character validity, calendar validity, and chronological ordering,
+//! and emits style warnings for dates outside the reasonable SMI range.
 
 use crate::types::{DiagCode, Span};
 
@@ -76,6 +79,11 @@ struct DateComponents {
 
 /// Validates a single SMI date string (ExtUTCTime format).
 /// Format: YYMMDDHHMMZ (11 chars) or YYYYMMDDHHMMZ (13 chars).
+///
+/// For vendor compatibility, 2-digit years use the custom pivot `00..69` →
+/// `2000..2069` and `70..99` → `1970..1999`. This permissive interpretation is
+/// not conventional ASN.1 UTCTime behavior and does not remove the
+/// [`DiagCode::DateYear2Digits`] diagnostic.
 fn check_date(
     ctx: &mut LoweringContext,
     date: &str,
@@ -337,17 +345,24 @@ mod tests {
 
     #[test]
     fn two_digit_year_boundary() {
-        let config = DiagnosticConfig::default();
+        let config = DiagnosticConfig::verbose();
 
-        // "69" should map to 2069
-        let mut ctx = make_ctx(&config);
-        let dc = check_date(&mut ctx, "6901010000Z", Span::default(), far_future());
-        assert_eq!(dc.unwrap().year, 2069);
+        for (date, expected_year) in [("6901010000Z", 2069), ("7001010000Z", 1970)] {
+            let mut ctx = make_ctx(&config);
+            let dc = check_date(&mut ctx, date, Span::default(), far_future());
+            assert_eq!(dc.unwrap().year, expected_year);
 
-        // "70" should map to 1970
-        let mut ctx = make_ctx(&config);
-        let dc = check_date(&mut ctx, "7001010000Z", Span::default(), far_future());
-        assert_eq!(dc.unwrap().year, 1970);
+            let diag = ctx
+                .diagnostics
+                .iter()
+                .find(|d| d.code == DiagCode::DateYear2Digits)
+                .expect("expected DateYear2Digits diagnostic");
+            assert!(
+                diag.message.contains(&expected_year.to_string()),
+                "expected {expected_year} in message: {}",
+                diag.message
+            );
+        }
     }
 
     #[test]
