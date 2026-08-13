@@ -505,6 +505,20 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         let mut body: Vec<Definition> = Vec::new();
         while !self.check(TokenKind::KwEnd) && !self.is_eof() {
+            // The lexer consumes each EXPORTS body, leaving the keyword and
+            // optional semicolon. Skip consecutive clauses here so their count
+            // does not add recursion depth to definition parsing.
+            while self.check(TokenKind::KwExports) {
+                self.advance();
+                if self.check(TokenKind::Semicolon) {
+                    self.advance();
+                }
+            }
+
+            if self.check(TokenKind::KwEnd) || self.is_eof() {
+                break;
+            }
+
             let pos_before = self.current_span().start;
             trace!(
                 target: "mib_rs::parser",
@@ -637,15 +651,6 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
         let first = self.peek().kind;
         let second = self.peek_nth(1).kind;
-
-        // EXPORTS only checks first token (body already consumed by lexer)
-        if first == TokenKind::KwExports {
-            self.advance();
-            if self.check(TokenKind::Semicolon) {
-                self.advance();
-            }
-            return self.parse_definition();
-        }
 
         match second {
             // Value assignment: name OBJECT IDENTIFIER ::=
@@ -2506,6 +2511,27 @@ END
         assert_eq!(modules[0].imports[1].symbols.len(), 1);
         assert_eq!(modules[0].imports[1].symbols[0].name, "DisplayString");
         assert_eq!(modules[0].imports[1].from_module.name, "SNMPv2-TC");
+    }
+
+    #[test]
+    fn many_exports_clauses_are_skipped_iteratively() {
+        const EXPORTS_COUNT: usize = 100_000;
+
+        let mut input = String::from("TEST-MIB DEFINITIONS ::= BEGIN\n");
+        for _ in 0..EXPORTS_COUNT {
+            input.push_str("EXPORTS;\n");
+        }
+        input.push_str("testObj OBJECT IDENTIFIER ::= { iso 3 }\nEND\n");
+
+        let modules = parse_str(&input);
+
+        assert_eq!(modules.len(), 1);
+        assert!(modules[0].diagnostics.is_empty());
+        assert_eq!(modules[0].body.len(), 1);
+        assert!(matches!(
+            &modules[0].body[0],
+            Definition::ValueAssignment(d) if d.name.name == "testObj"
+        ));
     }
 
     #[test]
