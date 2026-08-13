@@ -19,7 +19,8 @@ use crate::source::{self, Source};
 /// Discover MIB directories from net-snmp and libsmi configuration.
 ///
 /// Reads config files and environment variables, deduplicates paths, and
-/// filters to directories that actually exist on disk.
+/// filters to directories that actually exist on disk. Literal `$HOME`
+/// occurrences in net-snmp paths are expanded using the user's home directory.
 ///
 /// Checked sources (in order):
 /// - net-snmp defaults (`~/.snmp/mibs`, `/usr/share/snmp/mibs`, etc.)
@@ -65,17 +66,18 @@ enum PathOp {
     Prepend,
 }
 
-type ConfigLineParser = fn(&str) -> Option<(PathOp, Vec<String>)>;
-
 fn discover_netsnmp_paths() -> Vec<String> {
     let mut paths = netsnmp_defaults();
+    let home = HOME_DIR.as_deref();
     for cf in netsnmp_config_files() {
-        paths = apply_config_file(&cf, paths, parse_netsnmp_line);
+        paths = apply_config_file(&cf, paths, |line| {
+            parse_netsnmp_line(line).map(|(op, dirs)| (op, expand_netsnmp_home(dirs, home)))
+        });
     }
     if let Ok(v) = std::env::var("MIBDIRS")
         && !v.is_empty()
     {
-        paths = apply_netsnmp_env(&v, paths);
+        paths = apply_netsnmp_env(&v, paths, home);
     }
     paths
 }
@@ -206,14 +208,30 @@ fn parse_colon_semantic(value: &str) -> (PathOp, Vec<String>) {
     }
 }
 
-fn apply_netsnmp_env(value: &str, current: Vec<String>) -> Vec<String> {
-    if let Some(rest) = value.strip_prefix('+') {
-        apply_op(PathOp::Append, split_paths(rest), current)
+fn apply_netsnmp_env(value: &str, current: Vec<String>, home: Option<&Path>) -> Vec<String> {
+    let (op, dirs) = if let Some(rest) = value.strip_prefix('+') {
+        (PathOp::Append, split_paths(rest))
     } else if let Some(rest) = value.strip_prefix('-') {
-        apply_op(PathOp::Prepend, split_paths(rest), current)
+        (PathOp::Prepend, split_paths(rest))
     } else {
-        split_paths(value)
-    }
+        (PathOp::Replace, split_paths(value))
+    };
+    apply_op(op, expand_netsnmp_home(dirs, home), current)
+}
+
+/// Replace every literal `$HOME` occurrence as net-snmp does.
+///
+/// This intentionally does not perform shell, tilde, or general environment
+/// variable expansion.
+fn expand_netsnmp_home(paths: Vec<String>, home: Option<&Path>) -> Vec<String> {
+    let Some(home) = home else {
+        return paths;
+    };
+    let home = home.to_string_lossy();
+    paths
+        .into_iter()
+        .map(|path| path.replace("$HOME", home.as_ref()))
+        .collect()
 }
 
 fn apply_libsmi_env(value: &str, current: Vec<String>) -> Vec<String> {
@@ -232,11 +250,10 @@ fn apply_op(op: PathOp, dirs: Vec<String>, mut current: Vec<String>) -> Vec<Stri
     }
 }
 
-fn apply_config_file(
-    path: &Path,
-    mut current: Vec<String>,
-    parse_line: ConfigLineParser,
-) -> Vec<String> {
+fn apply_config_file<F>(path: &Path, mut current: Vec<String>, mut parse_line: F) -> Vec<String>
+where
+    F: FnMut(&str) -> Option<(PathOp, Vec<String>)>,
+{
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return current,
@@ -323,6 +340,76 @@ mod tests {
     #[test]
     fn parse_netsnmp_comment_ignored() {
         assert!(parse_netsnmp_line("# comment").is_none());
+    }
+
+    #[test]
+    fn netsnmp_home_expansion_is_literal_only() {
+        let result = expand_netsnmp_home(
+            vec![
+                "$HOME/mibs/$HOME".into(),
+                "~/mibs".into(),
+                "$USER/mibs".into(),
+                "${HOME}/mibs".into(),
+            ],
+            Some(Path::new("/home/test")),
+        );
+        assert_eq!(
+            result,
+            vec![
+                "/home/test/mibs//home/test",
+                "~/mibs",
+                "$USER/mibs",
+                "${HOME}/mibs",
+            ]
+        );
+    }
+
+    #[test]
+    fn netsnmp_env_expands_home_before_dedup_and_filter() {
+        let temp =
+            std::env::temp_dir().join(format!("mib-rs-searchpath-env-{}", std::process::id()));
+        let mibs = temp.join("mibs");
+        std::fs::create_dir_all(&mibs).unwrap();
+
+        let value = format!(
+            "$HOME/mibs{}{}{}$HOME/missing",
+            if cfg!(windows) { ';' } else { ':' },
+            mibs.display(),
+            if cfg!(windows) { ';' } else { ':' },
+        );
+        let paths = apply_netsnmp_env(&value, Vec::new(), Some(&temp));
+        let paths = filter_existing_dirs(dedup(paths));
+
+        assert_eq!(paths, vec![mibs.to_string_lossy()]);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn netsnmp_config_expands_home_before_dedup_and_filter() {
+        let temp =
+            std::env::temp_dir().join(format!("mib-rs-searchpath-config-{}", std::process::id()));
+        let mibs = temp.join("mibs");
+        let extra = temp.join("extra");
+        std::fs::create_dir_all(&mibs).unwrap();
+        std::fs::create_dir_all(&extra).unwrap();
+        let config = temp.join("snmp.conf");
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        std::fs::write(
+            &config,
+            format!(
+                "mibdirs $HOME/mibs{separator}{}\n+mibdirs $HOME/extra{separator}$HOME/missing\n",
+                mibs.display()
+            ),
+        )
+        .unwrap();
+
+        let paths = apply_config_file(&config, Vec::new(), |line| {
+            parse_netsnmp_line(line).map(|(op, dirs)| (op, expand_netsnmp_home(dirs, Some(&temp))))
+        });
+        let paths = filter_existing_dirs(dedup(paths));
+
+        assert_eq!(paths, vec![mibs.to_string_lossy(), extra.to_string_lossy()]);
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]
