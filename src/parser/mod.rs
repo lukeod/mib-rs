@@ -2917,6 +2917,37 @@ END
     }
 
     #[test]
+    fn macro_definition_quoted_end_preserves_following_definition() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+FOO MACRO ::= BEGIN
+    TYPE NOTATION ::= "END"
+    VALUE NOTATION ::= value(VALUE ObjectName)
+END
+testObj OBJECT IDENTIFIER ::= { iso 3 }
+END
+"#;
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].body.len(), 2);
+        assert!(matches!(
+            &modules[0].body[0],
+            Definition::MacroDefinition(_)
+        ));
+        assert!(matches!(
+            &modules[0].body[1],
+            Definition::ValueAssignment(d) if d.name.name == "testObj"
+        ));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::UnterminatedString),
+            "quoted END in a MACRO body must not corrupt following syntax"
+        );
+    }
+
+    #[test]
     fn tagged_type() {
         let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
 TestType ::= [APPLICATION 0] IMPLICIT OCTET STRING

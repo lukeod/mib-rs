@@ -526,6 +526,8 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     // -- MACRO body skipping --
 
     fn skip_macro_body(&mut self) -> Token {
+        let mut in_quoted_string = false;
+
         loop {
             self.skip_whitespace();
 
@@ -533,6 +535,17 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 let start = self.pos;
                 self.state = LexerState::Normal;
                 return self.token(TokenKind::Eof, start);
+            }
+
+            if self.peek() == Some(b'"') {
+                in_quoted_string = !in_quoted_string;
+                self.advance();
+                continue;
+            }
+
+            if in_quoted_string {
+                self.advance();
+                continue;
             }
 
             if self.remaining().starts_with(b"END") {
@@ -1072,6 +1085,25 @@ mod tests {
             .position(|t| t.kind == TokenKind::LowercaseIdent)
             .unwrap();
         assert!(end_idx < next_idx);
+    }
+
+    #[test]
+    fn macro_body_does_not_end_inside_multiline_quoted_string() {
+        let input = "MACRO ::= BEGIN TYPE NOTATION ::= \"quoted\nEND\ntext\" END next";
+        let (tokens, diags) = tokenize_with_diags(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                TokenKind::KwMacro,
+                TokenKind::KwEnd,
+                TokenKind::LowercaseIdent,
+                TokenKind::Eof,
+            ]
+        );
+        assert_eq!(text_of(input, &tokens[1]), "END");
+        assert_eq!(tokens[1].span.start.0 as usize, input.rfind("END").unwrap());
+        assert!(diags.is_empty());
     }
 
     #[test]

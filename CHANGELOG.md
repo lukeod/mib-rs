@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keep lexer diagnostics attached to the source module containing their span
+- Ignore `END` keywords inside quoted strings when skipping MACRO bodies
 
 ## [0.8.0] - 2026-03-19
 
