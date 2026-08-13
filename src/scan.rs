@@ -4,88 +4,120 @@
 //! used by the loading pipeline to filter and index MIB files without
 //! invoking the full parser.
 
+use crate::lexer::{Lexer, Token, TokenKind};
+use crate::types::DiagnosticConfig;
+
 /// Scans raw MIB file bytes for module names.
 ///
-/// Finds identifiers that precede `DEFINITIONS ::=` without performing
-/// a full parse. ASN.1 line comments (`--`) are recognized so that
-/// commented-out module headers are not returned. Module names must
-/// start with an uppercase letter per ASN.1 conventions.
+/// Finds token sequences forming `NAME DEFINITIONS ::= BEGIN` module headers
+/// without performing a full parse. Comments and quoted strings cannot
+/// advertise modules. Module names must start with an uppercase letter per
+/// ASN.1 conventions; reserved uppercase keywords are retained as candidates
+/// because the parser accepts them with a configurable diagnostic. Obsolete
+/// module OIDs between the name and `DEFINITIONS` are accepted.
 ///
 /// Returns an empty `Vec` if no module headers are found. A single MIB
 /// file may contain multiple modules, in which case all names are returned
 /// in the order they appear.
 pub fn scan_module_names(content: &[u8]) -> Vec<String> {
+    let config = DiagnosticConfig::silent();
+    let (tokens, _) = Lexer::new(content, &config).tokenize();
     let mut names = Vec::new();
-    let mut offset = 0;
+    let mut i = next_scan_token(&tokens, 0);
+    let mut in_module = false;
+    let mut macro_end_pending = false;
 
-    while offset < content.len() {
-        let rest = &content[offset..];
-        let idx = match find_bytes(rest, SIG_DEFINITIONS) {
-            Some(i) => i,
-            None => break,
-        };
-
-        let abs_off = offset + idx;
-
-        // Skip if inside an ASN.1 comment.
-        if in_line_comment(content, abs_off) {
-            offset = abs_off + SIG_DEFINITIONS.len();
-            continue;
-        }
-
-        // Require ::= somewhere after DEFINITIONS (within 100 bytes).
-        let after_start = abs_off + SIG_DEFINITIONS.len();
-        let after_end = (after_start + 100).min(content.len());
-        let window = &content[after_start..after_end];
-        if find_bytes(window, SIG_ASSIGN).is_none() {
-            offset = after_start;
-            continue;
-        }
-
-        // Walk backwards from DEFINITIONS to find the identifier.
-        let before = &rest[..idx];
-        let mut pos = before.len();
-
-        // Skip whitespace and intervening comment lines.
-        loop {
-            while pos > 0 && matches!(before[pos - 1], b' ' | b'\t' | b'\r' | b'\n') {
-                pos -= 1;
-            }
-            // Check if we stopped at the end of a comment line.
-            // ASN.1 comments run from -- to end of line, so if the text
-            // before pos ends with a comment, skip back past the entire line.
-            if pos >= 2 && line_has_comment(before, pos) {
-                // Skip to start of this line.
-                while pos > 0 && before[pos - 1] != b'\n' {
-                    pos -= 1;
-                }
-                continue;
-            }
+    while let Some(token) = tokens.get(i) {
+        if token.kind == TokenKind::Eof {
             break;
         }
-        let end = pos;
 
-        // Collect identifier characters.
-        while pos > 0 && is_ident_char(before[pos - 1]) {
-            pos -= 1;
-        }
-        let start = pos;
-
-        if start < end {
-            let name = &before[start..end];
-            // Module names must start with an uppercase letter.
-            if !name.is_empty()
-                && name[0].is_ascii_uppercase()
-                && let Ok(s) = std::str::from_utf8(name)
-            {
-                names.push(s.to_string());
+        if in_module {
+            match token.kind {
+                TokenKind::KwMacro => macro_end_pending = true,
+                TokenKind::KwEnd if macro_end_pending => macro_end_pending = false,
+                TokenKind::KwEnd => in_module = false,
+                _ => {}
             }
+            i = next_scan_token(&tokens, i + 1);
+            continue;
         }
 
-        offset = after_start;
+        // The parser only begins a module at the first significant token or
+        // directly after the preceding module's END. If a header cannot be
+        // parsed there, parsing stops and later header-shaped text is not
+        // loadable either.
+        if !matches!(
+            token.kind,
+            TokenKind::UppercaseIdent | TokenKind::ForbiddenKeyword
+        ) {
+            break;
+        }
+        let name_token = token;
+        let mut j = next_scan_token(&tokens, i + 1);
+
+        // Some old ASN.1 modules include an obsolete module OID between
+        // the module name and DEFINITIONS.
+        if tokens.get(j).is_some_and(|t| t.kind == TokenKind::LBrace) {
+            let mut depth = 0usize;
+            while let Some(token) = tokens.get(j) {
+                match token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => {
+                        depth -= 1;
+                        if depth == 0 {
+                            j += 1;
+                            break;
+                        }
+                    }
+                    TokenKind::Eof => break,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth != 0 {
+                break;
+            }
+            j = next_scan_token(&tokens, j);
+        }
+
+        if tokens
+            .get(j)
+            .is_none_or(|t| t.kind != TokenKind::KwDefinitions)
+        {
+            break;
+        }
+        j = next_scan_token(&tokens, j + 1);
+
+        if tokens
+            .get(j)
+            .is_none_or(|t| t.kind != TokenKind::ColonColonEqual)
+        {
+            break;
+        }
+        j = next_scan_token(&tokens, j + 1);
+
+        if tokens.get(j).is_none_or(|t| t.kind != TokenKind::KwBegin) {
+            break;
+        }
+
+        let start = name_token.span.start.0 as usize;
+        let end = name_token.span.end.0 as usize;
+        if let Ok(name) = std::str::from_utf8(&content[start..end]) {
+            names.push(name.to_string());
+        }
+        in_module = true;
+        i = next_scan_token(&tokens, j + 1);
     }
 
     names
+}
+
+fn next_scan_token(tokens: &[Token], mut i: usize) -> usize {
+    while tokens.get(i).is_some_and(|t| t.kind == TokenKind::Comment) {
+        i += 1;
+    }
+    i
 }
 
 const SIG_DEFINITIONS: &[u8] = b"DEFINITIONS";
@@ -94,42 +126,6 @@ const SIG_ASSIGN: &[u8] = b"::=";
 /// Find the first occurrence of needle in haystack.
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-/// Check whether the byte at `pos` in `content` is inside an ASN.1 comment.
-/// Scans from the start of the line containing `pos`, toggling on each "--".
-fn in_line_comment(content: &[u8], pos: usize) -> bool {
-    let mut line_start = pos;
-    while line_start > 0 && content[line_start - 1] != b'\n' {
-        line_start -= 1;
-    }
-    let mut in_comment = false;
-    let mut i = line_start;
-    while i < pos {
-        if i + 1 < content.len() && content[i] == b'-' && content[i + 1] == b'-' {
-            in_comment = !in_comment;
-            i += 2;
-            continue;
-        }
-        i += 1;
-    }
-    in_comment
-}
-
-/// Check whether the line ending at `pos` (exclusive) in `content` contains
-/// an ASN.1 line comment (`--`). Used during backward scanning to detect
-/// comment lines that sit between a module name and `DEFINITIONS`.
-fn line_has_comment(content: &[u8], pos: usize) -> bool {
-    let mut line_start = pos;
-    while line_start > 0 && content[line_start - 1] != b'\n' {
-        line_start -= 1;
-    }
-    let line = &content[line_start..pos];
-    line.windows(2).any(|w| w == b"--")
-}
-
-fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
 
 /// Heuristic check for whether content looks like a MIB file.
@@ -186,6 +182,13 @@ mod tests {
     }
 
     #[test]
+    fn reserved_keyword_name_is_retained_for_parser_diagnostics() {
+        let content = b"TRUE DEFINITIONS ::= BEGIN\nEND";
+        let names = scan_module_names(content);
+        assert_eq!(names, vec!["TRUE"]);
+    }
+
+    #[test]
     fn comment_between_name_and_definitions() {
         let content = b"FROGFOOT-RESOURCES-MIB\n\n-- -*- mib -*-\n\nDEFINITIONS ::= BEGIN\nEND";
         let names = scan_module_names(content);
@@ -197,6 +200,32 @@ mod tests {
         let content = b"MY-MIB\n-- comment 1\n-- comment 2\n\nDEFINITIONS ::= BEGIN\nEND";
         let names = scan_module_names(content);
         assert_eq!(names, vec!["MY-MIB"]);
+    }
+
+    #[test]
+    fn obsolete_module_oid_is_accepted() {
+        let content = b"OLD-MIB { iso 3 } DEFINITIONS ::= BEGIN\nEND";
+        let names = scan_module_names(content);
+        assert_eq!(names, vec!["OLD-MIB"]);
+    }
+
+    #[test]
+    fn quoted_and_partial_headers_are_rejected() {
+        let content = br#"REAL-MIB DEFINITIONS ::= BEGIN
+DESCRIPTION "QUOTED-MIB DEFINITIONS ::= BEGIN"
+LONGER-MIB MY-DEFINITIONS ::= BEGIN
+NO-ASSIGN-MIB DEFINITIONS MYASSIGN::= BEGIN
+NO-BEGIN-MIB DEFINITIONS ::= SOMETHING
+END
+"#;
+        let names = scan_module_names(content);
+        assert_eq!(names, vec!["REAL-MIB"]);
+    }
+
+    #[test]
+    fn header_sequence_after_leading_token_is_rejected() {
+        let content = b"LEADING-TOKEN REAL-MIB DEFINITIONS ::= BEGIN\nEND";
+        assert!(scan_module_names(content).is_empty());
     }
 
     #[test]

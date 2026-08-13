@@ -18,7 +18,7 @@ use crate::mib::Mib;
 use crate::parser;
 use crate::scan;
 use crate::searchpath;
-use crate::source::{FindResult, Source};
+use crate::source::Source;
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
@@ -242,20 +242,41 @@ impl Loader {
     }
 }
 
+type FileCacheKey = (usize, String, usize, PathBuf);
+type SharedModuleCache = Mutex<HashMap<FileCacheKey, Arc<Vec<ir::Module>>>>;
+
+#[derive(Debug)]
+struct ModuleCandidate {
+    source_index: usize,
+    name: String,
+}
+
 /// Load all modules from all sources in parallel.
 fn load_all_modules(
     sources: &[Box<dyn Source>],
     diag_config: &DiagnosticConfig,
     parallelism: Option<usize>,
 ) -> Result<Vec<ir::Module>, LoadError> {
-    // Collect all module names, deduplicating (first source wins).
-    let mut seen = HashSet::new();
-    let mut all_modules: Vec<(usize, String)> = Vec::new();
-    for (src_idx, src) in sources.iter().enumerate() {
-        let names = src.list_modules().map_err(LoadError::Io)?;
+    // Keep every source advertising a name until decoding confirms which
+    // candidate actually contains the module. Only then is precedence fixed.
+    let mut module_indexes = HashMap::<String, usize>::new();
+    let mut all_modules: Vec<(String, Vec<ModuleCandidate>)> = Vec::new();
+    for (source_index, source) in sources.iter().enumerate() {
+        let names = source.list_modules().map_err(LoadError::Io)?;
+        let mut seen_in_source = HashSet::new();
         for name in names {
-            if seen.insert(name.clone()) {
-                all_modules.push((src_idx, name));
+            if !seen_in_source.insert(name.clone()) {
+                continue;
+            }
+            let candidate = ModuleCandidate {
+                source_index,
+                name: name.clone(),
+            };
+            if let Some(&index) = module_indexes.get(&name) {
+                all_modules[index].1.push(candidate);
+            } else {
+                module_indexes.insert(name.clone(), all_modules.len());
+                all_modules.push((name, vec![candidate]));
             }
         }
     }
@@ -273,8 +294,9 @@ fn load_all_modules(
         "parallel loading",
     );
 
-    // Cache decoded files by path to avoid re-parsing multi-module files.
-    let path_cache: Mutex<HashMap<PathBuf, Arc<Vec<ir::Module>>>> = Mutex::new(HashMap::new());
+    // Cache decoded candidates without conflating module-specific lookups or
+    // sources that reuse candidate positions and diagnostic paths.
+    let path_cache: SharedModuleCache = Mutex::new(HashMap::new());
 
     // Parallel load using std::thread::scope with an atomic work queue.
     let thread_count =
@@ -297,47 +319,62 @@ fn load_all_modules(
                         break;
                     }
 
-                    let (src_idx, name) = &all_modules[idx];
+                    let (name, candidates) = &all_modules[idx];
                     let span = debug_span!(
                         target: "mib_rs::load",
                         "load_module",
                         component = "load",
                         module = %name,
-                        source_index = *src_idx,
                     );
                     let _guard = span.enter();
-                    let src = &sources[*src_idx];
-                    let result = match src.find(name) {
-                        Ok(Some(r)) => r,
-                        Ok(None) => {
+
+                    'sources: for candidate in candidates {
+                        let src = &sources[candidate.source_index];
+                        for (candidate_index, result) in
+                            src.find_candidates(&candidate.name).enumerate()
+                        {
+                            let result = match result {
+                                Ok(result) => result,
+                                Err(error_value) => {
+                                    *error.lock().unwrap() = Some(LoadError::Io(error_value));
+                                    break 'sources;
+                                }
+                            };
+                            let cached = {
+                                let mut cache = path_cache.lock().unwrap();
+                                cache
+                                    .entry((
+                                        candidate.source_index,
+                                        name.clone(),
+                                        candidate_index,
+                                        result.path.clone(),
+                                    ))
+                                    .or_insert_with(|| {
+                                        Arc::new(decode_modules(
+                                            &result.content,
+                                            &result.path,
+                                            diag_config,
+                                        ))
+                                    })
+                                    .clone()
+                            };
+
+                            // A source advertisement is only a candidate until
+                            // its decoded content contains the requested module.
+                            if let Some(target) = cached.iter().find(|m| m.name == *name) {
+                                local_modules.push((name.clone(), target.clone()));
+                                break 'sources;
+                            }
                             debug!(
                                 target: "mib_rs::load",
                                 component = "load",
                                 module = %name,
-                                reason = "not_found",
-                                "module not found",
+                                source_index = candidate.source_index,
+                                path = %result.path.display(),
+                                reason = "decoded_module_missing",
+                                "candidate did not contain advertised module",
                             );
-                            continue;
                         }
-                        Err(e) => {
-                            *error.lock().unwrap() = Some(LoadError::Io(e));
-                            break;
-                        }
-                    };
-
-                    let cached = {
-                        let mut cache = path_cache.lock().unwrap();
-                        cache
-                            .entry(result.path.clone())
-                            .or_insert_with(|| {
-                                Arc::new(decode_modules(&result.content, &result.path, diag_config))
-                            })
-                            .clone()
-                    };
-
-                    // Return only the requested module from possibly multi-module file.
-                    if let Some(target) = cached.iter().find(|m| m.name == *name) {
-                        local_modules.push((name.clone(), target.clone()));
                     }
                 }
                 // Merge local results.
@@ -372,26 +409,13 @@ fn load_modules_by_name(
     diag_config: &DiagnosticConfig,
 ) -> Result<Vec<ir::Module>, LoadError> {
     let mut modules: HashMap<String, ir::Module> = HashMap::new();
-    let mut file_cache: HashMap<PathBuf, Vec<ir::Module>> = HashMap::new();
-
-    fn find_in_sources(
-        sources: &[Box<dyn Source>],
-        name: &str,
-    ) -> Result<Option<FindResult>, LoadError> {
-        for src in sources {
-            match src.find(name).map_err(LoadError::Io)? {
-                Some(result) => return Ok(Some(result)),
-                None => continue,
-            }
-        }
-        Ok(None)
-    }
+    let mut file_cache: HashMap<FileCacheKey, Vec<ir::Module>> = HashMap::new();
 
     fn load_one(
         name: &str,
         sources: &[Box<dyn Source>],
         modules: &mut HashMap<String, ir::Module>,
-        file_cache: &mut HashMap<PathBuf, Vec<ir::Module>>,
+        file_cache: &mut HashMap<FileCacheKey, Vec<ir::Module>>,
         diag_config: &DiagnosticConfig,
     ) -> Result<(), LoadError> {
         if modules.contains_key(name) {
@@ -404,8 +428,39 @@ fn load_modules_by_name(
             return Ok(());
         }
 
-        let result = match find_in_sources(sources, name)? {
-            Some(r) => r,
+        // A Source::find result is only a candidate until decoding confirms
+        // that its content contains the requested module. Phantom source
+        // advertisements must not shadow valid modules in later sources.
+        let mut target = None;
+        'sources: for (source_index, source) in sources.iter().enumerate() {
+            for (candidate_index, result) in source.find_candidates(name).enumerate() {
+                let result = result.map_err(LoadError::Io)?;
+                let mods = file_cache
+                    .entry((
+                        source_index,
+                        name.to_string(),
+                        candidate_index,
+                        result.path.clone(),
+                    ))
+                    .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
+                if let Some(module) = mods.iter().find(|module| module.name == name) {
+                    target = Some(module.clone());
+                    break 'sources;
+                }
+
+                debug!(
+                    target: "mib_rs::load",
+                    component = "load",
+                    module = %name,
+                    path = %result.path.display(),
+                    reason = "decoded_module_missing",
+                    "candidate did not contain advertised module",
+                );
+            }
+        }
+
+        let target = match target {
+            Some(target) => target,
             None => {
                 debug!(
                     target: "mib_rs::load",
@@ -416,17 +471,6 @@ fn load_modules_by_name(
                 );
                 return Ok(());
             }
-        };
-
-        let mods = file_cache
-            .entry(result.path.clone())
-            .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
-
-        // Find the target module.
-        let target = mods.iter().find(|m| m.name == name);
-        let target = match target {
-            Some(t) => t.clone(),
-            None => return Ok(()),
         };
 
         // Collect import module names before inserting.

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve compliance and capability export references within their declared module scope
 - Skip consecutive EXPORTS clauses without recursive parser calls
 - Ignore semicolons inside comments while skipping EXPORTS clauses
+- Prevent quoted or malformed phantom module headers from shadowing valid source candidates
 
 ## [0.8.0] - 2026-03-19
 

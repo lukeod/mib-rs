@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
+use crate::scan;
+
 /// Default file extensions recognized as MIB files.
 ///
 /// The empty string matches files with no extension (e.g., `IF-MIB`).
@@ -50,6 +52,22 @@ pub trait Source: Send + Sync {
     /// Returns [`io::Error`] if the underlying storage cannot be read (e.g.
     /// file I/O failure, permission denied).
     fn find(&self, name: &str) -> io::Result<Option<FindResult>>;
+
+    /// Iterate over candidates for a module name in precedence order.
+    ///
+    /// Candidates and their I/O errors are produced lazily. This lets callers
+    /// stop after validating an earlier candidate without accessing lower
+    /// priority storage. Each candidate is independently identified by its
+    /// position as well as its diagnostic path. Custom sources that expose at
+    /// most one candidate can rely on this default implementation.
+    fn find_candidates<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+        Box::new(
+            std::iter::once_with(move || self.find(name)).filter_map(|result| result.transpose()),
+        )
+    }
 
     /// List all module names available from this source.
     ///
@@ -113,14 +131,14 @@ impl SourceConfig {
 /// The directory is eagerly indexed at construction time.
 struct DirSource {
     root: PathBuf,
-    index: HashMap<String, PathBuf>,
+    index: HashMap<String, Vec<PathBuf>>,
 }
 
 /// Create a [`Source`] that recursively indexes a directory tree.
 ///
 /// Module names are derived from file content (scanning for `DEFINITIONS`
-/// headers), not from filenames. When duplicate module names appear, the
-/// first file encountered wins.
+/// headers), not from filenames. When duplicate module names appear, their
+/// files are retained in traversal order and validated when loaded.
 ///
 /// The directory is eagerly indexed at construction time, so all file I/O
 /// for discovery happens during this call rather than during later
@@ -188,15 +206,30 @@ pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box
 
 impl Source for DirSource {
     fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        let rel_path = match self.index.get(name) {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-        let full_path = self.root.join(rel_path);
-        let content = std::fs::read(&full_path)?;
-        Ok(Some(FindResult {
-            content,
-            path: full_path,
+        self.find_candidates(name).next().transpose()
+    }
+
+    fn find_candidates<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+        let rel_paths = self.index.get(name).into_iter().flatten();
+        Box::new(rel_paths.filter_map(move |rel_path| {
+            let full_path = self.root.join(rel_path);
+            let content = match std::fs::read(&full_path) {
+                Ok(content) => content,
+                Err(error) => return Some(Err(error)),
+            };
+            // The eagerly built index can become stale if a file changes
+            // before loading. Discard stale candidates without hiding later
+            // files indexed under the same module name.
+            scan::scan_module_names(&content)
+                .iter()
+                .any(|candidate| candidate == name)
+                .then_some(Ok(FindResult {
+                    content,
+                    path: full_path,
+                }))
         }))
     }
 
@@ -216,6 +249,8 @@ struct MultiSource {
 /// Combine multiple [`Source`]s into one.
 ///
 /// [`Source::find`] tries each source in order, returning the first match.
+/// [`Source::find_candidates`] retains every child candidate in child order so
+/// loaders can continue after an advertisement fails decode validation.
 /// [`Source::list_modules`] aggregates all sources, deduplicating by name.
 pub fn chain(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
     Box::new(MultiSource { sources })
@@ -230,6 +265,17 @@ impl Source for MultiSource {
             }
         }
         Ok(None)
+    }
+
+    fn find_candidates<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+        Box::new(
+            self.sources
+                .iter()
+                .flat_map(move |source| source.find_candidates(name)),
+        )
     }
 
     fn list_modules(&self) -> io::Result<Vec<String>> {
@@ -270,33 +316,77 @@ pub fn file(path: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
 /// Create a [`Source`] from multiple MIB files on disk.
 ///
 /// Module names are extracted from each file's content by scanning for
-/// `DEFINITIONS ::=` headers. When duplicate module names appear across
-/// files, the first file wins.
+/// `DEFINITIONS ::=` headers. Duplicate module names retain all files in input
+/// order so the loader can validate candidates before applying precedence.
+///
+/// Files without a loadable module header are skipped so they cannot hide a
+/// valid later path.
 ///
 /// # Errors
 ///
-/// Returns [`io::Error`] if any file cannot be read or contains no
-/// valid module definition.
+/// Returns [`io::Error`] if any file cannot be read, or if none of the files
+/// contain a valid module definition.
 pub fn files(paths: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
     let mut modules = HashMap::new();
+    let mut first_path = None;
     for path in paths {
         let path = path.as_ref();
+        first_path.get_or_insert_with(|| path.to_path_buf());
         let content = std::fs::read(path)?;
         let names = crate::scan::scan_module_names(&content);
-        if names.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("no module definition found in {}", path.display()),
-            ));
-        }
         let diag_path = path.to_path_buf();
         for name in names {
             modules
                 .entry(name)
-                .or_insert_with(|| (diag_path.clone(), content.clone()));
+                .or_insert_with(Vec::new)
+                .push((diag_path.clone(), content.clone()));
         }
     }
-    Ok(Box::new(MemorySource { modules }))
+    if modules.is_empty() {
+        let location = first_path
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "file list".to_string());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("no module definition found in {location}"),
+        ));
+    }
+    Ok(Box::new(FileSource { modules }))
+}
+
+/// A source backed by file contents grouped by advertised module name.
+struct FileSource {
+    modules: HashMap<String, Vec<(PathBuf, Vec<u8>)>>,
+}
+
+impl Source for FileSource {
+    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+        self.find_candidates(name).next().transpose()
+    }
+
+    fn find_candidates<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+        Box::new(
+            self.modules
+                .get(name)
+                .into_iter()
+                .flatten()
+                .map(|(path, content)| {
+                    Ok(FindResult {
+                        content: content.clone(),
+                        path: path.clone(),
+                    })
+                }),
+        )
+    }
+
+    fn list_modules(&self) -> io::Result<Vec<String>> {
+        let mut names: Vec<String> = self.modules.keys().cloned().collect();
+        names.sort();
+        Ok(names)
+    }
 }
 
 /// A source backed by in-memory byte buffers keyed by module name.
@@ -355,9 +445,12 @@ impl Source for MemorySource {
 }
 
 /// Build a module name -> relative path index by walking a directory tree.
-fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<String, PathBuf>> {
+fn build_tree_index(
+    root: &Path,
+    extensions: &[String],
+) -> io::Result<HashMap<String, Vec<PathBuf>>> {
     let ext_set: HashSet<&str> = extensions.iter().map(|s| s.as_str()).collect();
-    let mut index = HashMap::new();
+    let mut index: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     for entry in walkdir::WalkDir::new(root).into_iter() {
         let entry = match entry {
@@ -402,7 +495,7 @@ fn build_tree_index(root: &Path, extensions: &[String]) -> io::Result<HashMap<St
         let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
         for name in names {
-            index.entry(name).or_insert_with(|| rel_path.clone());
+            index.entry(name).or_default().push(rel_path.clone());
         }
     }
 
