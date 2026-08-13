@@ -430,7 +430,7 @@ struct ExtractedDiagnostic {
     message: String,
 }
 
-fn gomib_range_bound(bound: mib_rs::mib::RangeBound) -> Option<i64> {
+fn gomib_range_bound(bound: &mib_rs::mib::RangeBound) -> Option<i64> {
     bound.as_i64()
 }
 
@@ -518,12 +518,12 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
         }
 
         for r in obj.effective_ranges() {
-            if let (Some(min), Some(max)) = (gomib_range_bound(r.min), gomib_range_bound(r.max)) {
+            if let (Some(min), Some(max)) = (gomib_range_bound(&r.min), gomib_range_bound(&r.max)) {
                 e.ranges.push((min, max));
             }
         }
         for r in obj.effective_sizes() {
-            if let (Some(min), Some(max)) = (gomib_range_bound(r.min), gomib_range_bound(r.max)) {
+            if let (Some(min), Some(max)) = (gomib_range_bound(&r.min), gomib_range_bound(&r.max)) {
                 e.ranges.push((min, max));
             }
         }
@@ -700,12 +700,12 @@ fn extract_syntax_constraints(
         sizes: sc
             .sizes
             .iter()
-            .filter_map(|r| Some((gomib_range_bound(r.min)?, gomib_range_bound(r.max)?)))
+            .filter_map(|r| Some((gomib_range_bound(&r.min)?, gomib_range_bound(&r.max)?)))
             .collect(),
         ranges: sc
             .ranges
             .iter()
-            .filter_map(|r| Some((gomib_range_bound(r.min)?, gomib_range_bound(r.max)?)))
+            .filter_map(|r| Some((gomib_range_bound(&r.min)?, gomib_range_bound(&r.max)?)))
             .collect(),
         enums: sc
             .enums
@@ -791,12 +791,12 @@ fn extract_type(mib: &Mib, type_id: mib_rs::mib::TypeId) -> ExtractedType {
         sizes: type_
             .effective_sizes(mib.raw().types_slice())
             .iter()
-            .filter_map(|r| Some((gomib_range_bound(r.min)?, gomib_range_bound(r.max)?)))
+            .filter_map(|r| Some((gomib_range_bound(&r.min)?, gomib_range_bound(&r.max)?)))
             .collect(),
         ranges: type_
             .effective_ranges(mib.raw().types_slice())
             .iter()
-            .filter_map(|r| Some((gomib_range_bound(r.min)?, gomib_range_bound(r.max)?)))
+            .filter_map(|r| Some((gomib_range_bound(&r.min)?, gomib_range_bound(&r.max)?)))
             .collect(),
         enums: type_
             .effective_enums(mib.raw().types_slice())

@@ -2144,7 +2144,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let hex_part = strip_string_literal(&full_text);
-                match u64::from_str_radix(hex_part, 16) {
+                let normalized: String = hex_part
+                    .chars()
+                    .filter(|c| !matches!(c, ' ' | '\t' | '\n' | '\r'))
+                    .collect();
+                match u64::from_str_radix(&normalized, 16) {
                     Ok(v) => Ok(RangeValue::Unsigned(v)),
                     Err(_) => {
                         self.emit_diagnostic(
@@ -2152,7 +2156,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                             token.span,
                             "invalid hex range value",
                         );
-                        Ok(RangeValue::Unsigned(0))
+                        Ok(RangeValue::Raw(full_text.into_owned()))
                     }
                 }
             }
@@ -3429,23 +3433,69 @@ END
 
     #[test]
     fn hex_range_value() {
-        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
-TestHex ::= INTEGER ('00'H..'FF'H)
-END
-"#;
-        let modules = parse_str(input);
+        let input = "TEST-MIB DEFINITIONS ::= BEGIN\n\
+Whitespace ::= INTEGER ('7f ff'H | '7f\tff'H | '7f\rff'H | '7f\nff'H)\n\
+Malformed ::= INTEGER ('0G'H..'10000000000000000'H)\n\
+END\n";
+        let modules = parse_strict(input);
+        let module = &modules[0];
         assert!(
-            modules[0]
+            module
                 .diagnostics
                 .iter()
                 .all(|d| d.code != DiagCode::ParseError)
         );
-        match &modules[0].body[0] {
-            Definition::TypeAssignment(d) => {
-                assert!(matches!(&d.syntax, TypeSyntax::Constrained { .. }));
-            }
-            other => panic!("expected TypeAssignment, got {:?}", other),
-        }
+
+        let ranges = match &module.body[0] {
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::Constrained {
+                    constraint: Constraint::Range { ranges, .. },
+                    ..
+                } => ranges,
+                other => panic!("expected constrained range, got {other:?}"),
+            },
+            other => panic!("expected TypeAssignment, got {other:?}"),
+        };
+        assert_eq!(ranges.len(), 4);
+        assert!(
+            ranges.iter().all(|range| {
+                matches!(range.min, RangeValue::Unsigned(value) if value == 0x7fff)
+            })
+        );
+
+        let malformed = match &module.body[1] {
+            Definition::TypeAssignment(d) => match &d.syntax {
+                TypeSyntax::Constrained {
+                    constraint: Constraint::Range { ranges, .. },
+                    ..
+                } => &ranges[0],
+                other => panic!("expected constrained range, got {other:?}"),
+            },
+            other => panic!("expected TypeAssignment, got {other:?}"),
+        };
+        assert_eq!(malformed.min, RangeValue::Raw("'0G'H".to_string()));
+        assert_eq!(
+            malformed.max,
+            Some(RangeValue::Raw("'10000000000000000'H".to_string()))
+        );
+        assert_eq!(
+            module
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::InvalidHexRange)
+                .count(),
+            2
+        );
+
+        let mut ignored = DiagnosticConfig::verbose();
+        ignored.ignore.push("invalid-hex-range".to_string());
+        let ignored_modules = parse(input.as_bytes(), &ignored);
+        assert!(
+            ignored_modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::InvalidHexRange)
+        );
     }
 
     #[test]

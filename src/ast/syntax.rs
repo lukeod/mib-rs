@@ -137,6 +137,8 @@ pub enum RangeValue {
     Unsigned(u64),
     /// Named reference (`MIN` or `MAX` keyword).
     Named(Ident),
+    /// Literal that could not be converted, preserving its source text.
+    Raw(String),
 }
 
 /// A parsed ACCESS, MAX-ACCESS, or MIN-ACCESS clause.

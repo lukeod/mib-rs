@@ -165,12 +165,12 @@ fn extract_node(mib: &Mib, node_id: NodeId) -> ExtractedNode {
 
         // Ranges: Go appends EffectiveRanges then EffectiveSizes (order matters)
         for r in obj.effective_ranges() {
-            if let (Some(min), Some(max)) = (gomib_range_bound(r.min), gomib_range_bound(r.max)) {
+            if let (Some(min), Some(max)) = (gomib_range_bound(&r.min), gomib_range_bound(&r.max)) {
                 e.ranges.push((min, max));
             }
         }
         for r in obj.effective_sizes() {
-            if let (Some(min), Some(max)) = (gomib_range_bound(r.min), gomib_range_bound(r.max)) {
+            if let (Some(min), Some(max)) = (gomib_range_bound(&r.min), gomib_range_bound(&r.max)) {
                 e.ranges.push((min, max));
             }
         }
@@ -220,7 +220,7 @@ fn fixture_int_map(m: &HashMap<String, String>) -> HashMap<i64, String> {
         .collect()
 }
 
-fn gomib_range_bound(bound: mib_rs::mib::RangeBound) -> Option<i64> {
+fn gomib_range_bound(bound: &mib_rs::mib::RangeBound) -> Option<i64> {
     bound.as_i64().or_else(|| {
         bound
             .as_u64()

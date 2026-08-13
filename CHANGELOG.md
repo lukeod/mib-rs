@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - Represent resolved range endpoints with `RangeBound` instead of `i64`
+- Make `RangeBound` and `Range` clone-only so unresolved endpoints can preserve source text
 
 ### Changed
 
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply diagnostic severity overrides to stored diagnostics and load failure checks
 - Keep lexer diagnostics attached to the source module containing their span
 - Report configurable, non-fatal diagnostics for INTEGER enumeration values outside Integer32 while preserving their declared values
+- Parse whitespace inside hexadecimal range literals consistently with the lexer and preserve malformed endpoints as unresolved source text
 - Ignore `END` keywords inside quoted strings when skipping MACRO bodies
 - Prevent malformed non-ASCII timestamps from panicking module preference resolution
 - Leave generic TRAP-TYPE definitions unresolved when incrementing their number would overflow

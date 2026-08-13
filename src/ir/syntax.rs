@@ -139,6 +139,8 @@ pub enum RangeValue {
     Min,
     /// The `MAX` keyword (largest possible value for the type).
     Max,
+    /// Endpoint that could not be converted, preserving its source text.
+    Raw(String),
 }
 
 /// An unresolved `DEFVAL` clause value.

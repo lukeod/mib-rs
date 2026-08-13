@@ -208,7 +208,11 @@ fn extract_constraint(constraint: &ir::Constraint, td: &mut TypeData) {
 /// OBJECT-TYPE constraints).
 pub(super) fn resolve_range(r: &ir::syntax::Range) -> Range {
     let min = resolve_range_bound(&r.min);
-    let max = r.max.as_ref().map(resolve_range_bound).unwrap_or(min);
+    let max = r
+        .max
+        .as_ref()
+        .map(resolve_range_bound)
+        .unwrap_or_else(|| min.clone());
     Range {
         min,
         max,
@@ -222,6 +226,7 @@ fn resolve_range_bound(v: &ir::syntax::RangeValue) -> RangeBound {
         ir::syntax::RangeValue::Unsigned(value) => RangeBound::Unsigned(*value),
         ir::syntax::RangeValue::Min => RangeBound::Min,
         ir::syntax::RangeValue::Max => RangeBound::Max,
+        ir::syntax::RangeValue::Raw(value) => RangeBound::Raw(value.clone()),
     }
 }
 
@@ -700,51 +705,137 @@ pub(super) fn intersect_constraints(own: &[Range], parent: &[Range]) -> Vec<Rang
         return own.to_vec();
     }
 
-    let parent_min = parent
-        .iter()
-        .map(|range| range.min)
-        .min_by(|left, right| left.cmp_value(*right))
-        .expect("non-empty parent constraint");
-    let parent_max = parent
-        .iter()
-        .map(|range| range.max)
-        .max_by(|left, right| left.cmp_value(*right))
-        .expect("non-empty parent constraint");
+    let mut result = Vec::with_capacity(own.len() * parent.len());
+    for child in own {
+        for (index, parent_alternative) in parent.iter().enumerate() {
+            let Some(child_min) =
+                resolve_child_range_bound(&child.min, parent_alternative, parent, index, true)
+            else {
+                continue;
+            };
+            let Some(child_max) =
+                resolve_child_range_bound(&child.max, parent_alternative, parent, index, false)
+            else {
+                continue;
+            };
 
-    own.iter()
-        .flat_map(|child| {
-            let min = resolve_relative_bound(child.min, parent_min, parent_max);
-            let max = resolve_relative_bound(child.max, parent_min, parent_max);
-            parent.iter().filter_map(move |parent| {
-                let lower = if min.cmp_value(parent.min).is_gt() {
-                    min
-                } else {
-                    parent.min
-                };
-                let upper = if max.cmp_value(parent.max).is_lt() {
-                    max
-                } else {
-                    parent.max
-                };
-                (lower.cmp_value(upper).is_le()).then_some(Range {
-                    min: lower,
-                    max: upper,
-                    span: child.span,
-                })
-            })
-        })
-        .collect()
+            // Comparing every known lower candidate with every known upper
+            // candidate can prove an intersection empty even when another
+            // endpoint is unresolved.
+            if any_range_bound_greater(
+                [&parent_alternative.min, &child_min],
+                [&parent_alternative.max, &child_max],
+            ) {
+                continue;
+            }
+
+            result.push(Range {
+                min: max_range_bound(&child_min, &parent_alternative.min),
+                max: min_range_bound(&child_max, &parent_alternative.max),
+                span: child.span,
+            });
+        }
+    }
+    result
 }
 
-fn resolve_relative_bound(
-    bound: RangeBound,
-    parent_min: RangeBound,
-    parent_max: RangeBound,
-) -> RangeBound {
-    match bound {
-        RangeBound::Min => parent_min,
-        RangeBound::Max => parent_max,
-        concrete => concrete,
+// Resolve a symbolic child endpoint for one parent alternative. A lower MIN
+// and upper MAX do not constrain an alternative. A lower MAX or upper MIN only
+// applies to alternatives which could contain that global parent extreme.
+fn resolve_child_range_bound(
+    bound: &RangeBound,
+    alternative: &Range,
+    parent: &[Range],
+    index: usize,
+    lower: bool,
+) -> Option<RangeBound> {
+    if lower {
+        match bound {
+            RangeBound::Min => return Some(alternative.min.clone()),
+            RangeBound::Max => {
+                return could_contain_global_max(parent, index).then(|| alternative.max.clone());
+            }
+            _ => {}
+        }
+    } else {
+        match bound {
+            RangeBound::Max => return Some(alternative.max.clone()),
+            RangeBound::Min => {
+                return could_contain_global_min(parent, index).then(|| alternative.min.clone());
+            }
+            _ => {}
+        }
+    }
+    Some(bound.clone())
+}
+
+fn could_contain_global_max(ranges: &[Range], index: usize) -> bool {
+    let candidate = &ranges[index].max;
+    ranges.iter().enumerate().all(|(other_index, other)| {
+        other_index == index
+            || !other
+                .max
+                .cmp_value(candidate)
+                .is_some_and(|comparison| comparison.is_gt())
+                // A greater known minimum proves that the other maximum must
+                // also be greater even if that maximum is unresolved.
+                && !other
+                    .min
+                    .cmp_value(candidate)
+                    .is_some_and(|comparison| comparison.is_gt())
+    })
+}
+
+fn could_contain_global_min(ranges: &[Range], index: usize) -> bool {
+    let candidate = &ranges[index].min;
+    ranges.iter().enumerate().all(|(other_index, other)| {
+        other_index == index
+            || !other
+                .min
+                .cmp_value(candidate)
+                .is_some_and(|comparison| comparison.is_lt())
+                // A lesser known maximum proves that the other minimum must
+                // also be lesser even if that minimum is unresolved.
+                && !other
+                    .max
+                    .cmp_value(candidate)
+                    .is_some_and(|comparison| comparison.is_lt())
+    })
+}
+
+fn any_range_bound_greater(lowers: [&RangeBound; 2], uppers: [&RangeBound; 2]) -> bool {
+    lowers.into_iter().any(|lower| {
+        uppers.iter().any(|upper| {
+            lower
+                .cmp_value(upper)
+                .is_some_and(|comparison| comparison.is_gt())
+        })
+    })
+}
+
+fn max_range_bound(left: &RangeBound, right: &RangeBound) -> RangeBound {
+    match left.cmp_value(right) {
+        Some(comparison) if comparison.is_lt() => right.clone(),
+        Some(_) => left.clone(),
+        None => unresolved_range_bound(left, right),
+    }
+}
+
+fn min_range_bound(left: &RangeBound, right: &RangeBound) -> RangeBound {
+    match left.cmp_value(right) {
+        Some(comparison) if comparison.is_gt() => right.clone(),
+        Some(_) => left.clone(),
+        None => unresolved_range_bound(left, right),
+    }
+}
+
+// Preserve the raw endpoint when an exact min/max cannot be represented. If
+// both operands are raw, consistently prefer the child-side operand (`left`).
+fn unresolved_range_bound(left: &RangeBound, right: &RangeBound) -> RangeBound {
+    if matches!(left, RangeBound::Raw(_)) {
+        left.clone()
+    } else {
+        right.clone()
     }
 }
 

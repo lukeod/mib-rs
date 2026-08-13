@@ -3,7 +3,7 @@
 mod common;
 
 use mib_rs::load::{Loader, load};
-use mib_rs::mib::{Oid, RangeBound, Symbol, UnresolvedKind};
+use mib_rs::mib::{Oid, Range, RangeBound, Symbol, UnresolvedKind};
 use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, IndexEncoding, Kind, Language,
@@ -459,6 +459,110 @@ END
             .count(),
         2
     );
+}
+
+#[test]
+fn hex_range_literals_normalize_whitespace_and_preserve_malformed_bounds() {
+    let source = memory_modules([(
+        "HEX-RANGE-MIB",
+        b"HEX-RANGE-MIB DEFINITIONS ::= BEGIN\n\
+Valid ::= INTEGER ('7f ff'H..'80\t00'H)\n\
+Malformed ::= INTEGER ('0G'H..'10000000000000000'H)\n\
+END\n",
+    )]);
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::verbose()),
+    )
+    .expect("load failed");
+    let module = mib.module("HEX-RANGE-MIB").expect("module missing");
+
+    let valid = module.r#type("Valid").expect("Valid missing");
+    assert_eq!(valid.ranges()[0].min, RangeBound::Unsigned(0x7fff));
+    assert_eq!(valid.ranges()[0].max, RangeBound::Unsigned(0x8000));
+    assert!(valid.ranges()[0].is_resolved());
+
+    let malformed = module.r#type("Malformed").expect("Malformed missing");
+    assert_eq!(
+        malformed.ranges()[0].min,
+        RangeBound::Raw("'0G'H".to_string())
+    );
+    assert_eq!(
+        malformed.ranges()[0].max,
+        RangeBound::Raw("'10000000000000000'H".to_string())
+    );
+    assert!(!malformed.ranges()[0].is_resolved());
+    assert_eq!(
+        mib.diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code == DiagCode::InvalidHexRange
+                    && diagnostic.module.as_deref() == Some("HEX-RANGE-MIB")
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn unresolved_range_endpoints_preserve_known_intersections() {
+    let source = memory_modules([(
+        "RAW-RANGE-INTERSECTION-MIB",
+        br#"RAW-RANGE-INTERSECTION-MIB DEFINITIONS ::= BEGIN
+KnownParent ::= INTEGER (0..10)
+RawParent ::= INTEGER ('0G'H..10)
+RawChild ::= KnownParent ('1G'H..5)
+KnownChild ::= RawParent (0..5)
+DisjointChild ::= RawParent (20..30)
+DisjointRawChild ::= KnownParent (20..'2G'H)
+END
+"#,
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["RAW-RANGE-INTERSECTION-MIB"]),
+    )
+    .expect("load failed");
+    let module = mib
+        .module("RAW-RANGE-INTERSECTION-MIB")
+        .expect("module missing");
+
+    let raw_child = module.r#type("RawChild").expect("RawChild missing");
+    assert_eq!(
+        raw_child.effective_ranges(),
+        &[Range {
+            min: RangeBound::Raw("'1G'H".to_string()),
+            max: RangeBound::Unsigned(5),
+            span: raw_child.ranges()[0].span,
+        }]
+    );
+
+    let known_child = module.r#type("KnownChild").expect("KnownChild missing");
+    assert_eq!(
+        known_child.effective_ranges(),
+        &[Range {
+            min: RangeBound::Raw("'0G'H".to_string()),
+            max: RangeBound::Unsigned(5),
+            span: known_child.ranges()[0].span,
+        }]
+    );
+
+    for name in ["DisjointChild", "DisjointRawChild"] {
+        let disjoint = module.r#type(name).expect("disjoint type missing");
+        assert!(disjoint.effective_ranges_constrained());
+        assert!(disjoint.effective_ranges().is_empty());
+        assert!(mib.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagCode::ConstraintEmptyIntersection
+                && diagnostic.message.contains(name)
+        }));
+    }
 }
 
 #[test]

@@ -38,8 +38,12 @@ pub struct Import {
 ///
 /// Signed and unsigned literals remain distinct so values above [`i64::MAX`]
 /// are represented exactly. `MIN` and `MAX` are retained when no parent or
-/// base-type bound is available to give them a concrete value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// base-type bound is available to give them a concrete value. Malformed or
+/// unsupported literals retain their source text in [`Raw`](Self::Raw).
+///
+/// The raw representation means this enum is no longer `Copy`; clone endpoints
+/// when an owned value is required.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RangeBound {
     /// A signed integer literal.
     Signed(i64),
@@ -49,49 +53,53 @@ pub enum RangeBound {
     Min,
     /// The `MAX` keyword.
     Max,
+    /// An unresolved endpoint preserving its source text.
+    Raw(String),
 }
 
 impl RangeBound {
     /// Return the endpoint as `i64` when it is concrete and representable.
-    pub fn as_i64(self) -> Option<i64> {
+    pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Self::Signed(value) => Some(value),
-            Self::Unsigned(value) => i64::try_from(value).ok(),
-            Self::Min | Self::Max => None,
+            Self::Signed(value) => Some(*value),
+            Self::Unsigned(value) => i64::try_from(*value).ok(),
+            Self::Min | Self::Max | Self::Raw(_) => None,
         }
     }
 
     /// Return the endpoint as `u64` when it is concrete and non-negative.
-    pub fn as_u64(self) -> Option<u64> {
+    pub fn as_u64(&self) -> Option<u64> {
         match self {
-            Self::Signed(value) => u64::try_from(value).ok(),
-            Self::Unsigned(value) => Some(value),
-            Self::Min | Self::Max => None,
+            Self::Signed(value) => u64::try_from(*value).ok(),
+            Self::Unsigned(value) => Some(*value),
+            Self::Min | Self::Max | Self::Raw(_) => None,
         }
     }
 
-    pub(crate) fn cmp_value(self, other: Self) -> std::cmp::Ordering {
+    /// Return whether the endpoint is a signed or unsigned number.
+    pub fn is_concrete(&self) -> bool {
+        matches!(self, Self::Signed(_) | Self::Unsigned(_))
+    }
+
+    pub(crate) fn cmp_value(&self, other: &Self) -> Option<std::cmp::Ordering> {
         use std::cmp::Ordering;
         match (self, other) {
-            (Self::Min, Self::Min) | (Self::Max, Self::Max) => Ordering::Equal,
-            (Self::Min, _) | (_, Self::Max) => Ordering::Less,
-            (Self::Max, _) | (_, Self::Min) => Ordering::Greater,
-            (Self::Signed(left), Self::Signed(right)) => left.cmp(&right),
-            (Self::Unsigned(left), Self::Unsigned(right)) => left.cmp(&right),
-            (Self::Signed(left), Self::Unsigned(right)) => {
-                if left < 0 {
-                    Ordering::Less
-                } else {
-                    (left as u64).cmp(&right)
-                }
-            }
-            (Self::Unsigned(left), Self::Signed(right)) => {
-                if right < 0 {
-                    Ordering::Greater
-                } else {
-                    left.cmp(&(right as u64))
-                }
-            }
+            (Self::Raw(_), _) | (_, Self::Raw(_)) => None,
+            (Self::Min, Self::Min) | (Self::Max, Self::Max) => Some(Ordering::Equal),
+            (Self::Min, _) | (_, Self::Max) => Some(Ordering::Less),
+            (Self::Max, _) | (_, Self::Min) => Some(Ordering::Greater),
+            (Self::Signed(left), Self::Signed(right)) => Some(left.cmp(right)),
+            (Self::Unsigned(left), Self::Unsigned(right)) => Some(left.cmp(right)),
+            (Self::Signed(left), Self::Unsigned(right)) => Some(if *left < 0 {
+                Ordering::Less
+            } else {
+                (*left as u64).cmp(right)
+            }),
+            (Self::Unsigned(left), Self::Signed(right)) => Some(if *right < 0 {
+                Ordering::Greater
+            } else {
+                left.cmp(&(*right as u64))
+            }),
         }
     }
 }
@@ -103,6 +111,7 @@ impl fmt::Display for RangeBound {
             Self::Unsigned(value) => write!(f, "{value}"),
             Self::Min => f.write_str("MIN"),
             Self::Max => f.write_str("MAX"),
+            Self::Raw(value) => f.write_str(value),
         }
     }
 }
@@ -110,7 +119,7 @@ impl fmt::Display for RangeBound {
 /// A min..max constraint range, used for both SIZE and value constraints.
 ///
 /// For single-value constraints (e.g. `SIZE (6)`), `min` equals `max`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Range {
     /// Lower bound (inclusive).
     pub min: RangeBound,
@@ -121,20 +130,37 @@ pub struct Range {
 }
 
 impl Range {
-    pub(crate) fn contains_i64(self, value: i64) -> bool {
-        let value = RangeBound::Signed(value);
-        self.min.cmp_value(value).is_le() && self.max.cmp_value(value).is_ge()
+    /// Return whether both endpoints are concrete numeric values.
+    pub fn is_resolved(&self) -> bool {
+        self.min.is_concrete() && self.max.is_concrete()
     }
 
-    pub(crate) fn contains_u64(self, value: u64) -> bool {
+    pub(crate) fn contains_i64(&self, value: i64) -> bool {
+        let value = RangeBound::Signed(value);
+        self.min
+            .cmp_value(&value)
+            .is_some_and(|ordering| ordering.is_le())
+            && self
+                .max
+                .cmp_value(&value)
+                .is_some_and(|ordering| ordering.is_ge())
+    }
+
+    pub(crate) fn contains_u64(&self, value: u64) -> bool {
         let value = RangeBound::Unsigned(value);
-        self.min.cmp_value(value).is_le() && self.max.cmp_value(value).is_ge()
+        self.min
+            .cmp_value(&value)
+            .is_some_and(|ordering| ordering.is_le())
+            && self
+                .max
+                .cmp_value(&value)
+                .is_some_and(|ordering| ordering.is_ge())
     }
 }
 
 impl fmt::Display for Range {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.min.cmp_value(self.max).is_eq() {
+        if self.min == self.max {
             write!(f, "{}", self.min)
         } else {
             write!(f, "{}..{}", self.min, self.max)
@@ -233,7 +259,7 @@ pub(crate) fn classify_index_encoding(
 
 pub(crate) fn is_fixed_size(sizes: &[Range]) -> bool {
     sizes.len() == 1
-        && sizes[0].min.cmp_value(sizes[0].max).is_eq()
+        && sizes[0].min == sizes[0].max
         && sizes[0].min.as_u64().is_some_and(|value| value > 0)
 }
 

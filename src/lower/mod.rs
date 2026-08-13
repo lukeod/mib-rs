@@ -1328,6 +1328,7 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> 
                 ir::RangeValue::Unsigned(0)
             }
         },
+        ast::RangeValue::Raw(value) => ir::RangeValue::Raw(value.clone()),
     }
 }
 

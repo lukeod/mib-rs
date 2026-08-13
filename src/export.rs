@@ -156,9 +156,9 @@ pub struct ExportConstraints {
 pub struct ExportRange {
     pub min: String,
     pub max: String,
-    /// Endpoint representation: `signed`, `unsigned`, `min`, or `max`.
+    /// Endpoint representation: `signed`, `unsigned`, `min`, `max`, or `raw`.
     pub min_kind: String,
-    /// Endpoint representation: `signed`, `unsigned`, `min`, or `max`.
+    /// Endpoint representation: `signed`, `unsigned`, `min`, `max`, or `raw`.
     pub max_kind: String,
 }
 
@@ -597,12 +597,13 @@ fn is_user_defined_type(mib: &Mib, td: &TypeData) -> bool {
 
 // --- Export building ---
 
-fn range_bound_kind(bound: RangeBound) -> &'static str {
+fn range_bound_kind(bound: &RangeBound) -> &'static str {
     match bound {
         RangeBound::Signed(_) => "signed",
         RangeBound::Unsigned(_) => "unsigned",
         RangeBound::Min => "min",
         RangeBound::Max => "max",
+        RangeBound::Raw(_) => "raw",
     }
 }
 
@@ -610,8 +611,8 @@ fn make_export_range(range: &Range) -> ExportRange {
     ExportRange {
         min: range.min.to_string(),
         max: range.max.to_string(),
-        min_kind: range_bound_kind(range.min).to_string(),
-        max_kind: range_bound_kind(range.max).to_string(),
+        min_kind: range_bound_kind(&range.min).to_string(),
+        max_kind: range_bound_kind(&range.max).to_string(),
     }
 }
 
@@ -1572,6 +1573,11 @@ mod tests {
                 max: RangeBound::Max,
                 span: crate::types::Span::SYNTHETIC,
             },
+            Range {
+                min: RangeBound::Raw("'0G'H".to_string()),
+                max: RangeBound::Raw("'1G'H".to_string()),
+                span: crate::types::Span::SYNTHETIC,
+            },
         ];
         let json = serde_json::to_value(
             ranges
@@ -1589,6 +1595,10 @@ mod tests {
         assert_eq!(json[1]["max"], "MAX");
         assert_eq!(json[1]["minKind"], "min");
         assert_eq!(json[1]["maxKind"], "max");
+        assert_eq!(json[2]["min"], "'0G'H");
+        assert_eq!(json[2]["max"], "'1G'H");
+        assert_eq!(json[2]["minKind"], "raw");
+        assert_eq!(json[2]["maxKind"], "raw");
     }
 
     fn load_scoped_export_mibs() -> crate::mib::Mib {

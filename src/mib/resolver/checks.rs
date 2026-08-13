@@ -836,7 +836,7 @@ fn collect_range_diags(
         for (i, r) in ranges.iter().enumerate() {
             // Exchanged limits (min > max).
             if let Some(ref max) = r.max
-                && range_value_gt(&r.min, max)
+                && range_value_gt(&r.min, max).is_some_and(|greater| greater)
             {
                 diags.push(Diag {
                     code: DiagCode::RangeExchanged,
@@ -852,7 +852,7 @@ fn collect_range_diags(
             }
 
             // Bounds checking against basetype.
-            if let Some((bmin, bmax)) = bounds {
+            if let Some((bmin, bmax)) = &bounds {
                 check_range_bound(diags, ir_id, span, name, &r.min, bmin, bmax, "lower");
                 if let Some(ref max) = r.max {
                     check_range_bound(diags, ir_id, span, name, max, bmin, bmax, "upper");
@@ -864,7 +864,7 @@ fn collect_range_diags(
                 let prev = &ranges[i - 1];
                 let prev_end = prev.max.as_ref().unwrap_or(&prev.min);
                 // Ascending order: current min should be >= previous min.
-                if range_value_gt(&prev.min, &r.min) {
+                if range_value_gt(&prev.min, &r.min).is_some_and(|greater| greater) {
                     diags.push(Diag {
                         code: DiagCode::RangeAscending,
                         ir_id: Some(ir_id),
@@ -873,7 +873,7 @@ fn collect_range_diags(
                     });
                 }
                 // Overlap: current min should be > previous max.
-                if !range_value_gt(&r.min, prev_end) {
+                if range_value_gt(&r.min, prev_end).is_some_and(|greater| !greater) {
                     diags.push(Diag {
                         code: DiagCode::RangeOverlap,
                         ir_id: Some(ir_id),
@@ -898,16 +898,22 @@ fn check_range_bound(
     span: Span,
     name: &str,
     value: &ir::RangeValue,
-    bounds_min: RangeBound,
-    bounds_max: RangeBound,
+    bounds_min: &RangeBound,
+    bounds_max: &RangeBound,
     which: &str,
 ) {
     let value = match value {
         ir::RangeValue::Signed(value) => RangeBound::Signed(*value),
         ir::RangeValue::Unsigned(value) => RangeBound::Unsigned(*value),
-        ir::RangeValue::Min | ir::RangeValue::Max => return,
+        ir::RangeValue::Min | ir::RangeValue::Max | ir::RangeValue::Raw(_) => return,
     };
-    if value.cmp_value(bounds_min).is_lt() || value.cmp_value(bounds_max).is_gt() {
+    if value
+        .cmp_value(bounds_min)
+        .is_some_and(|ordering| ordering.is_lt())
+        || value
+            .cmp_value(bounds_max)
+            .is_some_and(|ordering| ordering.is_gt())
+    {
         diags.push(Diag {
             code: DiagCode::RangeBounds,
             ir_id: Some(ir_id),
@@ -2463,8 +2469,12 @@ fn check_defval_numeric(
         }
         _ => {}
     }
-    // Check RANGE constraints.
-    if ranges_constrained && !value_in_ranges(v, ranges) {
+    // Check RANGE constraints. An unresolved endpoint makes membership
+    // unknowable, so only diagnose when every range is resolved.
+    if ranges_constrained
+        && ranges.iter().all(|range| range.is_resolved())
+        && !value_in_ranges(v, ranges)
+    {
         ctx.emit_diagnostic(
             DiagCode::DefvalRange,
             ir_mod,
@@ -2518,7 +2528,10 @@ fn check_defval_unsigned(
         }
         _ => {}
     }
-    if ranges_constrained && !ranges.iter().any(|range| range.contains_u64(v)) {
+    if ranges_constrained
+        && ranges.iter().all(|range| range.is_resolved())
+        && !ranges.iter().any(|range| range.contains_u64(v))
+    {
         ctx.emit_diagnostic(
             DiagCode::DefvalRange,
             ir_mod,
@@ -3450,32 +3463,27 @@ fn format_range_value(v: &ir::RangeValue) -> String {
         ir::RangeValue::Unsigned(n) => n.to_string(),
         ir::RangeValue::Min => "MIN".to_string(),
         ir::RangeValue::Max => "MAX".to_string(),
+        ir::RangeValue::Raw(value) => value.clone(),
     }
 }
 
-/// Compare two RangeValue endpoints. Returns true if a > b.
-fn range_value_gt(a: &ir::RangeValue, b: &ir::RangeValue) -> bool {
+/// Compare two RangeValue endpoints. Returns whether `a > b`, or `None` when
+/// either endpoint is unresolved.
+fn range_value_gt(a: &ir::RangeValue, b: &ir::RangeValue) -> Option<bool> {
     match (a, b) {
-        (ir::RangeValue::Max, ir::RangeValue::Max) => false,
-        (ir::RangeValue::Max, _) => true,
-        (_, ir::RangeValue::Max) => false,
-        (ir::RangeValue::Min, _) => false,
-        (_, ir::RangeValue::Min) => true,
-        (ir::RangeValue::Signed(x), ir::RangeValue::Signed(y)) => x > y,
-        (ir::RangeValue::Unsigned(x), ir::RangeValue::Unsigned(y)) => x > y,
+        (ir::RangeValue::Raw(_), _) | (_, ir::RangeValue::Raw(_)) => None,
+        (ir::RangeValue::Max, ir::RangeValue::Max) => Some(false),
+        (ir::RangeValue::Max, _) => Some(true),
+        (_, ir::RangeValue::Max) => Some(false),
+        (ir::RangeValue::Min, _) => Some(false),
+        (_, ir::RangeValue::Min) => Some(true),
+        (ir::RangeValue::Signed(x), ir::RangeValue::Signed(y)) => Some(x > y),
+        (ir::RangeValue::Unsigned(x), ir::RangeValue::Unsigned(y)) => Some(x > y),
         (ir::RangeValue::Signed(x), ir::RangeValue::Unsigned(y)) => {
-            if *x < 0 {
-                false
-            } else {
-                (*x as u64) > *y
-            }
+            Some(*x >= 0 && (*x as u64) > *y)
         }
         (ir::RangeValue::Unsigned(x), ir::RangeValue::Signed(y)) => {
-            if *y < 0 {
-                true
-            } else {
-                *x > (*y as u64)
-            }
+            Some(*y < 0 || *x > (*y as u64))
         }
     }
 }
