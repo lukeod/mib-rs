@@ -26,7 +26,8 @@ use crate::types::{Diagnostic, Language, Span};
 pub struct Module {
     /// Canonical module name (e.g. `"IF-MIB"`).
     pub name: String,
-    /// Detected SMI language version.
+    /// Detected SMI language version, or [`Language::Unknown`] when syntax and
+    /// imports provide insufficient or conflicting version evidence.
     pub language: Language,
     /// Flattened imports: one [`Import`] per imported symbol.
     pub imports: Vec<Import>,

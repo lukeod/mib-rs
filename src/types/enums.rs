@@ -264,7 +264,7 @@ impl_display!(Status {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Language {
-    /// Version not yet determined.
+    /// Version not determined, including when evidence is insufficient or conflicting.
     #[default]
     Unknown = 0,
     /// RFC 1155/1212 (Structure of Management Information v1).

@@ -85,7 +85,8 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
     ctx.module_name = module.name.clone();
 
     run_phase("imports", || {
-        module.imports = lower_imports(&ast_module.imports, &mut ctx);
+        module.imports = lower_imports(&ast_module.imports);
+        ctx.language = detect_language(&ast_module);
         module.language = ctx.language;
         debug!(
             target: "mib_rs::lower",
@@ -249,22 +250,48 @@ where
     f();
 }
 
-fn is_smiv2_import(name: &str) -> bool {
-    base_modules::base_module_from_name(name).is_some_and(|bm| bm.language == Language::SMIv2)
+fn detect_language(module: &ast::Module) -> Language {
+    if let Some(language) = base_modules::base_module_from_name(
+        module.name.as_ref().map_or("", |name| name.name.as_str()),
+    )
+    .map(|base| base.language)
+    {
+        return language;
+    }
+
+    let mut has_smiv1_evidence = false;
+    let mut has_smiv2_evidence = false;
+
+    for clause in &module.imports {
+        match base_modules::base_module_from_name(&clause.from_module.name)
+            .map(|base| base.language)
+        {
+            Some(Language::SMIv1) => has_smiv1_evidence = true,
+            Some(Language::SMIv2) => has_smiv2_evidence = true,
+            _ => {}
+        }
+    }
+
+    for definition in &module.body {
+        match definition {
+            ast::Definition::ModuleIdentity(_) => has_smiv2_evidence = true,
+            ast::Definition::TrapType(_) => has_smiv1_evidence = true,
+            _ => {}
+        }
+    }
+
+    match (has_smiv1_evidence, has_smiv2_evidence) {
+        (true, false) => Language::SMIv1,
+        (false, true) => Language::SMIv2,
+        _ => Language::Unknown,
+    }
 }
 
-fn lower_imports(
-    import_clauses: &[ast::ImportClause],
-    ctx: &mut LoweringContext<'_>,
-) -> Vec<ir::Import> {
+fn lower_imports(import_clauses: &[ast::ImportClause]) -> Vec<ir::Import> {
     let mut imports = Vec::new();
 
     for clause in import_clauses {
         let from_module = &clause.from_module.name;
-
-        if is_smiv2_import(from_module) {
-            ctx.language = Language::SMIv2;
-        }
 
         for symbol in &clause.symbols {
             imports.push(ir::Import {
@@ -273,10 +300,6 @@ fn lower_imports(
                 span: symbol.span,
             });
         }
-    }
-
-    if ctx.language == Language::Unknown {
-        ctx.language = Language::SMIv1;
     }
 
     imports

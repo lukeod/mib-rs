@@ -328,7 +328,10 @@ impl<'a> Module<'a> {
         self.data().name()
     }
 
-    /// Return the SMI language version (SMIv1 or SMIv2).
+    /// Return the detected SMI language version.
+    ///
+    /// Returns [`Language::Unknown`] when the available syntax and imports
+    /// provide insufficient or conflicting version evidence.
     pub fn language(self) -> Language {
         self.data().language()
     }

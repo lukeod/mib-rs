@@ -42,11 +42,14 @@ fn primary_corpus_lowering_no_panics() {
                 "module has empty name in {:?}",
                 file
             );
-            // Language should be detected
-            assert_ne!(
-                module.language,
-                mib_rs::types::Language::Unknown,
-                "module {} has unknown language in {:?}",
+            assert!(
+                matches!(
+                    module.language,
+                    mib_rs::types::Language::Unknown
+                        | mib_rs::types::Language::SMIv1
+                        | mib_rs::types::Language::SMIv2
+                ),
+                "module {} has unsupported language in {:?}",
                 module.name,
                 file
             );
@@ -152,6 +155,115 @@ END
 }
 
 #[test]
+fn lower_module_identity_without_imports_detects_smiv2_and_runs_checks() {
+    let source = br#"
+BROKEN-MIB DEFINITIONS ::= BEGIN
+
+brokenMIB MODULE-IDENTITY
+    LAST-UPDATED "200901080000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "test module"
+    REVISION "200901080000Z"
+    DESCRIPTION "Initial version"
+    ::= { enterprises 99999 }
+
+END
+"#;
+    let config = DiagnosticConfig::default();
+    let ast_modules = mib_rs::parser::parse(source, &config);
+    assert_eq!(ast_modules.len(), 1);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+
+    assert_eq!(module.language, mib_rs::types::Language::SMIv2);
+    assert_eq!(
+        module.definitions.len(),
+        1,
+        "module should still be lowered"
+    );
+    assert!(
+        module.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == mib_rs::types::DiagCode::MacroNotImported
+                && diagnostic.message.contains("MODULE-IDENTITY")
+        }),
+        "expected the SMIv2 macro import check, got {:?}",
+        module.diagnostics
+    );
+}
+
+#[test]
+fn lower_conflicting_language_evidence_stays_unknown() {
+    let source = br#"
+HYBRID-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    enterprises FROM RFC1155-SMI;
+
+hybridMIB MODULE-IDENTITY
+    LAST-UPDATED "200901080000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "test module"
+    ::= { enterprises 99999 }
+
+END
+"#;
+    let config = DiagnosticConfig::default();
+    let ast_modules = mib_rs::parser::parse(source, &config);
+    assert_eq!(ast_modules.len(), 1);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+
+    assert_eq!(module.language, mib_rs::types::Language::Unknown);
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != mib_rs::types::DiagCode::MacroNotImported),
+        "conflicting language evidence should not run version-specific checks"
+    );
+}
+
+#[test]
+fn lower_other_smiv2_syntax_alone_stays_unknown() {
+    let source = br#"
+UNKNOWN-MIB DEFINITIONS ::= BEGIN
+
+root OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION "An SMIv2-associated construct without conclusive module evidence"
+    ::= { iso 3 }
+
+END
+"#;
+    let config = DiagnosticConfig::default();
+    let ast_modules = mib_rs::parser::parse(source, &config);
+    assert_eq!(ast_modules.len(), 1);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+
+    assert_eq!(module.language, mib_rs::types::Language::Unknown);
+}
+
+#[test]
+fn lower_parsed_base_modules_use_explicit_language() {
+    for (name, expected) in [
+        ("SNMPv2-SMI", mib_rs::types::Language::SMIv2),
+        ("RFC1155-SMI", mib_rs::types::Language::SMIv1),
+    ] {
+        let source = format!("{name} DEFINITIONS ::= BEGIN\nEND\n");
+        let config = DiagnosticConfig::default();
+        let ast_modules = mib_rs::parser::parse(source.as_bytes(), &config);
+        assert_eq!(ast_modules.len(), 1);
+        let module = mib_rs::lower::lower(
+            ast_modules.into_iter().next().unwrap(),
+            source.as_bytes(),
+            &config,
+        );
+
+        assert_eq!(module.language, expected, "base module {name}");
+    }
+}
+
+#[test]
 fn lower_smiv1_module_detects_language() {
     let source = br#"
 TEST-MIB DEFINITIONS ::= BEGIN
@@ -177,13 +289,9 @@ END
 }
 
 #[test]
-fn lower_trap_type_becomes_notification() {
+fn lower_trap_type_without_imports_detects_smiv1_and_becomes_notification() {
     let source = br#"
 TEST-MIB DEFINITIONS ::= BEGIN
-
-IMPORTS
-    enterprises
-        FROM RFC1155-SMI;
 
 testTrap TRAP-TYPE
     ENTERPRISE enterprises
@@ -196,6 +304,7 @@ END
     let ast_modules = mib_rs::parser::parse(source, &config);
     let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
 
+    assert_eq!(module.language, mib_rs::types::Language::SMIv1);
     assert_eq!(module.definitions.len(), 1);
     match &module.definitions[0] {
         mib_rs::ir::Definition::Notification(n) => {
