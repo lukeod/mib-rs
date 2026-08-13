@@ -182,9 +182,9 @@ impl OidTree {
         self.nodes.len()
     }
 
-    /// Return `true` if the tree contains no nodes.
+    /// Return `true` if the tree contains no nodes other than the synthetic root.
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.nodes.len() == 1
     }
 
     /// Look up a node by id.
@@ -360,6 +360,18 @@ impl<'a> Iterator for SubtreeIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_tree_has_only_synthetic_root() {
+        let mut tree = OidTree::new();
+        assert_eq!(tree.len(), 1);
+        assert!(tree.is_empty());
+
+        let root = tree.root();
+        tree.get_or_create_child(root, 1);
+        assert_eq!(tree.len(), 2);
+        assert!(!tree.is_empty());
+    }
 
     #[test]
     fn tree_construction() {
