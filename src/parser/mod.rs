@@ -34,6 +34,7 @@ pub struct Parser<'src, 'cfg> {
     lexer: Lexer<'src, 'cfg>,
     buf: [Token; 3],
     last_end: ByteOffset,
+    lexer_diagnostic_cursor: usize,
     diagnostics: Vec<SpanDiagnostic>,
     diag_config: &'cfg DiagnosticConfig,
     eof_token: Token,
@@ -77,6 +78,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             lexer,
             buf,
             last_end: ByteOffset(0),
+            lexer_diagnostic_cursor: 0,
             diagnostics: Vec::new(),
             diag_config,
             eof_token,
@@ -340,11 +342,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn collect_module_diagnostics(&mut self, lex_diags_before: usize) -> Vec<SpanDiagnostic> {
-        let lex_diags = self.lexer.diagnostics();
-        let new_lex_diags = &lex_diags[lex_diags_before..];
-        let mut combined = Vec::with_capacity(new_lex_diags.len() + self.diagnostics.len());
-        combined.extend_from_slice(new_lex_diags);
+    fn collect_module_diagnostics(&mut self, ownership_end: ByteOffset) -> Vec<SpanDiagnostic> {
+        let lexer_diagnostics = self.lexer.diagnostics();
+        let owned_count = lexer_diagnostics[self.lexer_diagnostic_cursor..]
+            .iter()
+            .take_while(|diag| diag.span.start < ownership_end)
+            .count();
+        let owned_end = self.lexer_diagnostic_cursor + owned_count;
+
+        let mut combined = Vec::with_capacity(owned_count + self.diagnostics.len());
+        combined.extend_from_slice(&lexer_diagnostics[self.lexer_diagnostic_cursor..owned_end]);
+        self.lexer_diagnostic_cursor = owned_end;
         combined.append(&mut self.diagnostics);
         combined
     }
@@ -424,7 +432,6 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_one_module(&mut self) -> Module {
-        let lex_diags_before = self.lexer.diagnostics().len();
         self.diagnostics.clear();
 
         let start = self.current_span().start;
@@ -445,7 +452,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     imports: Vec::new(),
                     body: Vec::new(),
                     span,
-                    diagnostics: self.collect_module_diagnostics(lex_diags_before),
+                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end),
                 };
             }
         };
@@ -523,7 +530,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         let span = Span::new(start, self.last_end);
-        let diagnostics = self.collect_module_diagnostics(lex_diags_before);
+        let ownership_end = if self.is_eof() {
+            self.eof_token.span.end
+        } else {
+            self.last_end
+        };
+        let diagnostics = self.collect_module_diagnostics(ownership_end);
 
         debug!(
             target: "mib_rs::parser",
@@ -2374,6 +2386,102 @@ mod tests {
         assert_eq!(modules[0].name.as_ref().unwrap().name, "TEST-MIB");
         assert!(modules[0].imports.is_empty());
         assert!(modules[0].body.is_empty());
+    }
+
+    #[test]
+    fn lexer_diagnostic_in_initial_lookahead_is_preserved() {
+        let input = "TEST-MIB { 01 } DEFINITIONS ::= BEGIN\nEND\n";
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 1);
+        let diagnostics: Vec<_> = modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(11, 13));
+    }
+
+    #[test]
+    fn malformed_terminal_header_preserves_lookahead_lexer_diagnostic() {
+        let input = "BAD FOO 01\n";
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 1);
+        assert!(modules[0].name.is_none());
+        let diagnostics: Vec<_> = modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(8, 10));
+    }
+
+    #[test]
+    fn leading_skipped_lexer_diagnostic_is_attached_to_first_module() {
+        let input = "@\nTEST-MIB DEFINITIONS ::= BEGIN\nEND\n";
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 1);
+        let diagnostics: Vec<_> = modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == DiagCode::UnexpectedCharacter)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(0, 1));
+    }
+
+    #[test]
+    fn trailing_skipped_lexer_diagnostic_is_attached_to_last_module() {
+        let input = "TEST-MIB DEFINITIONS ::= BEGIN\n@";
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 1);
+        let diagnostics: Vec<_> = modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == DiagCode::UnexpectedCharacter)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        let at = input.find('@').unwrap();
+        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(at, at + 1));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == DiagCode::ParseError)
+        );
+    }
+
+    #[test]
+    fn lexer_diagnostic_from_next_module_is_not_attached_to_previous_module() {
+        let input = "FIRST-MIB DEFINITIONS ::= BEGIN\nEND\n\
+SECOND-MIB { 02 } DEFINITIONS ::= BEGIN\nEND\n";
+        let modules = parse_strict(input);
+
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name.as_ref().unwrap().name, "FIRST-MIB");
+        assert_eq!(modules[1].name.as_ref().unwrap().name, "SECOND-MIB");
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|diag| diag.code != DiagCode::NumberLeadingZero)
+        );
+        let diagnostics: Vec<_> = modules[1]
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
+            .collect();
+        assert_eq!(diagnostics.len(), 1);
+        let number_start = input.find("02").unwrap();
+        assert_eq!(
+            diagnostics[0].span,
+            Span::from_usize_offsets(number_start, number_start + 2)
+        );
     }
 
     #[test]
