@@ -151,10 +151,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 
     fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
-        let severity = code.severity();
-        if !self.diag_config.should_report(code) {
+        if !self.diag_config.should_collect(code) {
             return;
         }
+        let severity = self.diag_config.effective_severity(code);
         self.diagnostics.push(SpanDiagnostic {
             code,
             severity,

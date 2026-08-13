@@ -39,13 +39,13 @@ impl<'cfg> LoweringContext<'cfg> {
 
     /// Records a diagnostic if the current config allows it.
     pub(crate) fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: String) {
-        let sev = code.severity();
-        if !self.diag_config.should_report(code) {
+        if !self.diag_config.should_collect(code) {
             return;
         }
+        let severity = self.diag_config.effective_severity(code);
         let (line, col) = crate::types::line_col_from_table(&self.line_table, span.start);
         self.diagnostics.push(Diagnostic {
-            severity: sev,
+            severity,
             code,
             message,
             module: Some(self.module_name.clone()),
@@ -145,12 +145,12 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
     run_phase("diagnostics", || {
         // Convert AST span-based diagnostics to line/col diagnostics.
         for d in &ast_module.diagnostics {
-            if !ctx.diag_config.should_report(d.code) {
+            if !ctx.diag_config.should_collect(d.code) {
                 continue;
             }
             let (line, col) = crate::types::line_col_from_table(&ctx.line_table, d.span.start);
             module.diagnostics.push(Diagnostic {
-                severity: d.severity,
+                severity: ctx.diag_config.effective_severity(d.code),
                 code: d.code,
                 message: d.message.clone(),
                 module: Some(module.name.clone()),

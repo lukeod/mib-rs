@@ -134,23 +134,27 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn make_error(&self, message: String) -> SpanDiagnostic {
         SpanDiagnostic {
-            severity: DiagCode::ParseError.severity(),
+            severity: self.diag_config.effective_severity(DiagCode::ParseError),
             code: DiagCode::ParseError,
             span: self.current_span(),
             message,
         }
     }
 
-    fn record_parse_error(&mut self, diag: SpanDiagnostic) {
+    fn record_parse_error(&mut self, mut diag: SpanDiagnostic) {
+        if !self.diag_config.should_collect(diag.code) {
+            return;
+        }
+        diag.severity = self.diag_config.effective_severity(diag.code);
         self.diagnostics.push(diag);
     }
 
     fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
-        if !self.diag_config.should_report(code) {
+        if !self.diag_config.should_collect(code) {
             return;
         }
         self.diagnostics.push(SpanDiagnostic {
-            severity: code.severity(),
+            severity: self.diag_config.effective_severity(code),
             code,
             span,
             message: message.into(),
@@ -161,11 +165,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     where
         F: FnOnce() -> String,
     {
-        if !self.diag_config.should_report(code) {
+        if !self.diag_config.should_collect(code) {
             return;
         }
         self.diagnostics.push(SpanDiagnostic {
-            severity: code.severity(),
+            severity: self.diag_config.effective_severity(code),
             code,
             span,
             message: message(),

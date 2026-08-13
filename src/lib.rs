@@ -753,7 +753,9 @@
 //!   error. For example, set to [`Severity::Minor`] to fail on any
 //!   minor issue.
 //! - `overrides` - promote or demote specific diagnostic codes (e.g.
-//!   turn a warning into an error).
+//!   turn a warning into an error). The effective severity is stored on
+//!   collected diagnostics and controls `fail_at`; demotion does not suppress
+//!   an otherwise collected diagnostic.
 //! - `ignore` - glob patterns to suppress specific diagnostic codes
 //!   entirely (e.g. `"import-*"` to ignore all import-related
 //!   diagnostics).

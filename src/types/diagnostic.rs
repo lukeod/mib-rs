@@ -1,9 +1,9 @@
 //! Diagnostic reporting and configuration.
 //!
 //! [`Diagnostic`] represents a single issue found during parsing or resolution.
-//! [`DiagnosticConfig`] controls which diagnostics are reported and which
-//! severities cause loading to fail, with preset configurations for common
-//! use cases.
+//! [`DiagnosticConfig`] controls diagnostic collection, presentation, severity
+//! overrides, and load failure thresholds, with preset configurations for
+//! common use cases.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -13,11 +13,11 @@ use super::{DiagCode, ReportingLevel, Severity};
 /// An issue found during parsing or resolution.
 ///
 /// Created from [`SpanDiagnostic`](super::SpanDiagnostic) during lowering, or
-/// directly by the resolver. Use [`DiagnosticConfig::should_report`] to filter
-/// which diagnostics to display.
+/// directly by the resolver. Its [`severity`](Self::severity) is the effective
+/// severity after applying [`DiagnosticConfig::overrides`].
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    /// Severity of this diagnostic.
+    /// Effective severity after applying diagnostic configuration overrides.
     pub severity: Severity,
     /// Diagnostic code identifying the issue category.
     pub code: DiagCode,
@@ -49,9 +49,9 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// Controls diagnostic reporting and failure policy.
+/// Controls diagnostic collection, presentation, and failure policy.
 ///
-/// This is purely about reporting. It does NOT control resolver behavior.
+/// This does NOT control resolver behavior.
 /// Resolver fallback behavior is controlled by [`ResolverStrictness`](crate::types::ResolverStrictness).
 #[derive(Debug, Clone)]
 pub struct DiagnosticConfig {
@@ -60,6 +60,10 @@ pub struct DiagnosticConfig {
     /// Diagnostics at this severity or above cause loading to fail.
     pub fail_at: Severity,
     /// Per-code severity overrides (e.g. promote a warning to error).
+    ///
+    /// Overrides change the severity stored on emitted diagnostics and used by
+    /// failure checks. Demoting a diagnostic does not by itself suppress it;
+    /// use [`ignore`](Self::ignore) for suppression.
     pub overrides: HashMap<DiagCode, Severity>,
     /// Glob patterns for [`DiagCode`] strings to suppress (supports `*` and `?`).
     pub ignore: Vec<String>,
@@ -117,36 +121,61 @@ impl DiagnosticConfig {
         }
     }
 
-    /// Returns `true` if a diagnostic with the given code should be reported
-    /// at the current reporting level, accounting for overrides and ignore patterns.
-    pub fn should_report(&self, code: DiagCode) -> bool {
-        let default_sev = code.severity();
-        let effective_sev = self.overrides.get(&code).copied().unwrap_or(default_sev);
+    /// Returns the configured severity for a diagnostic code.
+    ///
+    /// This is the severity stored on emitted diagnostics and evaluated by
+    /// [`should_fail`](Self::should_fail).
+    pub fn effective_severity(&self, code: DiagCode) -> Severity {
+        self.overrides
+            .get(&code)
+            .copied()
+            .unwrap_or_else(|| code.severity())
+    }
 
-        // Fatal diagnostics are always reported.
-        if effective_sev <= Severity::Fatal {
+    /// Returns `true` if the diagnostic code matches an [`ignore`](Self::ignore) pattern.
+    pub fn is_ignored(&self, code: DiagCode) -> bool {
+        let code_str = code.as_code();
+        self.ignore
+            .iter()
+            .any(|pattern| match_glob(pattern, code_str))
+    }
+
+    /// Returns `true` if the reporting level collects the given severity.
+    ///
+    /// Fatal diagnostics are always collected, including in silent mode.
+    /// Ignore patterns are a separate policy evaluated by
+    /// [`should_collect`](Self::should_collect).
+    pub fn should_report(&self, severity: Severity) -> bool {
+        severity == Severity::Fatal
+            || self
+                .max_reported_severity()
+                .is_some_and(|max| severity <= max)
+    }
+
+    /// Returns `true` if a diagnostic with the given code should be collected.
+    ///
+    /// Promotions can bring a diagnostic into the configured reporting level,
+    /// while demotions do not discard a diagnostic that its default severity
+    /// would collect. Effective fatal diagnostics are always collected,
+    /// including when ignored or reporting is silent.
+    pub fn should_collect(&self, code: DiagCode) -> bool {
+        let effective_severity = self.effective_severity(code);
+
+        if effective_severity == Severity::Fatal {
             return true;
         }
 
-        // Check ignore list.
-        let code_str = code.as_code();
-        if self
-            .ignore
-            .iter()
-            .any(|pattern| match_glob(pattern, code_str))
-        {
+        if self.is_ignored(code) {
             return false;
         }
 
-        match self.max_reported_severity() {
-            Some(max) => effective_sev <= max,
-            None => false,
-        }
+        self.should_report(code.severity()) || self.should_report(effective_severity)
     }
 
-    /// Returns `true` if the given severity meets or exceeds the [`fail_at`](Self::fail_at) threshold.
-    pub fn should_fail(&self, sev: Severity) -> bool {
-        sev <= self.fail_at
+    /// Returns `true` if the given effective severity meets or exceeds the
+    /// [`fail_at`](Self::fail_at) threshold.
+    pub fn should_fail(&self, severity: Severity) -> bool {
+        severity <= self.fail_at
     }
 
     /// Returns the maximum severity number (least severe) that should be
@@ -246,25 +275,84 @@ mod tests {
     fn should_report_respects_level() {
         let config = DiagnosticConfig::default();
         // Default reports Minor and above (sev 0-3)
-        assert!(config.should_report(DiagCode::ParseError));
-        assert!(config.should_report(DiagCode::MacroNotImported));
-        assert!(!config.should_report(DiagCode::IdentifierUnderscore));
+        assert!(config.should_report(Severity::Error));
+        assert!(config.should_report(Severity::Minor));
+        assert!(!config.should_report(Severity::Style));
     }
 
     #[test]
     fn should_report_silent() {
         let config = DiagnosticConfig::silent();
         // Silent reports nothing except fatal
-        assert!(!config.should_report(DiagCode::ImportNotFound));
-        assert!(!config.should_report(DiagCode::IdentifierUnderscore));
+        assert!(config.should_report(Severity::Fatal));
+        assert!(!config.should_report(Severity::Error));
+        assert!(!config.should_report(Severity::Style));
     }
 
     #[test]
     fn should_report_verbose() {
         let config = DiagnosticConfig::verbose();
         // Verbose reports everything
-        assert!(config.should_report(DiagCode::ParseError));
-        assert!(config.should_report(DiagCode::IdentifierUnderscore));
+        assert!(config.should_report(Severity::Error));
+        assert!(config.should_report(Severity::Style));
+    }
+
+    #[test]
+    fn effective_severity_applies_override() {
+        let mut config = DiagnosticConfig::default();
+        config
+            .overrides
+            .insert(DiagCode::MacroNotImported, Severity::Severe);
+
+        assert_eq!(
+            config.effective_severity(DiagCode::MacroNotImported),
+            Severity::Severe
+        );
+        assert_eq!(
+            config.effective_severity(DiagCode::ParseError),
+            Severity::Error
+        );
+    }
+
+    #[test]
+    fn promotion_affects_collection() {
+        let mut config = DiagnosticConfig::default();
+        config
+            .overrides
+            .insert(DiagCode::IdentifierUnderscore, Severity::Minor);
+
+        assert!(config.should_collect(DiagCode::IdentifierUnderscore));
+    }
+
+    #[test]
+    fn demotion_does_not_discard_collected_diagnostic() {
+        let mut config = DiagnosticConfig::quiet();
+        config
+            .overrides
+            .insert(DiagCode::ParseError, Severity::Info);
+
+        assert!(config.should_collect(DiagCode::ParseError));
+    }
+
+    #[test]
+    fn ignore_suppresses_nonfatal_diagnostic() {
+        let mut config = DiagnosticConfig::verbose();
+        config.ignore.push("parse-*".to_string());
+
+        assert!(config.is_ignored(DiagCode::ParseError));
+        assert!(!config.should_collect(DiagCode::ParseError));
+    }
+
+    #[test]
+    fn effective_fatal_is_always_collected() {
+        let mut config = DiagnosticConfig::silent();
+        config
+            .overrides
+            .insert(DiagCode::IdentifierUnderscore, Severity::Fatal);
+        config.ignore.push("identifier-*".to_string());
+
+        assert!(config.is_ignored(DiagCode::IdentifierUnderscore));
+        assert!(config.should_collect(DiagCode::IdentifierUnderscore));
     }
 
     #[test]

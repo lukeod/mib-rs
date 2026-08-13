@@ -76,7 +76,7 @@ impl Span {
 /// and a line table become available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpanDiagnostic {
-    /// Severity of the issue.
+    /// Effective severity after applying diagnostic configuration overrides.
     pub severity: super::Severity,
     /// Diagnostic code identifying the issue category.
     pub code: DiagCode,

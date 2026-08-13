@@ -111,8 +111,8 @@ impl Loader {
         self
     }
 
-    /// Set the [`DiagnosticConfig`] controlling which diagnostics are
-    /// reported and which severity triggers a [`LoadError::DiagnosticThreshold`].
+    /// Set the [`DiagnosticConfig`] controlling diagnostic collection,
+    /// severity overrides, and the [`LoadError::DiagnosticThreshold`].
     pub fn diagnostic_config(mut self, config: DiagnosticConfig) -> Self {
         self.diag_config = config;
         self

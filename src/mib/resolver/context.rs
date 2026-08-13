@@ -215,10 +215,10 @@ impl ResolverContext {
         span: Span,
         message: String,
     ) {
-        let severity = code.severity();
-        if !self.diag_config.should_report(code) {
+        if !self.diag_config.should_collect(code) {
             return;
         }
+        let severity = self.diag_config.effective_severity(code);
         let (module_name, line, col) = match ir_mod {
             Some(id) => {
                 let m = &self.modules[id.index()];
