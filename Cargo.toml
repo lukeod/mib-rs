@@ -21,6 +21,10 @@ name = "mib-rs"
 path = "src/bin/mib-rs.rs"
 required-features = ["cli"]
 
+[[example]]
+name = "export"
+required-features = ["serde"]
+
 [dependencies]
 thiserror = "2"
 tracing = "0.1"

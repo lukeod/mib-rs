@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gate the JSON export example and its embedded documentation on the `serde` feature
 - Resolve definition names independently of preferred OID-tree attachments when OIDs are shared
 - Detect SMI versions from unambiguous syntax and base module names as well as imports
 - Apply diagnostic severity overrides to stored diagnostics and load failure checks

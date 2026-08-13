@@ -766,7 +766,7 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `serde` | yes | Serde support and JSON export via [`export`] |
+//! | `serde` | yes | Serde support and JSON export via `export` |
 //! | `cli` | yes | CLI binary (`mib-rs`) |
 //!
 //! # Examples
@@ -816,13 +816,16 @@
 #![doc = include_str!("../examples/modules.rs")]
 //! ```
 //!
-//! ## JSON export
-//!
-//! JSON export of a resolved MIB using the serde-based export API.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/export.rs")]
-//! ```
+#![cfg_attr(
+    feature = "serde",
+    doc = concat!(
+        "## JSON export\n\n",
+        "JSON export of a resolved MIB using the serde-based export API.\n\n",
+        "```rust,no_run\n",
+        include_str!("../examples/export.rs"),
+        "\n```\n"
+    )
+)]
 //!
 //! ## Notifications, groups, and compliance
 //!
