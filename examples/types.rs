@@ -27,7 +27,7 @@ fn main() {
     println!("  Status:       {:?}", ty.status());
     println!("  Description:  {}", ty.description());
     assert_eq!(ty.effective_base(), BaseType::Integer32);
-    assert_eq!(ty.effective_display_hint(), "d-%");
+    assert_eq!(ty.effective_display_hint(), "d");
 
     // Range constraints
     let ranges = ty.effective_ranges();

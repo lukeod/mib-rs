@@ -10,8 +10,8 @@ use mib_rs::Loader;
 use mib_rs::types::Span;
 
 fn main() {
-    // Use a MIB with a deliberately unused import (NoSuchThing) and
-    // a used-but-from-wrong-module pattern to show import analysis.
+    // The fixture contains both used and unused imports so the example can
+    // show the import-resolution metadata.
     let source = mib_rs::source::memory(
         "RAW-EXAMPLE-MIB",
         br#"RAW-EXAMPLE-MIB DEFINITIONS ::= BEGIN
@@ -26,6 +26,8 @@ rawMib MODULE-IDENTITY
     ORGANIZATION "Example Corp"
     CONTACT-INFO "support@example.com"
     DESCRIPTION "Example module for raw API demo."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 99990 }
 
 RawName ::= TEXTUAL-CONVENTION

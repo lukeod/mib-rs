@@ -10,8 +10,8 @@
 //! descriptions, so instead of `1.3.6.1.2.1.1.1` you can say `sysDescr`.
 //!
 //! MIBs are written in a language called SMI (Structure of Management
-//! Information), which has two versions: SMIv1 (RFC 1155/1212) and SMIv2
-//! (RFC 2578/2579/2580). This crate handles both transparently.
+//! Information), which has two versions: SMIv1 (RFC 1155/1212/1215) and
+//! SMIv2 (RFC 2578/2579/2580). This crate parses both versions.
 //!
 //! # API Layers
 //!
@@ -22,9 +22,8 @@
 //! Handles wrap an arena ID and a `&Mib` reference. Methods on
 //! handles return further handles, so typical usage looks like
 //! `object.ty()?.effective_base()` without touching IDs directly.
-//! The handle API covers OID resolution, type chain introspection,
-//! table/index navigation, module iteration, diagnostics, and
-//! everything else documented in the sections below.
+//! The handle API covers OID resolution, type-chain introspection,
+//! table and index navigation, module iteration, and diagnostics.
 //!
 //! Every handle exposes its arena ID via `.id()`. IDs are
 //! `Copy + Eq + Hash + Ord`, so you can store them in collections
@@ -86,6 +85,8 @@
 //!     ORGANIZATION "Example"
 //!     CONTACT-INFO "Example"
 //!     DESCRIPTION "Example module used in crate docs."
+//!     REVISION "202603120000Z"
+//!     DESCRIPTION "Initial version."
 //!     ::= { enterprises 99999 }
 //!
 //! DocName ::= TEXTUAL-CONVENTION
@@ -161,8 +162,8 @@
 //!
 //! # OIDs and Resolution
 //!
-//! Every named element in a MIB has an OID, a path through a global tree
-//! shared by all SNMP devices. OIDs are written as dotted decimal
+//! Objects, notifications, and other OID-bearing definitions occupy a path
+//! in the global OID tree. OIDs are written as dotted decimal
 //! (`1.3.6.1.2.1.1.1`) or symbolically (`sysDescr`). The tree is
 //! hierarchical: `enterprises` is `1.3.6.1.4.1`, and a vendor's subtree
 //! hangs beneath that.
@@ -287,9 +288,10 @@
 //!
 //! # Modules
 //!
-//! A MIB file contains one module (e.g. `IF-MIB`, `SNMPv2-MIB`). Modules
-//! import symbols from other modules, so loading one module typically
-//! pulls in its dependencies automatically.
+//! A MIB module is a named definition unit such as `IF-MIB` or
+//! `SNMPv2-MIB`. A source file usually contains one module, although the
+//! parser also accepts concatenated modules. Modules import symbols from
+//! other modules, so the loader also loads requested modules' dependencies.
 //!
 //! ## Base modules
 //!
@@ -559,36 +561,18 @@
 //! loading, check [`Mib::has_errors`] and inspect [`Mib::diagnostics`]
 //! for details.
 //!
-//! There are two independent knobs that control loading behavior.
-//! They can seem redundant at first ("don't both of them control how
-//! strict loading is?"), but they operate at different levels.
+//! Two settings affect loading:
 //!
-//! Think of it like a Rust analogy: [`ResolverStrictness`] is like
-//! controlling how `use` imports are resolved. In Rust, `use foo::Bar`
-//! must name the exact path. In MIBs, imports work similarly - a module
-//! declares `IMPORTS DisplayString FROM SNMPv2-TC`. But many real-world
-//! MIBs get this wrong: they import from the wrong module, forget to
-//! import well-known names they assume are built-in, or don't declare
-//! imports at all. `ResolverStrictness` controls how hard the resolver
-//! tries to recover from these mistakes, from following only explicit
-//! import chains (`Strict`) to searching all loaded modules by name
-//! (`Permissive`).
+//! - [`ResolverStrictness`] controls which fallback lookups the resolver may
+//!   use for missing or incorrect imports.
+//! - [`DiagnosticConfig`] controls which lexer, parser, and resolver
+//!   diagnostics are retained and which severities make `load()` fail. It
+//!   does not change resolution behavior.
 //!
-//! [`DiagnosticConfig`], on the other hand, is like compiler warnings
-//! and `-Werror`. It controls what gets reported across the entire
-//! pipeline (lexing, parsing, and resolution), and whether problems
-//! cause `load()` to fail. It doesn't change what gets resolved.
-//!
-//! The key tradeoff with `ResolverStrictness` is **correctness vs
-//! completeness**. The more permissive you go, the more things get
-//! resolved, but the higher the risk of incorrect results. At
-//! `Permissive`, the resolver falls back to searching all loaded
-//! modules for a matching symbol name. If multiple modules define a
-//! symbol with the same name, you're essentially guessing which one
-//! was intended. At `Strict`, the resolver only follows deterministic
-//! strategies where the source is unambiguous (explicit imports,
-//! import forwarding chains, ASN.1 primitives), so resolved symbols
-//! are traceable back to their origin.
+//! Broader fallback lookup can resolve more vendor MIBs, but a global lookup
+//! can be ambiguous when several modules define the same name. `Strict`
+//! limits resolution to deterministic sources such as explicit imports,
+//! import-forwarding chains, and ASN.1 primitives.
 //!
 //! ## ResolverStrictness - what the resolver attempts
 //!
@@ -598,9 +582,9 @@
 //!
 //! | Level | Behavior | Correctness risk | When to use |
 //! |-------|----------|-----------------|-------------|
-//! | `Strict` | Minimal fallbacks. Only deterministic strategies that don't guess the source module. | Lowest - if it resolves, the import chain is traceable. | Validating MIBs for correctness, linting, CI checks. |
-//! | `Normal` (default) | Constrained fallbacks: searches well-known base modules for unimported types and OID roots, and resolves module name aliases. | Low - fallbacks are limited to safe, unambiguous cases. | General use. Handles sloppy imports that are obviously resolvable. |
-//! | `Permissive` | All fallbacks, including searching every loaded module for a symbol by name. | Higher - if two modules define `FooStatus`, the resolver picks one. | Loading badly-written vendor MIBs that you can't fix. |
+//! | `Strict` | Uses deterministic resolution paths only. | Lowest | MIB validation, linting, and CI checks. |
+//! | `Normal` (default) | Also searches well-known base modules and resolves module-name aliases. | Low | General use and common missing base-module imports. |
+//! | `Permissive` | Also permits global fallback for the object and conformance references listed below. | Higher | Vendor MIBs that require global fallback resolution. |
 //!
 //! ### Specific behaviors by level
 //!
@@ -695,16 +679,9 @@
 //!   MODULE-COMPLIANCE mandatory groups, and AGENT-CAPABILITIES
 //!   variation targets are searched globally.
 //!
-//! **Which should I use?** Start with `Normal` (the default). If you
-//! get unresolved-reference diagnostics, it's usually better to fix
-//! the MIB file directly (correcting the `IMPORTS` statement to name
-//! the right source module) rather than reaching for `Permissive`.
-//! MIB files are plain text, and import fixes are usually obvious from
-//! the diagnostic message. Reserve `Permissive` for cases where you
-//! can't modify the MIB files, such as vendor-supplied MIBs loaded
-//! from a read-only path. `Strict` is useful for validation tooling
-//! or CI, where you want broken imports to surface as unresolved
-//! references rather than being silently fixed up.
+//! `Normal` is the default. Use `Strict` when unresolved imports must remain
+//! visible, such as during validation or CI. Use `Permissive` when required
+//! MIB inputs cannot be corrected and depend on global fallback lookup.
 //!
 //! ## DiagnosticConfig - what gets reported
 //!
@@ -722,30 +699,16 @@
 //! | [`DiagnosticConfig::quiet()`] | Errors and above only | Severe | Production code that just wants to know about real problems. |
 //! | [`DiagnosticConfig::silent()`] | Nothing | Fatal only | When you don't care about diagnostics at all and want `load()` to succeed unless something is truly broken. |
 //!
-//! **Which should I use?** The default is fine for most cases. Use
-//! `quiet()` in production if you don't want to surface minor issues
-//! to users. Use `silent()` when loading untrusted or messy vendor
-//! MIBs where you just want whatever data you can get. Use `verbose()`
-//! when diagnosing why something isn't resolving correctly.
+//! The default retains minor and more severe diagnostics. `verbose()` also
+//! retains informational and style diagnostics; `quiet()` retains errors and
+//! more severe diagnostics; `silent()` retains only fatal diagnostics.
 //!
 //! ## Combining the two
 //!
-//! Since strictness controls resolution behavior and diagnostics
-//! controls reporting across the whole pipeline, they can be mixed
-//! freely:
-//!
-//! - `Normal` + `default()` - good general-purpose defaults.
-//! - `Permissive` + `silent()` - maximum tolerance. Tries every
-//!   fallback, suppresses all diagnostics, only fails on fatal errors.
-//!   Good for loading a pile of vendor MIBs where you want whatever
-//!   data you can get. Be aware that some resolved symbols may be
-//!   incorrect due to ambiguous fallback matches.
-//! - `Strict` + `verbose()` - maximum strictness. Minimal fallbacks,
-//!   all diagnostics reported (including parse warnings and style
-//!   issues). Good for validating MIBs you author.
-//! - `Normal` + `quiet()` - reasonable for a production SNMP tool that
-//!   loads user-provided MIBs. Safe fallbacks, but only real errors
-//!   are surfaced.
+//! Strictness and reporting can be configured independently. For example,
+//! `Strict` with `verbose()` retains detailed diagnostics without enabling
+//! fallback resolution, while `Permissive` with `quiet()` enables all
+//! fallbacks but retains only errors and more severe diagnostics.
 //!
 //! ## Fine-tuning
 //!
@@ -767,117 +730,24 @@
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
 //! | `serde` | yes | Serde support and JSON export via `export` |
-//! | `cli` | yes | CLI binary (`mib-rs`) |
+//! | `cli` | yes | CLI binary (`mib-rs`); enables `serde` |
 //!
 //! # Examples
 //!
-//! Runnable examples live in the `examples/` directory. Each one can be run
-//! with `cargo run --example <name>`.
+//! The repository's [`examples` directory](https://github.com/lukeod/mib-rs/tree/main/examples)
+//! contains runnable programs for loading, queries, OID walks, tables, types,
+//! notifications, diagnostics, source configuration, raw data, tokenization,
+//! and JSON export.
 //!
-//! ## Basic usage
+//! Run an example by name:
 //!
-//! Load a MIB from memory, query objects, and display module metadata.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/basic.rs")]
+//! ```text
+//! cargo run --example basic
+//! cargo run --example tables
+//! cargo run --example diagnostics
 //! ```
 //!
-//! ## OID tree walking
-//!
-//! Root traversal, subtree iteration, depth-first walk, and node navigation.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/walk.rs")]
-//! ```
-//!
-//! ## Type introspection
-//!
-//! Type chains, effective values, constraints, enums, display hints,
-//! and classification predicates.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/types.rs")]
-//! ```
-//!
-//! ## Table navigation
-//!
-//! Tables, rows, columns, indexes, and object kind predicates.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/tables.rs")]
-//! ```
-//!
-//! ## Module metadata
-//!
-//! Module metadata, imports, revisions, base modules, and module-scoped
-//! iteration.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/modules.rs")]
-//! ```
-//!
-#![cfg_attr(
-    feature = "serde",
-    doc = concat!(
-        "## JSON export\n\n",
-        "JSON export of a resolved MIB using the serde-based export API.\n\n",
-        "```rust,no_run\n",
-        include_str!("../examples/export.rs"),
-        "\n```\n"
-    )
-)]
-//!
-//! ## Notifications, groups, and compliance
-//!
-//! Notifications, object groups, notification groups, and compliance statements.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/notifications.rs")]
-//! ```
-//!
-//! ## Query formats
-//!
-//! Plain names, qualified names, numeric OIDs, instance OIDs, and OID formatting.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/query.rs")]
-//! ```
-//!
-//! ## Diagnostics
-//!
-//! Diagnostic collection, strictness levels, reporting configuration,
-//! filtering, and severity overrides.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/diagnostics.rs")]
-//! ```
-//!
-//! ## Raw data access
-//!
-//! Low-level raw data access: sub-clause spans, import metadata,
-//! OID references, symbol tables, and bulk arena access.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/raw.rs")]
-//! ```
-//!
-//! ## Tokenization
-//!
-//! Lexical tokenization of MIB source text for syntax highlighting,
-//! linting, or custom tooling.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/tokens.rs")]
-//! ```
-//!
-//! ## Sources
-//!
-//! Source types: in-memory modules, directory sources, chaining,
-//! and module listing.
-//!
-//! ```rust,no_run
-#![doc = include_str!("../examples/sources.rs")]
-//! ```
+//! The JSON export example requires the `serde` feature.
 pub mod ast;
 pub mod error;
 #[cfg(feature = "serde")]

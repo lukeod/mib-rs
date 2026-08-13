@@ -10,6 +10,8 @@ docExampleMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Example module used in crate docs."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 99999 }
 
 DocName ::= TEXTUAL-CONVENTION

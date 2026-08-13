@@ -15,14 +15,14 @@ occur in minor releases with no attempt to maintain backward compatibility.
 
 ## Features
 
-- **Full SMI support**: Parses both SMIv1 (RFC 1155/1212) and SMIv2 (RFC 2578/2579/2580)
-- **Multi-phase resolver**: Registration, imports, types, OIDs, and semantics
+- **SMIv1 and SMIv2 parsing**: Supports RFC 1155/1212/1215 and RFC 2578/2579/2580 constructs
+- **Six-phase resolver**: Registration, imports, types, OIDs, semantics, and checks
 - **OID tree**: Numeric and symbolic OID resolution, subtree walking, instance lookups
-- **Type chains**: Full type inheritance with effective base type, display hints, enums, ranges
+- **Type chains**: Inherited base types, display hints, enums, and constraints
 - **Display-hint formatting**: RFC 2579 value formatting, numeric scaling, and octet-string rendering
 - **Table support**: Rows, columns, indexes (including augmented/implied)
 - **Diagnostics**: Configurable strictness levels with collected diagnostics instead of fail-fast
-- **Parallel loading**: File I/O and parsing parallelized across available CPUs, sequential single-threaded resolution
+- **Parallel bulk loading**: Loading all discoverable modules uses available CPUs; selected-module loading and resolution are sequential
 - **Synthetic base modules**: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others built in
 - **System path discovery**: Auto-detects net-snmp and libsmi MIB directories
 - **Layered API**: Handle-based query API, low-level arena access, and public compiler pipeline
@@ -61,6 +61,8 @@ myMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Example module."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 99999 }
 
 myName OBJECT-TYPE
@@ -157,7 +159,7 @@ mib-rs load --report quiet IF-MIB      # reporting level: silent, quiet, default
 # Look up an OID or name
 mib-rs get sysDescr
 mib-rs get 1.3.6.1.2.1.1.1
-mib-rs get sysDescr --full              # show full description (default: first line, max 80 chars)
+mib-rs get sysDescr --full              # disable the default 200-character description limit
 mib-rs get sysDescr -m SNMPv2-MIB      # only load specific modules
 
 # Show a subtree
@@ -175,6 +177,11 @@ mib-rs find "*Group" --kind group       # kinds: node, scalar, table, row, colum
 mib-rs find "if*" --type Integer32      # base-type filter (objects only)
 mib-rs find "if*" --count               # print match count only
 mib-rs find "if*" -m IF-MIB            # only load specific modules
+mib-rs find "if*" --format json        # JSON output
+
+# Inspect a symbol in detail
+mib-rs inspect ifTable
+mib-rs inspect IF-MIB::ifEntry
 
 # List available modules
 mib-rs list
@@ -185,6 +192,7 @@ mib-rs paths
 
 # Lint with strict diagnostics
 mib-rs lint IF-MIB
+mib-rs lint IF-MIB --format json
 
 # Export as JSON (diagnostics go to stderr)
 mib-rs dump IF-MIB
@@ -197,13 +205,13 @@ mib-rs dump --report silent IF-MIB     # suppress diagnostics on stderr
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `serde` | yes | Serde support and JSON export |
-| `cli` | yes | CLI binary (`mib-rs`) |
+| `cli` | yes | CLI binary (`mib-rs`); enables `serde` |
 
 To use the library without defaults:
 
 ```toml
 [dependencies]
-mib-rs = { version = "0.7", default-features = false }
+mib-rs = { version = "0.8", default-features = false }
 ```
 
 ## Minimum Supported Rust Version

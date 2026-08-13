@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make the `cli` feature enable the Serde dependencies required by CLI JSON output
 - Report an OID tree containing only its synthetic root as empty
 - Count unqualified imported roots in compound OID DEFVAL values as used imports
 - Expand literal `$HOME` occurrences in net-snmp MIB paths from configuration and `MIBDIRS`
@@ -47,14 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add `inspect` CLI subcommand for deep-dive symbol inspection (type chains, provenance, group membership, diagnostics, column tables)
+- Add `inspect` CLI subcommand for detailed symbol inspection (type chains, provenance, group membership, diagnostics, column tables)
 - Add `imports_symbol()` and `import_source()` methods to Module handle
 - Add `index()` iterator to Object handle for raw INDEX entries
 
 ### Changed
 
-- Make registration phase own resolver modules instead of borrowing
-- Add global fallbacks to `link_object_indexes` in permissive mode
+- Resolve object indexes through global fallback lookup in permissive mode
 
 ### Fixed
 
@@ -64,8 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Simplify Node.module() to return the OID-phase owner directly, removing the entity-cascading priority chain
-- Gate infer_node_kinds behind should_prefer_module so the preferred module's OBJECT-TYPE determines structural classification
+- Make `Node::module()` return the selected owner of the OID tree node
+- Use the selected module's `OBJECT-TYPE` when classifying nodes that share an OID
 
 ## [0.7.0] - 2026-03-18
 
@@ -177,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add 12 runnable examples covering the full public API (basic, walk, types, tables, modules, export, notifications, query, diagnostics, raw, tokens, sources)
+- Add 12 runnable examples for loading, queries, OID walks, types, tables, modules, export, notifications, diagnostics, raw data, tokens, and sources
 - Embed examples in crate-level rustdoc via include_str
 
 ### Changed

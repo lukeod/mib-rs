@@ -34,7 +34,7 @@ ExDeviceStatus ::= TEXTUAL-CONVENTION
     }
 
 ExPercentage ::= TEXTUAL-CONVENTION
-    DISPLAY-HINT "d-%"
+    DISPLAY-HINT "d"
     STATUS current
     DESCRIPTION "A percentage value."
     SYNTAX Integer32 (0..100)
@@ -197,7 +197,7 @@ exStatusChange NOTIFICATION-TYPE
     ::= { exNotifs 1 }
 
 exIfStatusChange NOTIFICATION-TYPE
-    OBJECTS { exIfIndex, exIfName, exIfStatus }
+    OBJECTS { exIfName, exIfStatus }
     STATUS current
     DESCRIPTION "Interface status changed."
     ::= { exNotifs 2 }

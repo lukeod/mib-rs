@@ -40,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
 [features]
 default = ["serde", "cli"]
 serde = ["dep:serde", "dep:serde_json", "smallvec/serde"]
-cli = ["dep:clap", "dep:tracing-subscriber"]
+cli = ["serde", "dep:clap", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 pretty_assertions = "1"

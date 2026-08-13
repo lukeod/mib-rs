@@ -18,6 +18,8 @@ memMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "In-memory module."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 11111 }
 
 END
@@ -47,6 +49,8 @@ multiAMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Module A."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 22221 }
 END
 "#
@@ -64,6 +68,8 @@ multiBMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Module B."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 22222 }
 END
 "#
@@ -77,10 +83,8 @@ END
         .load()
         .expect("should load");
 
-    for module in mib.modules() {
-        if !module.is_base() {
-            println!("  Loaded: {}", module.name());
-        }
+    for module in mib.user_modules() {
+        println!("  Loaded: {}", module.name());
     }
 
     // -- Source chaining --
@@ -98,6 +102,8 @@ primaryMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Primary source."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 33331 }
 END
 "#
@@ -116,6 +122,8 @@ fallbackMib MODULE-IDENTITY
     ORGANIZATION "Example"
     CONTACT-INFO "Example"
     DESCRIPTION "Fallback source."
+    REVISION "202603120000Z"
+    DESCRIPTION "Initial version."
     ::= { enterprises 33332 }
 END
 "#
@@ -130,10 +138,8 @@ END
         .load()
         .expect("should load");
 
-    for module in mib.modules() {
-        if !module.is_base() {
-            println!("  Loaded: {}", module.name());
-        }
+    for module in mib.user_modules() {
+        println!("  Loaded: {}", module.name());
     }
 
     // -- Module listing from a source --
@@ -167,7 +173,9 @@ END
 IMPORTS MODULE-IDENTITY, enterprises FROM SNMPv2-SMI;
 allAMib MODULE-IDENTITY LAST-UPDATED "202603120000Z"
     ORGANIZATION "Example" CONTACT-INFO "Example"
-    DESCRIPTION "A." ::= { enterprises 44441 }
+    DESCRIPTION "A."
+    REVISION "202603120000Z" DESCRIPTION "Initial version."
+    ::= { enterprises 44441 }
 END
 "#
             .as_slice(),
@@ -178,7 +186,9 @@ END
 IMPORTS MODULE-IDENTITY, enterprises FROM SNMPv2-SMI;
 allBMib MODULE-IDENTITY LAST-UPDATED "202603120000Z"
     ORGANIZATION "Example" CONTACT-INFO "Example"
-    DESCRIPTION "B." ::= { enterprises 44442 }
+    DESCRIPTION "B."
+    REVISION "202603120000Z" DESCRIPTION "Initial version."
+    ::= { enterprises 44442 }
 END
 "#
             .as_slice(),
@@ -190,7 +200,7 @@ END
         .load()
         .expect("should load all");
 
-    let user_modules: Vec<_> = mib.modules().filter(|m| !m.is_base()).collect();
+    let user_modules: Vec<_> = mib.user_modules().collect();
     println!("  Loaded {} user modules", user_modules.len());
     for m in &user_modules {
         println!("    {}", m.name());

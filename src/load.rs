@@ -134,10 +134,11 @@ impl Loader {
         self
     }
 
-    /// Set the number of threads used for parallel file loading and parsing.
+    /// Set the number of threads used when loading all discoverable modules.
     ///
     /// Defaults to the number of available logical CPUs. Set to `1` to
-    /// disable parallel loading entirely.
+    /// disable parallel loading. Loading a selected module list with
+    /// [`Loader::modules`] and resolving parsed modules are sequential.
     pub fn parallelism(mut self, threads: usize) -> Self {
         self.parallelism = Some(threads.max(1));
         self

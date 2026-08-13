@@ -35,7 +35,7 @@ myCount OBJECT-TYPE
     SYNTAX Integer32
     MAX-ACCESS read-only
     STATUS current
-    DESCRIPTION "A counter."
+    DESCRIPTION "An integer count."
     ::= { myScalars 2 }
 
 END
