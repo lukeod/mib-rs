@@ -857,7 +857,11 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
                 .all(|(a, b)| a == b)
         {
             // Generic trap: snmpTraps.(trapNumber+1)
-            let arc = trap_number + 1;
+            let Some(arc) = trap_number.checked_add(1) else {
+                let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
+                ctx.record_trap_number_overflow(od.name(), mod_name, od.ir_mod, span);
+                continue;
+            };
             ctx.mib.tree.get_or_create_child(enterprise_node, arc)
         } else {
             // Enterprise-specific: enterprise.0.trapNumber

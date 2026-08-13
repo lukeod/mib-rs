@@ -28,6 +28,8 @@ pub(super) enum UnresolvedReason {
     ComponentNotFound,
     /// A TRAP-TYPE's ENTERPRISE reference could not be resolved.
     EnterpriseNotFound,
+    /// Incrementing a generic TRAP-TYPE number would overflow its OID arc.
+    TrapNumberOverflow,
     /// An AUGMENTS target row object could not be found.
     AugmentsTargetNotFound,
     /// An INDEX object reference could not be resolved.
@@ -46,6 +48,7 @@ impl UnresolvedReason {
             Self::DependencyCycle => "dependency_cycle",
             Self::ComponentNotFound => "unknown_parent",
             Self::EnterpriseNotFound => "unknown_parent",
+            Self::TrapNumberOverflow => "trap_number_overflow",
             Self::AugmentsTargetNotFound => "unknown_parent",
             Self::IndexObjectNotFound => "unknown_index_object",
             Self::ObjectNotFound => "unknown_object",
@@ -539,6 +542,32 @@ impl ResolverContext {
                 "unresolved OID: {:?} references unknown parent {:?}",
                 def_name.as_ref(),
                 component
+            ),
+        );
+    }
+
+    /// Record a TRAP-TYPE number that cannot be represented in its derived OID.
+    pub fn record_trap_number_overflow(
+        &mut self,
+        def_name: impl Into<String>,
+        module: impl Into<String>,
+        ir_mod: IrModuleId,
+        span: Span,
+    ) {
+        let def_name = def_name.into();
+        self.unresolved_oids.push(UnresolvedTracking {
+            kind: UnresolvedKind::Oid,
+            symbol: def_name.clone(),
+            module: module.into(),
+            reason: UnresolvedReason::TrapNumberOverflow,
+        });
+        self.emit_diagnostic(
+            DiagCode::TrapNumberOverflow,
+            Some(ir_mod),
+            span,
+            format!(
+                "TRAP-TYPE {:?} trap number overflows the snmpTraps sub-identifier",
+                def_name
             ),
         );
     }

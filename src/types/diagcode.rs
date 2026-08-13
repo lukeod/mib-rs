@@ -130,6 +130,7 @@ diag_codes! {
     resolver,   ImportModuleNotFound,       "import-module-not-found",               Error;
     resolver,   TypeUnknown,                "type-unknown",                          Error;
     resolver,   OidOrphan,                  "oid-orphan",                            Error;
+    resolver,   TrapNumberOverflow,         "trap-number-overflow",                  Error;
     resolver,   IndexUnresolved,            "index-unresolved",                      Error;
     resolver,   ObjectsUnresolved,          "objects-unresolved",                    Error;
     resolver,   IdentifierHyphenSMIv2,      "identifier-hyphen-smiv2",               Warning;

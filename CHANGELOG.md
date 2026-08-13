@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep lexer diagnostics attached to the source module containing their span
 - Ignore `END` keywords inside quoted strings when skipping MACRO bodies
 - Prevent malformed non-ASCII timestamps from panicking module preference resolution
+- Leave generic TRAP-TYPE definitions unresolved when incrementing their number would overflow
 
 ## [0.8.0] - 2026-03-19
 

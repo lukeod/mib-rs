@@ -3,7 +3,7 @@
 mod common;
 
 use mib_rs::load::{Loader, load};
-use mib_rs::mib::Oid;
+use mib_rs::mib::{Oid, UnresolvedKind};
 use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
@@ -360,6 +360,66 @@ fn notification_resolved() {
         .expect("linkDown not found");
     let notif = mib.raw().notification(notif_id);
     assert_eq!(notif.name(), "linkDown");
+}
+
+#[test]
+fn maximum_generic_trap_number_is_unresolved() {
+    let source = memory_modules([(
+        "MAX-TRAP-MIB",
+        br#"MAX-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    TRAP-TYPE FROM RFC-1215;
+
+snmpTraps OBJECT IDENTIFIER ::= { iso 3 6 1 6 3 1 1 5 }
+
+maximumValidTrap TRAP-TYPE
+    ENTERPRISE snmpTraps
+    ::= 4294967294
+
+maximumTrap TRAP-TYPE
+    ENTERPRISE snmpTraps
+    ::= 4294967295
+
+END
+"#,
+    )]);
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::verbose())
+            .modules(["MAX-TRAP-MIB"]),
+    )
+    .expect("load failed");
+
+    let diagnostic = mib
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagCode::TrapNumberOverflow)
+        .expect("trap-number-overflow diagnostic not found");
+    assert_eq!(diagnostic.module.as_deref(), Some("MAX-TRAP-MIB"));
+    assert!(diagnostic.message.contains("maximumTrap"));
+
+    let unresolved = mib
+        .unresolved()
+        .iter()
+        .find(|unresolved| unresolved.symbol == "maximumTrap")
+        .expect("overflowing trap not recorded as unresolved");
+    assert_eq!(unresolved.kind, UnresolvedKind::Oid);
+    assert_eq!(unresolved.module, "MAX-TRAP-MIB");
+    assert_eq!(unresolved.reason, "trap_number_overflow");
+
+    assert!(mib.notification_by_name("maximumTrap").is_none());
+    assert!(mib.node_by_name("maximumTrap").is_none());
+    let wrapped_oid: Oid = "1.3.6.1.6.3.1.1.5.0".parse().unwrap();
+    assert!(mib.exact_node_by_oid(&wrapped_oid).is_none());
+
+    let maximum_oid: Oid = "1.3.6.1.6.3.1.1.5.4294967295".parse().unwrap();
+    let maximum_node = mib
+        .exact_node_by_oid(&maximum_oid)
+        .expect("maximum non-overflowing trap should resolve");
+    assert_eq!(maximum_node.name(), "maximumValidTrap");
+    assert!(mib.notification_by_name("maximumValidTrap").is_some());
 }
 
 // --- Group and compliance tests ---
