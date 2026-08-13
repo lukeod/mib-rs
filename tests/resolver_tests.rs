@@ -3,7 +3,7 @@
 mod common;
 
 use mib_rs::load::{Loader, load};
-use mib_rs::mib::{Oid, RangeBound, UnresolvedKind};
+use mib_rs::mib::{Oid, RangeBound, Symbol, UnresolvedKind};
 use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, IndexEncoding, Kind, Language,
@@ -822,6 +822,26 @@ END
             .expect("secondObject missing")
             .effective_ranges()
             .is_empty()
+    );
+
+    let first_id = mib
+        .object_by_name("firstObject")
+        .expect("firstObject missing");
+    let second_id = mib
+        .object_by_name("secondObject")
+        .expect("secondObject missing");
+    let first = mib.raw().object(first_id);
+    let second = mib.raw().object(second_id);
+    assert_ne!(first_id, second_id);
+    assert_eq!(first.name(), "firstObject");
+    assert_eq!(second.name(), "secondObject");
+    assert_eq!(first.description(), "Satisfiable declaration");
+    assert_eq!(second.description(), "Empty declaration");
+    assert_eq!(first.node(), second.node(), "the NodeId must remain shared");
+    assert_eq!(mib.object("secondObject").unwrap().name(), "secondObject");
+    assert_eq!(
+        mib.symbol_by_name("secondObject"),
+        Some(Symbol::Object(second_id))
     );
 }
 

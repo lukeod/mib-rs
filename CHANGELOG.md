@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve definition names independently of preferred OID-tree attachments when OIDs are shared
 - Detect SMI versions from unambiguous syntax and base module names as well as imports
 - Apply diagnostic severity overrides to stored diagnostics and load failure checks
 - Keep lexer diagnostics attached to the source module containing their span

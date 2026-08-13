@@ -49,7 +49,12 @@ pub struct Mib {
     // Lookup indices
     pub(crate) module_by_name: HashMap<String, ModuleId>,
     pub(crate) name_to_nodes: HashMap<String, Vec<NodeId>>,
+    pub(crate) objects_by_name: HashMap<String, Vec<ObjectId>>,
     pub(crate) type_by_name: HashMap<String, TypeId>,
+    pub(crate) notifications_by_name: HashMap<String, Vec<NotificationId>>,
+    pub(crate) groups_by_name: HashMap<String, Vec<GroupId>>,
+    pub(crate) compliances_by_name: HashMap<String, Vec<ComplianceId>>,
+    pub(crate) capabilities_by_name: HashMap<String, Vec<CapabilityId>>,
 
     pub(crate) node_count: usize,
     pub(crate) diagnostics: Vec<Diagnostic>,
@@ -69,7 +74,12 @@ impl Mib {
             modules: Vec::new(),
             module_by_name: HashMap::new(),
             name_to_nodes: HashMap::new(),
+            objects_by_name: HashMap::new(),
             type_by_name: HashMap::new(),
+            notifications_by_name: HashMap::new(),
+            groups_by_name: HashMap::new(),
+            compliances_by_name: HashMap::new(),
+            capabilities_by_name: HashMap::new(),
             node_count: 0,
             diagnostics: Vec::new(),
             unresolved: Vec::new(),
@@ -150,15 +160,19 @@ impl Mib {
 
     // --- Name lookups ---
 
-    /// Search nodes associated with `name` for the first one where `get`
-    /// returns Some.
-    fn find_in_nodes<T>(&self, name: &str, get: impl Fn(&NodeData) -> Option<T>) -> Option<T> {
-        for &id in self.name_to_nodes.get(name)? {
-            if let Some(val) = get(self.tree.get(id)) {
-                return Some(val);
-            }
-        }
-        None
+    fn find_entity_by_name<T: Copy + PartialEq>(
+        &self,
+        name: &str,
+        entities: &HashMap<String, Vec<T>>,
+        attached: impl Fn(&NodeData) -> Option<T>,
+    ) -> Option<T> {
+        let candidates = entities.get(name)?;
+        self.name_to_nodes
+            .get(name)
+            .into_iter()
+            .flatten()
+            .find_map(|&node| attached(self.tree.get(node)).filter(|id| candidates.contains(id)))
+            .or_else(|| candidates.first().copied())
     }
 
     /// Return all nodes registered under the given name, or an empty slice.
@@ -219,7 +233,7 @@ impl Mib {
     /// Look up an object by name, returning the [`ObjectId`].
     #[must_use]
     pub fn object_by_name(&self, name: &str) -> Option<ObjectId> {
-        self.find_in_nodes(name, |n| n.object)
+        self.find_entity_by_name(name, &self.objects_by_name, |node| node.object)
     }
 
     /// Look up an object by name and return an [`Object`] handle.
@@ -243,7 +257,7 @@ impl Mib {
     /// Look up a notification by name, returning the [`NotificationId`].
     #[must_use]
     pub fn notification_by_name(&self, name: &str) -> Option<NotificationId> {
-        self.find_in_nodes(name, |n| n.notification)
+        self.find_entity_by_name(name, &self.notifications_by_name, |node| node.notification)
     }
 
     /// Look up a notification by name and return a [`Notification`] handle.
@@ -256,7 +270,7 @@ impl Mib {
     /// Look up a group by name, returning the [`GroupId`].
     #[must_use]
     pub fn group_by_name(&self, name: &str) -> Option<GroupId> {
-        self.find_in_nodes(name, |n| n.group)
+        self.find_entity_by_name(name, &self.groups_by_name, |node| node.group)
     }
 
     /// Look up a group by name and return a [`Group`] handle.
@@ -268,7 +282,7 @@ impl Mib {
     /// Look up a compliance statement by name, returning the [`ComplianceId`].
     #[must_use]
     pub fn compliance_by_name(&self, name: &str) -> Option<ComplianceId> {
-        self.find_in_nodes(name, |n| n.compliance)
+        self.find_entity_by_name(name, &self.compliances_by_name, |node| node.compliance)
     }
 
     /// Look up a compliance statement by name and return a [`Compliance`] handle.
@@ -281,7 +295,7 @@ impl Mib {
     /// Look up a capability statement by name, returning the [`CapabilityId`].
     #[must_use]
     pub fn capability_by_name(&self, name: &str) -> Option<CapabilityId> {
-        self.find_in_nodes(name, |n| n.capability)
+        self.find_entity_by_name(name, &self.capabilities_by_name, |node| node.capability)
     }
 
     /// Look up a capability statement by name and return a [`Capability`] handle.
@@ -309,40 +323,23 @@ impl Mib {
     /// plain nodes, then types.
     #[must_use]
     pub fn symbol_by_name(&self, name: &str) -> Option<Symbol> {
-        if let Some(nodes) = self.name_to_nodes.get(name) {
-            let mut notification = None;
-            let mut group = None;
-            let mut compliance = None;
-            let mut capability = None;
-            let mut node = None;
-
-            for &id in nodes {
-                let entry = self.tree.get(id);
-                node.get_or_insert(id);
-                if let Some(object) = entry.object {
-                    return Some(Symbol::Object(object));
-                }
-                notification = notification.or(entry.notification);
-                group = group.or(entry.group);
-                compliance = compliance.or(entry.compliance);
-                capability = capability.or(entry.capability);
-            }
-
-            if let Some(id) = notification {
-                return Some(Symbol::Notification(id));
-            }
-            if let Some(id) = group {
-                return Some(Symbol::Group(id));
-            }
-            if let Some(id) = compliance {
-                return Some(Symbol::Compliance(id));
-            }
-            if let Some(id) = capability {
-                return Some(Symbol::Capability(id));
-            }
-            if let Some(id) = node {
-                return Some(Symbol::Node(id));
-            }
+        if let Some(id) = self.object_by_name(name) {
+            return Some(Symbol::Object(id));
+        }
+        if let Some(id) = self.notification_by_name(name) {
+            return Some(Symbol::Notification(id));
+        }
+        if let Some(id) = self.group_by_name(name) {
+            return Some(Symbol::Group(id));
+        }
+        if let Some(id) = self.compliance_by_name(name) {
+            return Some(Symbol::Compliance(id));
+        }
+        if let Some(id) = self.capability_by_name(name) {
+            return Some(Symbol::Capability(id));
+        }
+        if let Some(&id) = self.name_to_nodes.get(name).and_then(|nodes| nodes.first()) {
+            return Some(Symbol::Node(id));
         }
         if let Some(&id) = self.type_by_name.get(name) {
             return Some(Symbol::Type(id));
@@ -1078,6 +1075,12 @@ impl Mib {
 
     pub(crate) fn add_object(&mut self, data: ObjectData) -> ObjectId {
         let id = ObjectId::new(self.objects.len() as u32);
+        if !data.entity.name.is_empty() {
+            self.objects_by_name
+                .entry(data.entity.name.clone())
+                .or_default()
+                .push(id);
+        }
         self.objects.push(data);
         id
     }
@@ -1093,24 +1096,48 @@ impl Mib {
 
     pub(crate) fn add_notification(&mut self, data: NotificationData) -> NotificationId {
         let id = NotificationId::new(self.notifications.len() as u32);
+        if !data.entity.name.is_empty() {
+            self.notifications_by_name
+                .entry(data.entity.name.clone())
+                .or_default()
+                .push(id);
+        }
         self.notifications.push(data);
         id
     }
 
     pub(crate) fn add_group(&mut self, data: GroupData) -> GroupId {
         let id = GroupId::new(self.groups.len() as u32);
+        if !data.entity.name.is_empty() {
+            self.groups_by_name
+                .entry(data.entity.name.clone())
+                .or_default()
+                .push(id);
+        }
         self.groups.push(data);
         id
     }
 
     pub(crate) fn add_compliance(&mut self, data: ComplianceData) -> ComplianceId {
         let id = ComplianceId::new(self.compliances.len() as u32);
+        if !data.entity.name.is_empty() {
+            self.compliances_by_name
+                .entry(data.entity.name.clone())
+                .or_default()
+                .push(id);
+        }
         self.compliances.push(data);
         id
     }
 
     pub(crate) fn add_capability(&mut self, data: CapabilityData) -> CapabilityId {
         let id = CapabilityId::new(self.capabilities.len() as u32);
+        if !data.entity.name.is_empty() {
+            self.capabilities_by_name
+                .entry(data.entity.name.clone())
+                .or_default()
+                .push(id);
+        }
         self.capabilities.push(data);
         id
     }
