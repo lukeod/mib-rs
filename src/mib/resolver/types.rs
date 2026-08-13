@@ -446,10 +446,10 @@ fn collect_syntax_base_type_refs(
         ir::TypeSyntax::Constrained { base, .. } => {
             collect_syntax_base_type_refs(base, smi_base_types, refs);
         }
-        ir::TypeSyntax::IntegerEnum { base, .. } => {
-            if !base.is_empty() && smi_base_types.contains(&base.as_str()) {
-                refs.insert(base.clone());
-            }
+        ir::TypeSyntax::IntegerEnum { base, .. }
+            if !base.is_empty() && smi_base_types.contains(&base.as_str()) =>
+        {
+            refs.insert(base.clone());
         }
         _ => {}
     }

@@ -668,22 +668,16 @@ fn resolve_index_entry(
     // Diagnostic for unresolved INDEX is emitted by validate_table_semantics.
     let obj = lookup_object_by_name(ctx, ir_mod, &item.object);
 
-    let (type_id, encoding) = if let Some(obj_id) = obj {
-        let o = ctx.mib.raw().object(obj_id);
-        let type_id = o.typ;
-        let base = o.typ.map_or(BaseType::Unknown, |tid| {
-            ctx.mib
-                .raw()
-                .type_(tid)
-                .effective_base(ctx.mib.types_slice())
-        });
-        (
-            type_id,
-            classify_index_encoding(base, item.implied, o.effective_sizes()),
-        )
-    } else {
-        return None;
-    };
+    let obj_id = obj?;
+    let o = ctx.mib.raw().object(obj_id);
+    let type_id = o.typ;
+    let base = o.typ.map_or(BaseType::Unknown, |tid| {
+        ctx.mib
+            .raw()
+            .type_(tid)
+            .effective_base(ctx.mib.types_slice())
+    });
+    let encoding = classify_index_encoding(base, item.implied, o.effective_sizes());
 
     Some(IndexEntry {
         name: item.object.clone(),
@@ -1897,7 +1891,7 @@ mod tests {
         let oid = resolve_defval_oid(&mut ctx, importer, &qualified, Span::default())
             .expect("qualified root should resolve");
         assert_eq!(oid.to_string(), "1.7");
-        assert!(ctx.used_imports.get(&importer).is_none());
+        assert!(!ctx.used_imports.contains_key(&importer));
     }
 
     #[test]

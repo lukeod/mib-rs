@@ -209,6 +209,7 @@ impl ObjectData {
     }
 
     /// Return SIZE constraints declared directly on this object.
+    #[allow(clippy::misnamed_getters)] // Compatibility alias for declared_sizes().
     pub fn sizes(&self) -> &[Range] {
         &self.declared_sizes
     }
@@ -232,6 +233,7 @@ impl ObjectData {
     }
 
     /// Return value range constraints declared directly on this object.
+    #[allow(clippy::misnamed_getters)] // Compatibility alias for declared_ranges().
     pub fn ranges(&self) -> &[Range] {
         &self.declared_ranges
     }

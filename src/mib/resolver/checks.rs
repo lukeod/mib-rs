@@ -255,15 +255,13 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                         });
                     }
                 }
-                Kind::Scalar => {
-                    if !is_simple_parent_kind(parent_kind) {
-                        diags.push(Diag {
-                            code: DiagCode::ParentScalar,
-                            ir_id: Some(ir_id),
-                            span: ot.span,
-                            message: format!("{}: scalar's parent must be a simple node", ot.name),
-                        });
-                    }
+                Kind::Scalar if !is_simple_parent_kind(parent_kind) => {
+                    diags.push(Diag {
+                        code: DiagCode::ParentScalar,
+                        ir_id: Some(ir_id),
+                        span: ot.span,
+                        message: format!("{}: scalar's parent must be a simple node", ot.name),
+                    });
                 }
                 _ => {}
             }
@@ -1271,15 +1269,13 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                         });
                     }
                 }
-                Language::SMIv2 => {
-                    if status.is_smiv1() {
-                        diags.push(Diag {
-                            code: DiagCode::StatusInvalidSMIv2,
-                            ir_id: Some(ir_id),
-                            span,
-                            message: format!("{:?}: invalid status {} in SMIv2", name, status),
-                        });
-                    }
+                Language::SMIv2 if status.is_smiv1() => {
+                    diags.push(Diag {
+                        code: DiagCode::StatusInvalidSMIv2,
+                        ir_id: Some(ir_id),
+                        span,
+                        message: format!("{:?}: invalid status {} in SMIv2", name, status),
+                    });
                 }
                 _ => {}
             }
@@ -2457,15 +2453,15 @@ fn check_defval_numeric(
                 );
             }
         }
-        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
-            if v < 0 || v > u32::MAX as i64 {
-                ctx.emit_diagnostic(
-                    DiagCode::DefvalBasetype,
-                    ir_mod,
-                    span,
-                    format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
-                );
-            }
+        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks
+            if v < 0 || v > u32::MAX as i64 =>
+        {
+            ctx.emit_diagnostic(
+                DiagCode::DefvalBasetype,
+                ir_mod,
+                span,
+                format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
+            );
         }
         _ => {}
     }
@@ -2516,15 +2512,13 @@ fn check_defval_unsigned(
                 );
             }
         }
-        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks => {
-            if v > u32::MAX as u64 {
-                ctx.emit_diagnostic(
-                    DiagCode::DefvalBasetype,
-                    ir_mod,
-                    span,
-                    format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
-                );
-            }
+        BaseType::Unsigned32 | BaseType::Gauge32 | BaseType::TimeTicks if v > u32::MAX as u64 => {
+            ctx.emit_diagnostic(
+                DiagCode::DefvalBasetype,
+                ir_mod,
+                span,
+                format!("{name:?}: DEFVAL {v} exceeds unsigned32 range"),
+            );
         }
         _ => {}
     }
@@ -2603,18 +2597,16 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
                         });
                     }
                 }
-                Language::SMIv1 => {
-                    if idx_obj.access() == Access::NotAccessible {
-                        diags.push(Diag {
-                            code: DiagCode::IndexNotAccessible,
-                            ir_id: ir_mod,
-                            span,
-                            message: format!(
-                                "INDEX {:?} of {:?} should be accessible in SMIv1",
-                                idx_name, obj_name
-                            ),
-                        });
-                    }
+                Language::SMIv1 if idx_obj.access() == Access::NotAccessible => {
+                    diags.push(Diag {
+                        code: DiagCode::IndexNotAccessible,
+                        ir_id: ir_mod,
+                        span,
+                        message: format!(
+                            "INDEX {:?} of {:?} should be accessible in SMIv1",
+                            idx_name, obj_name
+                        ),
+                    });
                 }
                 _ => {}
             }
@@ -3382,18 +3374,16 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
                         });
                     }
                 }
-                ir::Definition::NotificationGroup(g) => {
-                    if !referenced_groups.contains(&g.name) {
-                        diags.push(Diag {
-                            code: DiagCode::GroupUnreferenced,
-                            ir_id: Some(ir_id),
-                            span: g.span,
-                            message: format!(
-                                "{:?}: NOTIFICATION-GROUP not referenced in any compliance module",
-                                g.name
-                            ),
-                        });
-                    }
+                ir::Definition::NotificationGroup(g) if !referenced_groups.contains(&g.name) => {
+                    diags.push(Diag {
+                        code: DiagCode::GroupUnreferenced,
+                        ir_id: Some(ir_id),
+                        span: g.span,
+                        message: format!(
+                            "{:?}: NOTIFICATION-GROUP not referenced in any compliance module",
+                            g.name
+                        ),
+                    });
                 }
                 _ => {}
             }
