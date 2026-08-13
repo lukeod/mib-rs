@@ -603,6 +603,79 @@ END
 }
 
 #[test]
+fn compound_oid_defval_marks_unqualified_import_used() {
+    let source = memory_modules([
+        (
+            "OID-DEFVAL-IMPORTER-MIB",
+            &br#"OID-DEFVAL-IMPORTER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    OBJECT-TYPE
+        FROM SNMPv2-SMI
+    importedRoot
+        FROM OID-DEFVAL-SOURCE-MIB;
+
+unqualifiedObject OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Unqualified imported compound OID DEFVAL"
+    DEFVAL { { importedRoot 42 } }
+    ::= { 1 3 6 1 4 1 424242 1 }
+END
+"#[..],
+        ),
+        (
+            "OID-DEFVAL-SOURCE-MIB",
+            &br#"OID-DEFVAL-SOURCE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    OBJECT-IDENTITY, enterprises
+        FROM SNMPv2-SMI;
+
+importedRoot OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION "Imported DEFVAL root"
+    ::= { enterprises 424243 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(diagnostics)
+            .modules(["OID-DEFVAL-IMPORTER-MIB", "OID-DEFVAL-SOURCE-MIB"]),
+    )
+    .expect("load failed");
+
+    let importer = mib
+        .module("OID-DEFVAL-IMPORTER-MIB")
+        .expect("importer module missing");
+    assert!(
+        mib.raw()
+            .module(importer.id())
+            .is_import_used("importedRoot")
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ImportUnused
+            && diagnostic.module.as_deref() == Some("OID-DEFVAL-IMPORTER-MIB")
+            && diagnostic.message.contains("importedRoot")
+    }));
+
+    let unqualified = mib
+        .object("unqualifiedObject")
+        .and_then(|object| object.default_value())
+        .expect("unqualified DEFVAL missing");
+    assert_eq!(unqualified.kind(), mib_rs::mib::DefValKind::Oid);
+    assert!(matches!(
+        unqualified.value(),
+        mib_rs::mib::DefValValue::Oid(oid) if oid.to_string() == "1.3.6.1.4.1.424243.42"
+    ));
+}
+
+#[test]
 fn range_endpoints_preserve_semantics_and_intersect_parent_constraints() {
     let source = memory_modules([(
         "RANGE-SEMANTICS-MIB",

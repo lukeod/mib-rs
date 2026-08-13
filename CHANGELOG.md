@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Count unqualified imported roots in compound OID DEFVAL values as used imports
 - Expand literal `$HOME` occurrences in net-snmp MIB paths from configuration and `MIBDIRS`
 - Exclude entities without object types from CLI `find --type` results
 - Reject CLI lint severity numbers outside the supported `0..=6` range

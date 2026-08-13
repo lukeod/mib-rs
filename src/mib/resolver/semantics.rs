@@ -1601,7 +1601,10 @@ fn resolve_defval_oid(
 
     let (mut arcs, start_idx) = match &components[0] {
         ir::OidComponent::Name { name, .. } | ir::OidComponent::NamedNumber { name, .. } => {
-            if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, name) {
+            if let Some((node_id, used_import)) = ctx.lookup_node_for_module(ir_mod, name) {
+                if used_import {
+                    ctx.mark_import_used(ir_mod, name);
+                }
                 (ctx.mib.tree().oid_of(node_id).to_vec(), 1)
             } else {
                 ctx.emit_diagnostic(
@@ -1829,7 +1832,73 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
 
 #[cfg(test)]
 mod tests {
-    use super::hex_decode;
+    use super::{hex_decode, resolve_defval_oid};
+    use crate::ir::{self, Module};
+    use crate::mib::resolver::context::{IrModuleId, ResolverContext};
+    use crate::types::{DiagnosticConfig, ResolverStrictness, Span};
+
+    #[test]
+    fn compound_oid_defval_marks_only_unqualified_imports_used() {
+        let mut ctx =
+            ResolverContext::new(ResolverStrictness::Permissive, DiagnosticConfig::silent());
+        ctx.modules = vec![
+            Module::new("IMPORTER-MIB".to_string(), Span::default()),
+            Module::new("SOURCE-MIB".to_string(), Span::default()),
+        ];
+        let importer = IrModuleId(0);
+        let source = IrModuleId(1);
+        ctx.module_index
+            .insert("SOURCE-MIB".to_string(), vec![source]);
+
+        let tree = &mut ctx.mib.tree;
+        let tree_root = tree.root();
+        let root = tree.get_or_create_child(tree_root, 1);
+        tree.set_name(root, "importedRoot".to_string());
+        ctx.module_symbol_to_node
+            .entry(source)
+            .or_default()
+            .insert("importedRoot".to_string(), root);
+        ctx.module_imports
+            .entry(importer)
+            .or_default()
+            .insert("importedRoot".to_string(), source);
+
+        let unqualified = [
+            ir::OidComponent::Name {
+                name: "importedRoot".to_string(),
+                span: Span::default(),
+            },
+            ir::OidComponent::Number {
+                value: 42,
+                span: Span::default(),
+            },
+        ];
+        let oid = resolve_defval_oid(&mut ctx, importer, &unqualified, Span::default())
+            .expect("unqualified imported root should resolve");
+        assert_eq!(oid.to_string(), "1.42");
+        assert!(
+            ctx.used_imports
+                .get(&importer)
+                .is_some_and(|used| used.contains("importedRoot"))
+        );
+
+        ctx.used_imports.clear();
+        let qualified = [
+            ir::OidComponent::QualifiedName {
+                module: "SOURCE-MIB".to_string(),
+                name: "importedRoot".to_string(),
+                span: Span::default(),
+            },
+            ir::OidComponent::Number {
+                value: 7,
+                span: Span::default(),
+            },
+        ];
+        let oid = resolve_defval_oid(&mut ctx, importer, &qualified, Span::default())
+            .expect("qualified root should resolve");
+        assert_eq!(oid.to_string(), "1.7");
+        assert!(ctx.used_imports.get(&importer).is_none());
+    }
 
     #[test]
     fn hex_decode_accepts_mixed_case_and_separators() {
