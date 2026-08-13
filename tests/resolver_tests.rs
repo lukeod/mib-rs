@@ -4,7 +4,7 @@ mod common;
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Oid;
-use mib_rs::source::{chain, dir as dir_source};
+use mib_rs::source::{chain, dir as dir_source, memory_modules};
 use mib_rs::types::{
     Access, BaseType, DiagCode, DiagnosticConfig, Kind, Language, ResolverStrictness,
 };
@@ -1068,6 +1068,56 @@ fn timestamp_normalization_in_module_preference() {
             module.name()
         );
     }
+}
+
+#[test]
+fn malformed_utf8_timestamp_does_not_influence_module_preference() {
+    let module = |name: &str, timestamp: &str| {
+        format!(
+            r#"{name} DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, enterprises FROM SNMPv2-SMI;
+
+sharedIdentity MODULE-IDENTITY
+    LAST-UPDATED "{timestamp}"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test"
+    ::= {{ enterprises 99999 }}
+
+END
+"#
+        )
+        .into_bytes()
+    };
+    let source = memory_modules([
+        (
+            "MALFORMED-TIMESTAMP-MIB",
+            module("MALFORMED-TIMESTAMP-MIB", "aé1234567Z"),
+        ),
+        (
+            "VALID-TIMESTAMP-MIB",
+            module("VALID-TIMESTAMP-MIB", "202001010000Z"),
+        ),
+    ]);
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Permissive)
+            .diagnostic_config(DiagnosticConfig::verbose())
+            .modules(["MALFORMED-TIMESTAMP-MIB", "VALID-TIMESTAMP-MIB"]),
+    )
+    .expect("load failed");
+
+    let oid: Oid = "1.3.6.1.4.1.99999".parse().unwrap();
+    let node = mib.exact_node_by_oid(&oid).expect("shared OID not found");
+    assert_eq!(node.module().unwrap().name(), "VALID-TIMESTAMP-MIB");
+    assert!(
+        mib.diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::DateCharacter),
+        "malformed timestamp should retain its configured date diagnostic"
+    );
 }
 
 // --- Object table navigation tests ---
