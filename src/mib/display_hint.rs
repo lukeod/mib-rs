@@ -100,6 +100,11 @@
 //! character (`d`/`x`/`o`/`a`/`t`), an optional separator, and an optional
 //! repeat terminator.
 //!
+//! Hexadecimal (`x`) segments are byte-oriented: every consumed byte produces
+//! exactly two digits, including leading zeroes. This preserves fixed-width
+//! output for values such as IPv6 addresses and UUIDs, and applies to segments
+//! of any length (including lengths above eight bytes).
+//!
 //! ```
 //! use mib_rs::mib::display_hint::{self, HexCase};
 //!
@@ -196,7 +201,7 @@ pub struct OctetSegment {
 pub enum OctetFormat {
     /// `d` - decimal numeric.
     Decimal,
-    /// `x` - hexadecimal.
+    /// `x` - byte-oriented hexadecimal, with exactly two digits per byte.
     Hex,
     /// `o` - octal.
     Octal,
@@ -601,7 +606,13 @@ fn format_decimal_with_point(value: i64, places: usize) -> String {
 /// The last specification repeats implicitly until all data is consumed.
 /// Trailing separators and terminators are suppressed.
 ///
-/// Returns `None` if the hint is malformed or if both hint and data are empty.
+/// Hexadecimal (`x`) segments emit exactly two digits per byte, preserving
+/// leading zeroes rather than interpreting the segment as one number. They
+/// support segment lengths above eight bytes; decimal (`d`) and octal (`o`)
+/// segments are numeric and return `None` when a consumed chunk exceeds eight
+/// bytes.
+///
+/// Returns `None` if the hint is malformed or if either hint or data is empty.
 pub fn format_octets(hint: &str, data: &[u8], hex_case: HexCase) -> Option<String> {
     if hint.is_empty() || data.is_empty() {
         return None;
@@ -962,6 +973,26 @@ mod tests {
         assert_eq!(
             format_octets("1x:", &[0x00, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e]),
             Some("00:1A:2B:3C:4D:5E".into()),
+        );
+    }
+
+    #[test]
+    fn octets_multi_byte_hex_is_fixed_width() {
+        assert_eq!(format_octets("2x", &[0x00, 0x01]), Some("0001".into()));
+        assert_eq!(
+            super::format_octets("2x", &[0x00, 0xaf], HexCase::Lower),
+            Some("00af".into()),
+        );
+    }
+
+    #[test]
+    fn octets_hex_supports_segments_above_eight_bytes() {
+        assert_eq!(
+            format_octets(
+                "9x",
+                &[0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
+            ),
+            Some("000123456789ABCDEF".into()),
         );
     }
 

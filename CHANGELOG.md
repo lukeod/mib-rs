@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Document octet-string hexadecimal DISPLAY-HINT output as fixed-width, byte-oriented formatting, including segments above eight bytes
 - Preserve signed, unsigned, `MIN`, and `MAX` range endpoints and intersect derived constraints with parent constraints
 
 ### Fixed

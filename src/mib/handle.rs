@@ -649,6 +649,9 @@ impl<'a> Object<'a> {
 
     /// Format an octet string using this object's effective DISPLAY-HINT.
     ///
+    /// Hexadecimal segments produce exactly two digits per byte, including
+    /// leading zeroes, and support segment lengths above eight bytes.
+    ///
     /// Returns `None` if the object has no display hint, the hint is
     /// malformed, or the data is empty.
     pub fn format_octets(
