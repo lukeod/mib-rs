@@ -2,7 +2,7 @@
 
 mod common;
 
-use mib_rs::types::DiagnosticConfig;
+use mib_rs::types::{DiagCode, DiagnosticConfig, Severity};
 use std::path::Path;
 
 use common::{collect_mib_files, corpus_dir};
@@ -286,6 +286,126 @@ END
     assert_eq!(ast_modules.len(), 1);
     let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
+}
+
+#[test]
+fn integer_enum_bounds_are_diagnosed_without_changing_values() {
+    let source = br#"
+TEST-MIB DEFINITIONS ::= BEGIN
+
+Boundary ::= INTEGER {
+    minimum(-2147483648),
+    maximum(2147483647),
+    below(-2147483649),
+    above(2147483648),
+    vendorSentinel(4294967295)
+}
+
+END
+"#;
+    let config = DiagnosticConfig::verbose();
+    let ast_modules = mib_rs::parser::parse(source, &config);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+
+    let syntax = match &module.definitions[0] {
+        mib_rs::ir::Definition::TypeDef(def) => &def.syntax,
+        other => panic!("expected TypeDef, got {other:?}"),
+    };
+    let named_numbers = match syntax {
+        mib_rs::ir::TypeSyntax::IntegerEnum { named_numbers, .. } => named_numbers,
+        other => panic!("expected IntegerEnum, got {other:?}"),
+    };
+    assert_eq!(
+        named_numbers
+            .iter()
+            .map(|number| number.value)
+            .collect::<Vec<_>>(),
+        vec![
+            i32::MIN.into(),
+            i32::MAX.into(),
+            -2_147_483_649,
+            2_147_483_648,
+            4_294_967_295,
+        ]
+    );
+
+    let diagnostics = module
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::EnumValueOutOfRange)
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 3);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity == Severity::Warning)
+    );
+    for value in ["-2147483649", "2147483648", "4294967295"] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(value)),
+            "missing bounds diagnostic for {value}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn integer_enum_bounds_diagnostic_respects_policy() {
+    let source = br#"
+TEST-MIB DEFINITIONS ::= BEGIN
+VendorEnum ::= INTEGER { vendorSentinel(4294967295) }
+END
+"#;
+
+    let default_config = DiagnosticConfig::default();
+    let default_ast = mib_rs::parser::parse(source, &default_config);
+    let default_module = mib_rs::lower::lower(
+        default_ast.into_iter().next().unwrap(),
+        source,
+        &default_config,
+    );
+    assert!(
+        default_module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::EnumValueOutOfRange),
+        "warning-level bounds diagnostic should be hidden by default"
+    );
+
+    let mut overridden_config = DiagnosticConfig::default();
+    overridden_config
+        .overrides
+        .insert(DiagCode::EnumValueOutOfRange, Severity::Minor);
+    let overridden_ast = mib_rs::parser::parse(source, &overridden_config);
+    let overridden_module = mib_rs::lower::lower(
+        overridden_ast.into_iter().next().unwrap(),
+        source,
+        &overridden_config,
+    );
+    let diagnostic = overridden_module
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagCode::EnumValueOutOfRange)
+        .expect("severity override should collect bounds diagnostic");
+    assert_eq!(diagnostic.severity, Severity::Minor);
+
+    let mut ignored_config = DiagnosticConfig::verbose();
+    ignored_config
+        .ignore
+        .push("enum-value-out-of-range".to_string());
+    let ignored_ast = mib_rs::parser::parse(source, &ignored_config);
+    let ignored_module = mib_rs::lower::lower(
+        ignored_ast.into_iter().next().unwrap(),
+        source,
+        &ignored_config,
+    );
+    assert!(
+        ignored_module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::EnumValueOutOfRange)
+    );
 }
 
 #[test]

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detect SMI versions from unambiguous syntax and base module names as well as imports
 - Apply diagnostic severity overrides to stored diagnostics and load failure checks
 - Keep lexer diagnostics attached to the source module containing their span
+- Report configurable, non-fatal diagnostics for INTEGER enumeration values outside Integer32 while preserving their declared values
 - Ignore `END` keywords inside quoted strings when skipping MACRO bodies
 - Prevent malformed non-ASCII timestamps from panicking module preference resolution
 - Leave generic TRAP-TYPE definitions unresolved when incrementing their number would overflow

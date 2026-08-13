@@ -107,6 +107,7 @@ diag_codes! {
     lower,      BitsNumberTooLarge,         "bits-number-too-large",                 Error;
     lower,      BitsNumberLarge,            "bits-number-large",                     Style;
     lower,      EnumZero,                   "enum-zero",                             Error;
+    lower,      EnumValueOutOfRange,        "enum-value-out-of-range",                Warning;
     lower,      EnumNameRedefinition,       "enum-name-redefinition",                Error;
     lower,      EnumValueRedefinition,      "enum-value-redefinition",               Error;
     lower,      BitsNameRedefinition,       "bits-name-redefinition",                Error;

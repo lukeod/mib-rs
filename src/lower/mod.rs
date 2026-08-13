@@ -1099,6 +1099,13 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
                         format!("duplicate enum value {}", nn.value),
                     );
                 }
+                if i32::try_from(nn.value).is_err() {
+                    ctx.emit_diagnostic(
+                        DiagCode::EnumValueOutOfRange,
+                        nn.span,
+                        format!("enum value {} is outside the Integer32 range", nn.value),
+                    );
+                }
                 if nn.value == 0 && ctx.language == Language::SMIv1 {
                     ctx.emit_diagnostic(
                         DiagCode::EnumZero,
