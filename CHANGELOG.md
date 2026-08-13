@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Leave generic TRAP-TYPE definitions unresolved when incrementing their number would overflow
 - Reject import forwarding chains that do not end at a module defining the symbol
 - Leave cyclic type parent references unlinked and report them as dependency cycles
+- Resolve compliance and capability export references within their declared module scope
 
 ## [0.8.0] - 2026-03-19
 

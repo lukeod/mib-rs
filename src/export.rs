@@ -633,8 +633,15 @@ fn make_oid_ref(name: &str, module: &str, oid: &str) -> ExportOidRef {
     }
 }
 
-fn resolve_object_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
-    if let Some(obj_id) = mib.object_by_name(name) {
+fn resolve_object_ref(mib: &Mib, name: &str, module: &str) -> ExportOidRef {
+    let obj_id = if module.is_empty() {
+        mib.object_by_name(name)
+    } else {
+        mib.module_by_name(module)
+            .and_then(|mid| mib.raw().module(mid).object_by_name(name))
+    };
+
+    if let Some(obj_id) = obj_id {
         let obj = mib.raw().object(obj_id);
         let mod_name = obj
             .module()
@@ -646,38 +653,56 @@ fn resolve_object_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOid
             .unwrap_or_default();
         make_oid_ref(name, mod_name, &oid_str)
     } else {
-        make_oid_ref(name, fallback_module, "")
+        make_oid_ref(name, module, "")
     }
 }
 
 fn resolve_node_ref(mib: &Mib, name: &str) -> ExportOidRef {
-    resolve_node_ref_with_fallback(mib, name, "")
+    resolve_node_ref_in_module(mib, name, "")
 }
 
-fn resolve_node_ref_with_fallback(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
-    if let Some(node_id) = mib.node_by_name(name) {
-        let node = mib.tree().get(node_id);
-        let mod_name = mib
-            .effective_module(node_id)
-            .map(|mid| mib.raw().module(mid).name())
-            .unwrap_or("");
-        let oid_str = mib.tree().oid_of(node_id).to_string();
-        make_oid_ref(
-            if node.name().is_empty() {
-                name
-            } else {
-                node.name()
-            },
-            mod_name,
-            &oid_str,
-        )
+fn resolve_node_ref_in_module(mib: &Mib, name: &str, module: &str) -> ExportOidRef {
+    let node_id = if module.is_empty() {
+        mib.node_by_name(name)
     } else {
-        make_oid_ref(name, fallback_module, "")
+        mib.module_by_name(module)
+            .and_then(|mid| mib.raw().module(mid).node_by_name(name))
+    };
+
+    if let Some(node_id) = node_id {
+        let oid_str = mib.tree().oid_of(node_id).to_string();
+        if module.is_empty() {
+            let node = mib.tree().get(node_id);
+            let mod_name = mib
+                .effective_module(node_id)
+                .map(|mid| mib.raw().module(mid).name())
+                .unwrap_or("");
+            make_oid_ref(
+                if node.name().is_empty() {
+                    name
+                } else {
+                    node.name()
+                },
+                mod_name,
+                &oid_str,
+            )
+        } else {
+            make_oid_ref(name, module, &oid_str)
+        }
+    } else {
+        make_oid_ref(name, module, "")
     }
 }
 
-fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> ExportOidRef {
-    if let Some(notif_id) = mib.notification_by_name(name) {
+fn resolve_notification_ref(mib: &Mib, name: &str, module: &str) -> ExportOidRef {
+    let notif_id = if module.is_empty() {
+        mib.notification_by_name(name)
+    } else {
+        mib.module_by_name(module)
+            .and_then(|mid| mib.raw().module(mid).notification_by_name(name))
+    };
+
+    if let Some(notif_id) = notif_id {
         let notif = mib.raw().notification(notif_id);
         let mod_name = notif
             .module()
@@ -692,7 +717,7 @@ fn resolve_notification_ref(mib: &Mib, name: &str, fallback_module: &str) -> Exp
         // Fall back to generic node lookup (the variation may reference a
         // non-notification object that the syntactic heuristic classified
         // as a notification variation).
-        resolve_node_ref_with_fallback(mib, name, fallback_module)
+        resolve_node_ref_in_module(mib, name, module)
     }
 }
 
@@ -1221,14 +1246,14 @@ pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayloa
                 let mandatory_groups: Vec<ExportOidRef> = cm
                     .mandatory_groups
                     .iter()
-                    .map(|name| resolve_node_ref_with_fallback(mib, name, &effective_module))
+                    .map(|name| resolve_node_ref_in_module(mib, name, &effective_module))
                     .collect();
 
                 let grps: Vec<ExportComplianceGroup> = cm
                     .groups
                     .iter()
                     .map(|cg| ExportComplianceGroup {
-                        group: resolve_node_ref_with_fallback(mib, &cg.group, &effective_module),
+                        group: resolve_node_ref_in_module(mib, &cg.group, &effective_module),
                         description: opt_string(&cg.description),
                     })
                     .collect();
@@ -1297,7 +1322,7 @@ pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayloa
                 let includes: Vec<ExportOidRef> = sm
                     .includes
                     .iter()
-                    .map(|name| resolve_node_ref_with_fallback(mib, name, &sm.module_name))
+                    .map(|name| resolve_node_ref_in_module(mib, name, &sm.module_name))
                     .collect();
 
                 let obj_vars: Vec<ExportObjectVariation> =
@@ -1476,7 +1501,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::load::{Loader, load};
-    use crate::source::dir as dir_source;
+    use crate::source::{dir as dir_source, memory_modules};
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
     use super::export_payload;
@@ -1493,6 +1518,21 @@ mod tests {
             .diagnostic_config(DiagnosticConfig::silent())
             .modules(modules.iter().copied());
         load(opts).expect("load failed")
+    }
+
+    fn load_scoped_export_mibs() -> crate::mib::Mib {
+        let source = memory_modules([
+            ("COLLISION-MIB", COLLISION_MIB.as_bytes()),
+            ("TARGET-MIB", TARGET_MIB.as_bytes()),
+            ("SCOPED-MIB", SCOPED_MIB.as_bytes()),
+        ]);
+        load(
+            Loader::new()
+                .source(source)
+                .resolver_strictness(ResolverStrictness::Permissive)
+                .diagnostic_config(DiagnosticConfig::silent()),
+        )
+        .expect("load failed")
     }
 
     #[test]
@@ -1537,4 +1577,232 @@ mod tests {
             serde_json::Value::String("DEADBEEF".to_string())
         );
     }
+
+    #[test]
+    fn scoped_export_refs_do_not_fall_back_to_global_names() {
+        let mib = load_scoped_export_mibs();
+        let payload = export_payload(&mib, ResolverStrictness::Permissive);
+
+        let compliance = payload
+            .compliances
+            .iter()
+            .find(|comp| comp.name == "scopedCompliance")
+            .expect("scopedCompliance not exported");
+        let comp_module = compliance.modules.first().expect("missing MODULE clause");
+        assert_unresolved_scoped_ref(
+            &comp_module.mandatory_groups[0],
+            "TARGET-MIB",
+            "collidingMandatory",
+        );
+        assert_eq!(comp_module.mandatory_groups[1].module, "TARGET-MIB");
+        assert_eq!(comp_module.mandatory_groups[1].name, "targetSharedNode");
+        assert_eq!(comp_module.mandatory_groups[1].oid, "1.3.6.1.4.1.99990.4");
+        assert_unresolved_scoped_ref(
+            &comp_module.groups[0].group,
+            "TARGET-MIB",
+            "collidingOptional",
+        );
+        assert_unresolved_scoped_ref(
+            &comp_module.objects[0].object,
+            "TARGET-MIB",
+            "collidingObject",
+        );
+
+        let capability = payload
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "scopedCapability")
+            .expect("scopedCapability not exported");
+        let supports = capability
+            .supports
+            .first()
+            .expect("missing SUPPORTS clause");
+        assert_unresolved_scoped_ref(&supports.includes[0], "TARGET-MIB", "collidingInclude");
+        assert_unresolved_scoped_ref(
+            &supports.object_variations[0].object,
+            "TARGET-MIB",
+            "collidingVariationObject",
+        );
+        assert_unresolved_scoped_ref(
+            &supports.object_variations[0].creation_requires[0],
+            "TARGET-MIB",
+            "collidingCreation",
+        );
+        assert_unresolved_scoped_ref(
+            &supports.notification_variations[0].notification,
+            "TARGET-MIB",
+            "collidingNotification",
+        );
+    }
+
+    #[test]
+    fn scoped_export_refs_preserve_declared_identity_for_shared_oids() {
+        let mib = load_scoped_export_mibs();
+        let target_module = mib
+            .module_by_name("TARGET-MIB")
+            .expect("missing TARGET-MIB");
+        let shared_node = mib
+            .raw()
+            .module(target_module)
+            .node_by_name("targetSharedNode")
+            .expect("missing targetSharedNode");
+
+        assert_eq!(mib.tree().get(shared_node).name(), "collidingMandatory");
+        assert_eq!(
+            mib.raw()
+                .module(
+                    mib.effective_module(shared_node)
+                        .expect("missing node owner")
+                )
+                .name(),
+            "COLLISION-MIB"
+        );
+
+        let payload = export_payload(&mib, ResolverStrictness::Permissive);
+        let reference = &payload
+            .compliances
+            .iter()
+            .find(|comp| comp.name == "scopedCompliance")
+            .expect("scopedCompliance not exported")
+            .modules[0]
+            .mandatory_groups[1];
+
+        assert_eq!(reference.module, "TARGET-MIB");
+        assert_eq!(reference.name, "targetSharedNode");
+        assert_eq!(reference.oid, "1.3.6.1.4.1.99990.4");
+    }
+
+    #[test]
+    fn unscoped_export_refs_preserve_global_lookup() {
+        let mib = load_scoped_export_mibs();
+        let reference = super::resolve_node_ref(&mib, "collidingObject");
+
+        assert_eq!(reference.module, "COLLISION-MIB");
+        assert_eq!(reference.name, "collidingObject");
+        assert!(!reference.oid.is_empty());
+    }
+
+    fn assert_unresolved_scoped_ref(reference: &super::ExportOidRef, module: &str, name: &str) {
+        assert_eq!(reference.module, module);
+        assert_eq!(reference.name, name);
+        assert_eq!(reference.oid, "");
+    }
+
+    const COLLISION_MIB: &str = r#"COLLISION-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+collisionMIB MODULE-IDENTITY
+    LAST-UPDATED "202603200000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Defines symbols that collide with missing scoped references."
+    ::= { enterprises 99990 }
+
+collidingObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 1 }
+
+collidingVariationObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 2 }
+
+collidingCreation OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 3 }
+
+collidingMandatory OBJECT-GROUP
+    OBJECTS { collidingObject }
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 4 }
+
+collidingOptional OBJECT-GROUP
+    OBJECTS { collidingObject }
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 5 }
+
+collidingInclude OBJECT-GROUP
+    OBJECTS { collidingObject }
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 6 }
+
+collidingNotification NOTIFICATION-TYPE
+    OBJECTS { collidingObject }
+    STATUS current
+    DESCRIPTION "Collision."
+    ::= { collisionMIB 0 1 }
+END
+"#;
+
+    const TARGET_MIB: &str = r#"TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY, enterprises FROM SNMPv2-SMI;
+
+targetMIB MODULE-IDENTITY
+    LAST-UPDATED "202603190000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Defines one shared-OID symbol but lacks the colliding symbols."
+    ::= { enterprises 99990 }
+
+targetSharedNode OBJECT IDENTIFIER ::= { targetMIB 4 }
+END
+"#;
+
+    const SCOPED_MIB: &str = r#"SCOPED-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, Integer32, enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+scopedMIB MODULE-IDENTITY
+    LAST-UPDATED "202603190000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "References missing symbols in another module."
+    ::= { enterprises 99992 }
+
+scopedCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "Scoped references."
+    MODULE TARGET-MIB
+        MANDATORY-GROUPS { collidingMandatory, targetSharedNode }
+        GROUP collidingOptional
+            DESCRIPTION "Optional collision."
+        OBJECT collidingObject
+            MIN-ACCESS read-only
+            DESCRIPTION "Object collision."
+    ::= { scopedMIB 1 }
+
+scopedCapability AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Scoped references."
+    SUPPORTS TARGET-MIB
+        INCLUDES { collidingInclude }
+        VARIATION collidingVariationObject
+            SYNTAX Integer32
+            CREATION-REQUIRES { collidingCreation }
+            DESCRIPTION "Object variation collision."
+        VARIATION collidingNotification
+            ACCESS not-implemented
+            DESCRIPTION "Notification variation collision."
+    ::= { scopedMIB 2 }
+END
+"#;
 }
