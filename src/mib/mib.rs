@@ -1221,17 +1221,18 @@ impl<'a> OidLookup<'a> {
         &self.suffix
     }
 
-    /// Decode the instance suffix into typed index values.
+    /// Decode only the readable prefix of the instance suffix.
     ///
     /// Uses the matched node's row INDEX clause to interpret the suffix
     /// arcs per RFC 2578 section 7.7. Returns an empty Vec if the node
     /// has no associated object, is not part of a table, or the row has
     /// no index definitions.
     ///
-    /// See [`index::decode_suffix`](super::index::decode_suffix) for
-    /// the standalone function and encoding details.
+    /// This is the historical lenient behavior. Prefer
+    /// [`decode_indexes_exact`](Self::decode_indexes_exact) when an incomplete
+    /// or malformed index must not be accepted.
     #[must_use]
-    pub fn decode_indexes(&self) -> Vec<super::index::DecodedIndex> {
+    pub fn decode_indexes_prefix(&self) -> Vec<super::index::DecodedIndex> {
         let Some(obj) = self.node.object() else {
             return Vec::new();
         };
@@ -1239,7 +1240,39 @@ impl<'a> OidLookup<'a> {
         if indexes.peek().is_none() {
             return Vec::new();
         }
-        super::index::decode_suffix(indexes, &self.suffix)
+        super::index::decode_suffix_prefix(indexes, &self.suffix)
+    }
+
+    /// Decode the complete instance suffix with default allocation bounds.
+    pub fn decode_indexes_exact(
+        &self,
+    ) -> Result<super::index::ExactIndexDecode<'_>, super::index::IndexDecodeError<'_>> {
+        self.decode_indexes_exact_with_limits(super::index::DEFAULT_INDEX_DECODE_LIMITS)
+    }
+
+    /// Decode the complete instance suffix with explicit allocation bounds.
+    pub fn decode_indexes_exact_with_limits(
+        &self,
+        limits: super::index::IndexDecodeLimits,
+    ) -> Result<super::index::ExactIndexDecode<'_>, super::index::IndexDecodeError<'_>> {
+        let Some(obj) = self.node.object() else {
+            return super::index::decode_suffix_exact_with_limits(
+                std::iter::empty(),
+                &self.suffix,
+                limits,
+            );
+        };
+        super::index::decode_suffix_exact_with_limits(obj.effective_indexes(), &self.suffix, limits)
+    }
+
+    /// Compatibility alias for the historical prefix decoder.
+    #[deprecated(
+        since = "0.10.0",
+        note = "use decode_indexes_prefix or decode_indexes_exact"
+    )]
+    #[must_use]
+    pub fn decode_indexes(&self) -> Vec<super::index::DecodedIndex> {
+        self.decode_indexes_prefix()
     }
 }
 
