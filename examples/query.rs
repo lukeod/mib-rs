@@ -111,7 +111,7 @@ fn main() {
     println!("\nlookup_instance(\"docDescr.7\"):");
     println!("  Node:   {}", lookup.node().name());
     println!("  Suffix: {:?}", lookup.suffix());
-    for idx in lookup.decode_indexes() {
+    for idx in lookup.decode_indexes_prefix() {
         println!("  Index:  {}={}", idx.name(), idx.value());
     }
 

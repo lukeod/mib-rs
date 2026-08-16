@@ -247,9 +247,11 @@
 //! keyword omits the length prefix, relying on the index being the
 //! last component. [`Index::encoding`] returns the derived encoding.
 //!
-//! Use [`mib::index::decode_suffix`] to decode raw OID suffix arcs
-//! into typed [`IndexValue`]s, or call [`OidLookup::decode_indexes`]
-//! for the common case of processing a varbind OID.
+//! Use [`mib::index::decode_suffix_exact`] to decode a complete raw OID suffix
+//! into typed [`IndexValue`]s with bounded allocation, or call
+//! [`OidLookup::decode_indexes_exact`] for the common varbind case. The
+//! explicitly lenient [`mib::index::decode_suffix_prefix`] and
+//! [`OidLookup::decode_indexes_prefix`] helpers return only a readable prefix.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
