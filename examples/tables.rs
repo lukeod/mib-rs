@@ -1,6 +1,6 @@
 //! Table navigation: rows, columns, indexes, and object kind predicates.
 
-use mib_rs::Loader;
+use mib_rs::{IndexSchema, Loader};
 
 fn main() {
     let source = mib_rs::source::memory(
@@ -75,6 +75,24 @@ fn main() {
         println!("    Implied:  {}", idx.implied());
         println!("    Encoding: {:?}", idx.encoding());
         println!("    Row:      {}", idx.row().name());
+    }
+
+    // Compile the borrowed INDEX handles into metadata that can outlive the MIB.
+    let schema = IndexSchema::compile(row).expect("row should have a usable INDEX schema");
+    println!(
+        "  Schema width: {}..{}",
+        schema.minimum_suffix_arcs(),
+        schema
+            .maximum_suffix_arcs()
+            .map_or_else(|| "unbounded".to_string(), |width| width.to_string())
+    );
+    for issue in schema.issues() {
+        println!("  Schema issue: {issue:?}");
+    }
+    for component in schema.components() {
+        for issue in component.issues() {
+            println!("  Component issue ({}): {issue:?}", component.name());
+        }
     }
 
     // -- All scalars --

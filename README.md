@@ -128,6 +128,49 @@ let node = mib.lookup_oid(&oid);
 println!("{}", node.name()); // ifDescr
 ```
 
+### Decode and encode table indexes
+
+Compile table index metadata while the MIB is available, then retain the owned
+codec in a runtime plan. Exact decoding rejects malformed, truncated, and
+trailing arcs; canonical encoding checks value kinds and constraints.
+
+```rust
+use std::sync::Arc;
+use mib_rs::{BoundIndexCodec, ConstraintMode, IndexSchema, IndexValue, IndexValueRef};
+
+// Assume IF-MIB is already loaded into `mib`.
+let codec = {
+    let column = mib.object("ifDescr").expect("column exists");
+    let schema = Arc::new(IndexSchema::compile(column).expect("valid INDEX metadata"));
+
+    // Representable MIB concerns are retained rather than silently discarded.
+    for issue in schema.issues() {
+        eprintln!("schema issue: {issue:?}");
+    }
+    for component in schema.components() {
+        for issue in component.issues() {
+            eprintln!("{}: {issue:?}", component.name());
+        }
+    }
+
+    BoundIndexCodec::for_object_oid(
+        schema,
+        column.node().expect("resolved column OID").oid(),
+    )
+    .expect("index suffix fits the instance-OID limit")
+};
+
+drop(mib); // the codec owns the metadata it needs
+
+let decoded = codec.decode_exact(&[7], ConstraintMode::Enforce).unwrap();
+assert_eq!(decoded.values(), &[IndexValue::Integer32(7)]);
+
+let encoded = codec
+    .encode_canonical([IndexValueRef::Integer32(7)])
+    .unwrap();
+assert_eq!(encoded.as_ref(), &[7]);
+```
+
 ## CLI Tool
 
 The optional `mib-rs` binary provides commands for working with MIBs:

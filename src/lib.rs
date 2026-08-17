@@ -251,6 +251,8 @@
 //! [`IndexSchema::decode_exact`] and [`IndexSchema::encode_canonical`] after
 //! the MIB is dropped. Exact decoding rejects truncated, malformed, and
 //! trailing input; canonical encoding validates value kinds and constraints.
+//! Inspect [`IndexSchema::issues`] and [`IndexComponentSchema::issues`] for
+//! representable MIB concerns retained during compilation.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
