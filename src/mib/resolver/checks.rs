@@ -62,6 +62,8 @@ pub(super) fn run_checks(ctx: &mut ResolverContext) {
     check_type_status_usage(ctx);
     check_compliance_status(ctx);
     check_group_unreferenced(ctx);
+    check_includes_groups(ctx);
+    check_creation_requires(ctx);
     check_ip_address_deprecation(ctx);
 }
 
@@ -3386,6 +3388,105 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
                     });
                 }
                 _ => {}
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+// --- Agent capabilities references ---
+
+/// Validate that each INCLUDES name resolves in its SUPPORTS module and report
+/// repeated names. Each occurrence is resolved independently, so a repeated
+/// unresolved name produces both duplicate and unresolved diagnostics.
+fn check_includes_groups(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for (ir_id, m) in ctx.all_modules() {
+        for def in &m.definitions {
+            let capabilities = match def {
+                ir::Definition::AgentCapabilities(capabilities) => capabilities,
+                _ => continue,
+            };
+
+            for supports in &capabilities.supports {
+                let mut seen = HashSet::with_capacity(supports.includes.len());
+                for name in &supports.includes {
+                    if !seen.insert(name.as_str()) {
+                        diags.push(Diag {
+                            code: DiagCode::IncludesDuplicate,
+                            ir_id: Some(ir_id),
+                            span: supports.span,
+                            message: format!(
+                                "duplicate INCLUDES group {:?} in SUPPORTS {}",
+                                name, supports.module_name
+                            ),
+                        });
+                    }
+
+                    if lookup_compliance_member(ctx, ir_id, &supports.module_name, name).is_none() {
+                        diags.push(Diag {
+                            code: DiagCode::IncludesUnresolved,
+                            ir_id: Some(ir_id),
+                            span: supports.span,
+                            message: format!(
+                                "INCLUDES group {:?} not found in module {:?}",
+                                name, supports.module_name
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    emit_all(ctx, diags);
+}
+
+/// Validate that each CREATION-REQUIRES name resolves in its SUPPORTS module
+/// and report repeated names.
+fn check_creation_requires(ctx: &mut ResolverContext) {
+    let mut diags = Vec::new();
+
+    for (ir_id, m) in ctx.all_modules() {
+        for def in &m.definitions {
+            let capabilities = match def {
+                ir::Definition::AgentCapabilities(capabilities) => capabilities,
+                _ => continue,
+            };
+
+            for supports in &capabilities.supports {
+                for variation in &supports.variations {
+                    let mut seen = HashSet::with_capacity(variation.creation_requires.len());
+                    for name in &variation.creation_requires {
+                        if !seen.insert(name.as_str()) {
+                            diags.push(Diag {
+                                code: DiagCode::CreationRequiresDuplicate,
+                                ir_id: Some(ir_id),
+                                span: variation.span,
+                                message: format!(
+                                    "duplicate CREATION-REQUIRES {:?} in VARIATION {}",
+                                    name, variation.name
+                                ),
+                            });
+                        }
+
+                        if lookup_compliance_member(ctx, ir_id, &supports.module_name, name)
+                            .is_none()
+                        {
+                            diags.push(Diag {
+                                code: DiagCode::CreationRequiresUnresolved,
+                                ir_id: Some(ir_id),
+                                span: variation.span,
+                                message: format!(
+                                    "CREATION-REQUIRES {:?} not found in module {:?}",
+                                    name, supports.module_name
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
     }

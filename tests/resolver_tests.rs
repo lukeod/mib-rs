@@ -53,6 +53,195 @@ fn load_corpus_with_diags(modules: &[&str], strictness: ResolverStrictness) -> m
     load(opts).expect("load failed")
 }
 
+fn load_capabilities_reference_fixture() -> mib_rs::Mib {
+    let source = memory_modules([
+        (
+            "CAPABILITIES-TARGET-MIB",
+            &br#"CAPABILITIES-TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    OBJECT-GROUP
+        FROM SNMPv2-CONF;
+
+capabilitiesTarget MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Capabilities reference target."
+    ::= { enterprises 99996 }
+
+existingObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Existing object."
+    ::= { capabilitiesTarget 1 }
+
+existingGroup OBJECT-GROUP
+    OBJECTS { existingObject }
+    STATUS current
+    DESCRIPTION "Existing group."
+    ::= { capabilitiesTarget 2 }
+END
+"#[..],
+        ),
+        (
+            "CAPABILITIES-REFERENCES-MIB",
+            &br#"CAPABILITIES-REFERENCES-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, enterprises
+        FROM SNMPv2-SMI
+    AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+capabilitiesReferences MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Capabilities reference checks."
+    ::= { enterprises 99997 }
+
+referenceCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Capabilities reference checks."
+    SUPPORTS CAPABILITIES-TARGET-MIB
+        INCLUDES {
+            existingGroup, existingGroup,
+            missingGroup, missingGroup
+        }
+        VARIATION existingObject
+            CREATION-REQUIRES {
+                existingObject, existingObject,
+                missingObject, missingObject
+            }
+            DESCRIPTION "Object reference checks."
+    ::= { capabilitiesReferences 1 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["CAPABILITIES-TARGET-MIB", "CAPABILITIES-REFERENCES-MIB"]),
+    )
+    .expect("load failed")
+}
+
+fn diagnostics_for(mib: &mib_rs::Mib, code: DiagCode) -> Vec<&mib_rs::types::Diagnostic> {
+    mib.diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == code)
+        .collect()
+}
+
+#[test]
+fn conformance_diagnostic_catalog_matches_gomib_severities() {
+    for code in [
+        DiagCode::GroupMemberUnresolved,
+        DiagCode::GroupObjectsNotification,
+        DiagCode::GroupNotificationsObject,
+    ] {
+        assert_eq!(code.severity(), Severity::Minor, "{code}");
+        assert_eq!(
+            DiagnosticConfig::default().effective_severity(code),
+            Severity::Minor
+        );
+        assert_eq!(DiagCode::from_code(code.as_code()), Some(code));
+        assert_eq!(code.phase(), "resolver");
+    }
+
+    for code in [
+        DiagCode::IncludesUnresolved,
+        DiagCode::IncludesDuplicate,
+        DiagCode::CreationRequiresUnresolved,
+        DiagCode::CreationRequiresDuplicate,
+    ] {
+        assert_eq!(code.severity(), Severity::Warning, "{code}");
+        assert_eq!(
+            DiagnosticConfig::default().effective_severity(code),
+            Severity::Warning
+        );
+        assert_eq!(DiagCode::from_code(code.as_code()), Some(code));
+        assert_eq!(code.phase(), "resolver");
+    }
+
+    let mut overridden = DiagnosticConfig::default();
+    overridden
+        .overrides
+        .insert(DiagCode::IncludesUnresolved, Severity::Error);
+    assert_eq!(
+        overridden.effective_severity(DiagCode::IncludesUnresolved),
+        Severity::Error
+    );
+}
+
+#[test]
+fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
+    let mib = load_capabilities_reference_fixture();
+
+    let duplicate = diagnostics_for(&mib, DiagCode::IncludesDuplicate);
+    assert_eq!(duplicate.len(), 2);
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("existingGroup"))
+    );
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("missingGroup"))
+    );
+    assert!(duplicate.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.module.as_deref() == Some("CAPABILITIES-REFERENCES-MIB")
+    }));
+
+    let unresolved = diagnostics_for(&mib, DiagCode::IncludesUnresolved);
+    assert_eq!(unresolved.len(), 2);
+    assert!(unresolved.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.message.contains("missingGroup")
+            && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
+    }));
+}
+
+#[test]
+fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurrence() {
+    let mib = load_capabilities_reference_fixture();
+
+    let duplicate = diagnostics_for(&mib, DiagCode::CreationRequiresDuplicate);
+    assert_eq!(duplicate.len(), 2);
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("existingObject"))
+    );
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("missingObject"))
+    );
+    assert!(duplicate.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.module.as_deref() == Some("CAPABILITIES-REFERENCES-MIB")
+    }));
+
+    let unresolved = diagnostics_for(&mib, DiagCode::CreationRequiresUnresolved);
+    assert_eq!(unresolved.len(), 2);
+    assert!(unresolved.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.message.contains("missingObject")
+            && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
+    }));
+}
+
 // --- Basic loading tests ---
 
 #[test]
