@@ -831,8 +831,8 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
 
         // Resolve OBJECTS list.
         for obj_name in &objects {
-            let obj = lookup_object_by_name(ctx, ir_id, obj_name);
-            if let Some(obj_id) = obj {
+            let obj = lookup_notification_object(ctx, ir_id, obj_name);
+            if let Some(obj_id) = obj.object {
                 if ctx.mib.raw().object(obj_id).access() == Access::NotAccessible {
                     ctx.emit_diagnostic(
                         DiagCode::NotifObjectAccess,
@@ -845,6 +845,16 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                     );
                 }
                 nd.objects.push(obj_id);
+            } else if obj.node_found {
+                ctx.emit_diagnostic(
+                    DiagCode::NotifObjectNotObject,
+                    Some(ir_id),
+                    span,
+                    format!(
+                        "notification {:?} references {:?} which is not an object definition",
+                        name, obj_name
+                    ),
+                );
             } else {
                 let mod_name = ctx.modules[mod_idx].name.clone();
                 ctx.record_unresolved_notification_object(&name, obj_name, &mod_name, ir_id, span);
@@ -1084,6 +1094,57 @@ fn status_ord(status: Status) -> u8 {
         Status::Deprecated => 1,
         Status::Obsolete => 2,
         _ => 0,
+    }
+}
+
+struct NotificationObjectLookup {
+    object: Option<ObjectId>,
+    node_found: bool,
+}
+
+fn lookup_notification_object(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    name: &str,
+) -> NotificationObjectLookup {
+    if let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_mod, name) {
+        return NotificationObjectLookup {
+            object: Some(obj_id),
+            node_found: true,
+        };
+    }
+
+    if ctx.strictness.allow_global_fallbacks()
+        && let Some(node_id) = ctx.lookup_node_global(name)
+    {
+        trace!(
+            target: "mib_rs::resolver",
+            component = "resolver",
+            phase = "semantics",
+            module = %ctx.modules[ir_mod.index()].name,
+            name = %name,
+            fallback = "global_node_lookup",
+            "resolved notification object node via global fallback",
+        );
+        return NotificationObjectLookup {
+            object: ctx.mib.tree().get(node_id).object(),
+            node_found: true,
+        };
+    }
+
+    if let Some((node_id, used_import)) = ctx.lookup_node_for_module(ir_mod, name) {
+        if used_import {
+            ctx.mark_import_used(ir_mod, name);
+        }
+        return NotificationObjectLookup {
+            object: ctx.mib.tree().get(node_id).object(),
+            node_found: true,
+        };
+    }
+
+    NotificationObjectLookup {
+        object: None,
+        node_found: false,
     }
 }
 

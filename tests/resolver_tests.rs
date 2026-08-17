@@ -1304,6 +1304,73 @@ fn notification_resolved() {
 }
 
 #[test]
+fn notification_object_reference_to_non_object_is_distinguished_from_unresolved() {
+    let source = memory_modules([(
+        "NOTIFICATION-WRONG-KIND-MIB",
+        &br#"NOTIFICATION-WRONG-KIND-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, NOTIFICATION-TYPE, enterprises
+        FROM SNMPv2-SMI;
+
+notificationWrongKind MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Notification reference checks."
+    REVISION "202001010000Z"
+    DESCRIPTION "Initial revision."
+    ::= { enterprises 99995 }
+
+notAnObject OBJECT IDENTIFIER ::= { notificationWrongKind 1 }
+
+wrongKindNotification NOTIFICATION-TYPE
+    OBJECTS { notAnObject, missingObject }
+    STATUS current
+    DESCRIPTION "References a registration node."
+    ::= { notificationWrongKind 2 }
+END
+"#[..],
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["NOTIFICATION-WRONG-KIND-MIB"]),
+    )
+    .expect("load failed");
+
+    let diagnostic = mib
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagCode::NotifObjectNotObject)
+        .expect("missing wrong-kind notification object diagnostic");
+    assert_eq!(diagnostic.severity, Severity::Minor);
+    assert_eq!(
+        diagnostic.message,
+        "notification \"wrongKindNotification\" references \"notAnObject\" which is not an object definition"
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ObjectsUnresolved && diagnostic.message.contains("notAnObject")
+    }));
+    assert!(mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ObjectsUnresolved
+            && diagnostic.message
+                == "unresolved OBJECTS: \"wrongKindNotification\" references unknown object \"missingObject\""
+    }));
+    assert!(!mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::NotificationObject && unresolved.symbol == "notAnObject"
+    }));
+    assert!(mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::NotificationObject
+            && unresolved.symbol == "missingObject"
+            && unresolved.module == "NOTIFICATION-WRONG-KIND-MIB"
+    }));
+}
+
+#[test]
 fn import_forwarding_requires_an_ultimate_definer() {
     let source = memory_modules([
         (
