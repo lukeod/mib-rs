@@ -5,14 +5,14 @@
 
 pub use crate::lexer::token::{Token, TokenKind};
 use crate::source::SourceDocument;
-use crate::types::{DiagnosticConfig, SpanDiagnostic};
+use crate::types::{Diagnostic, DiagnosticConfig};
 
 /// Tokenize MIB source bytes with default [`DiagnosticConfig`] settings.
 ///
 /// Returns all tokens (always ending with [`TokenKind::Eof`]) and any
 /// diagnostics produced during lexing. For custom diagnostic settings,
 /// use [`tokenize_with_config`].
-pub fn tokenize(document: &SourceDocument) -> (Vec<Token>, Vec<SpanDiagnostic>) {
+pub fn tokenize(document: &SourceDocument) -> (Vec<Token>, Vec<Diagnostic>) {
     tokenize_with_config(document, &DiagnosticConfig::default())
 }
 
@@ -22,7 +22,7 @@ pub fn tokenize(document: &SourceDocument) -> (Vec<Token>, Vec<SpanDiagnostic>) 
 pub fn tokenize_with_config(
     document: &SourceDocument,
     diag_config: &DiagnosticConfig,
-) -> (Vec<Token>, Vec<SpanDiagnostic>) {
+) -> (Vec<Token>, Vec<Diagnostic>) {
     let lexer = crate::lexer::Lexer::new(document, diag_config);
     lexer.tokenize()
 }

@@ -9,6 +9,7 @@
 //! enums (status, access, base type, etc.) to keep the JSON human-readable.
 
 use std::cmp::Ordering;
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -16,7 +17,10 @@ use crate::mib::Mib;
 use crate::mib::Oid;
 use crate::mib::typedef::TypeData;
 use crate::mib::types::*;
-use crate::types::{Access, BaseType, Kind, Language, ResolverStrictness, Severity, Status};
+use crate::source::SourceOrigin;
+use crate::types::{
+    Access, BaseType, DiagnosticEntry, Kind, Language, ResolverStrictness, Severity, Status,
+};
 
 /// Top-level payload for the resolved-mib export.
 ///
@@ -28,7 +32,7 @@ use crate::types::{Access, BaseType, Kind, Language, ResolverStrictness, Severit
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportPayload {
-    /// Always `1` for this schema version.
+    /// Always `2` for this schema version.
     pub schema_version: u32,
     /// Always `"resolved-mib"`.
     pub export_kind: &'static str,
@@ -499,12 +503,57 @@ pub struct ExportDiagnostic {
     pub severity: String,
     /// Module name where the diagnostic originated, if known.
     pub module: Option<String>,
-    /// Source line number (1-based), if known.
-    pub line: Option<usize>,
-    /// Source column number (1-based), if known.
-    pub column: Option<usize>,
+    /// Checked source location, explicit source-less state, or conversion error.
+    pub location: ExportDiagnosticLocation,
     /// Human-readable diagnostic message.
     pub message: String,
+}
+
+/// Location state for an exported diagnostic.
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ExportDiagnosticLocation {
+    /// A checked source document and half-open range.
+    Source {
+        source: ExportDiagnosticSource,
+        range: ExportDiagnosticRange,
+    },
+    /// The diagnostic was intentionally emitted without a source range.
+    SourceLess,
+    /// The diagnostic carried a range that could not be resolved safely.
+    Unavailable { error: String },
+}
+
+/// Stable identity and display label of a diagnostic source.
+#[derive(Serialize)]
+pub struct ExportDiagnosticSource {
+    pub origin: ExportDiagnosticSourceOrigin,
+    pub label: String,
+}
+
+/// Stable source origin used by an exported diagnostic.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExportDiagnosticSourceOrigin {
+    File { path: PathBuf },
+    Embedded { identity: String },
+    Memory { identity: String },
+    Custom { provider: String, identity: String },
+}
+
+/// Checked half-open diagnostic range with zero-based byte positions.
+#[derive(Serialize)]
+pub struct ExportDiagnosticRange {
+    pub start: ExportDiagnosticPosition,
+    pub end: ExportDiagnosticPosition,
+}
+
+/// A zero-based source byte offset, line, and byte column.
+#[derive(Serialize)]
+pub struct ExportDiagnosticPosition {
+    pub byte: u32,
+    pub line: u32,
+    pub column: u32,
 }
 
 // --- Schema-canonical string mappings ---
@@ -567,6 +616,63 @@ fn severity_str(s: Severity) -> &'static str {
         Severity::Warning => "warning",
         Severity::Info => "info",
         Severity::Style => "style",
+    }
+}
+
+fn export_diagnostic_location(entry: DiagnosticEntry<'_>) -> ExportDiagnosticLocation {
+    let Some((source, range)) = (match entry.range() {
+        Ok(location) => location,
+        Err(error) => {
+            return ExportDiagnosticLocation::Unavailable {
+                error: error.to_string(),
+            };
+        }
+    }) else {
+        return ExportDiagnosticLocation::SourceLess;
+    };
+    let Some((start, end)) = (match entry.byte_positions() {
+        Ok(positions) => positions,
+        Err(error) => {
+            return ExportDiagnosticLocation::Unavailable {
+                error: error.to_string(),
+            };
+        }
+    }) else {
+        return ExportDiagnosticLocation::Unavailable {
+            error: "source range unexpectedly produced no positions".to_string(),
+        };
+    };
+
+    let origin = match source.origin() {
+        SourceOrigin::File { path } => ExportDiagnosticSourceOrigin::File { path: path.clone() },
+        SourceOrigin::Embedded { identity } => ExportDiagnosticSourceOrigin::Embedded {
+            identity: identity.to_string(),
+        },
+        SourceOrigin::Memory { identity } => ExportDiagnosticSourceOrigin::Memory {
+            identity: identity.to_string(),
+        },
+        SourceOrigin::Custom { provider, identity } => ExportDiagnosticSourceOrigin::Custom {
+            provider: provider.to_string(),
+            identity: identity.to_string(),
+        },
+    };
+    ExportDiagnosticLocation::Source {
+        source: ExportDiagnosticSource {
+            origin,
+            label: source.label().to_string(),
+        },
+        range: ExportDiagnosticRange {
+            start: ExportDiagnosticPosition {
+                byte: range.start().get(),
+                line: start.line(),
+                column: start.column(),
+            },
+            end: ExportDiagnosticPosition {
+                byte: range.end().get(),
+                line: end.line(),
+                column: end.column(),
+            },
+        },
     }
 }
 
@@ -1435,35 +1541,25 @@ pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayloa
     });
 
     // --- Diagnostics ---
-    let mut diagnostics: Vec<ExportDiagnostic> = mib
-        .diagnostics()
+    let diagnostic_report = mib.diagnostic_report();
+    let diagnostics: Vec<ExportDiagnostic> = diagnostic_report
         .iter()
-        .map(|d| {
+        .map(|entry| {
+            let d = entry.diagnostic();
             let phase = d.code.phase().to_string();
             ExportDiagnostic {
                 phase,
                 code: d.code.as_code().to_string(),
                 severity: severity_str(d.severity).to_string(),
                 module: d.module.clone(),
-                line: d.line,
-                column: d.column,
+                location: export_diagnostic_location(entry),
                 message: d.message.replace("\r\n", "\n"),
             }
         })
         .collect();
-    diagnostics.sort_by(|a, b| {
-        a.phase
-            .cmp(&b.phase)
-            .then(a.code.cmp(&b.code))
-            .then(a.severity.cmp(&b.severity))
-            .then(a.module.cmp(&b.module))
-            .then(a.line.cmp(&b.line))
-            .then(a.column.cmp(&b.column))
-            .then(a.message.cmp(&b.message))
-    });
 
     ExportPayload {
-        schema_version: 1,
+        schema_version: 2,
         export_kind: "resolved-mib",
         strictness: strictness.to_string(),
         exporter: Exporter {
@@ -1544,7 +1640,7 @@ mod tests {
     use crate::source::{dir as dir_source, memory_modules};
     use crate::types::{DiagnosticConfig, ResolverStrictness};
 
-    use super::export_payload;
+    use super::{ExportDiagnosticLocation, ExportDiagnosticSourceOrigin, export_payload};
 
     fn corpus_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/corpus/primary")
@@ -1558,6 +1654,46 @@ mod tests {
             .diagnostic_config(DiagnosticConfig::silent())
             .modules(modules.iter().copied());
         load(opts).expect("load failed")
+    }
+
+    #[test]
+    fn diagnostic_export_identifies_source_and_half_open_range() {
+        const SOURCE: &str = "EXPORT-DIAGNOSTIC-MIB DEFINITIONS ::= BEGIN\nbad_name OBJECT IDENTIFIER ::= { iso 1 }\nEND\n";
+        let mut diagnostics = DiagnosticConfig::verbose();
+        diagnostics.fail_at = crate::Severity::Fatal;
+        let mib = Loader::new()
+            .source(crate::source::memory(
+                "EXPORT-DIAGNOSTIC-MIB",
+                SOURCE.as_bytes(),
+            ))
+            .modules(["EXPORT-DIAGNOSTIC-MIB"])
+            .diagnostic_config(diagnostics)
+            .load()
+            .unwrap();
+        let payload = export_payload(&mib, ResolverStrictness::Normal);
+        assert_eq!(payload.schema_version, 2);
+        let diagnostic = payload
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "identifier-underscore")
+            .unwrap();
+        let ExportDiagnosticLocation::Source { source, range } = &diagnostic.location else {
+            panic!("expected checked diagnostic source location");
+        };
+        assert_eq!(source.label, "<memory:EXPORT-DIAGNOSTIC-MIB>");
+        assert!(matches!(
+            &source.origin,
+            ExportDiagnosticSourceOrigin::Memory { identity }
+                if identity == "EXPORT-DIAGNOSTIC-MIB"
+        ));
+        let start = u32::try_from(SOURCE.find("bad_name").unwrap()).unwrap();
+        assert_eq!(range.start.byte, start);
+        assert_eq!(
+            range.end.byte,
+            start + u32::try_from("bad_name".len()).unwrap()
+        );
+        assert_eq!((range.start.line, range.start.column), (1, 0));
+        assert_eq!((range.end.line, range.end.column), (1, 8));
     }
 
     #[test]

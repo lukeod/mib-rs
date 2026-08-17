@@ -1099,16 +1099,27 @@ fn compare_types(got: &ExtractedType, expected: &FixtureType) -> Vec<String> {
 }
 
 fn extract_diagnostics(mib: &Mib) -> Vec<ExtractedDiagnostic> {
-    let mut diags: Vec<_> = mib
-        .diagnostics()
+    let report = mib.diagnostic_report();
+    let mut diags: Vec<_> = report
         .iter()
-        .map(|d| ExtractedDiagnostic {
-            code: d.code.as_code().to_string(),
-            severity: d.severity.to_string(),
-            module: d.module.clone().unwrap_or_default(),
-            line: d.line.unwrap_or(0),
-            column: d.column.unwrap_or(0),
-            message: normalize_diagnostic_message(&d.message),
+        .map(|entry| {
+            let d = entry.diagnostic();
+            let (line, column) = match entry.byte_positions() {
+                Ok(Some((start, _))) => (
+                    usize::try_from(u64::from(start.line()) + 1).unwrap(),
+                    usize::try_from(u64::from(start.column()) + 1).unwrap(),
+                ),
+                Ok(None) => (0, 0),
+                Err(error) => panic!("diagnostic location unavailable for {}: {error}", d.code),
+            };
+            ExtractedDiagnostic {
+                code: d.code.as_code().to_string(),
+                severity: d.severity.to_string(),
+                module: d.module.clone().unwrap_or_default(),
+                line,
+                column,
+                message: normalize_diagnostic_message(&d.message),
+            }
         })
         .collect();
 

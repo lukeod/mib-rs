@@ -15,7 +15,7 @@ pub use oid::{OidAssignment, OidComponent};
 pub use syntax::*;
 
 use crate::source::SourceRange;
-use crate::types::{Severity, SpanDiagnostic};
+use crate::types::{Diagnostic, Severity};
 
 /// Top-level AST node for a parsed MIB module.
 ///
@@ -33,7 +33,7 @@ pub struct Module {
     /// Source range covering the entire module.
     pub span: SourceRange,
     /// Diagnostics collected during parsing.
-    pub diagnostics: Vec<SpanDiagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl Module {

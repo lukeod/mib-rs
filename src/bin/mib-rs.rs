@@ -3,11 +3,13 @@ use std::process;
 
 use clap::Parser;
 
+use mib_rs::LoadError;
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
 use mib_rs::source::{SourceRange, dir};
 use mib_rs::types::{
-    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, all_diagnostic_codes,
+    DiagnosticConfig, DiagnosticEntry, Kind, ReportingLevel, ResolverStrictness, Severity,
+    all_diagnostic_codes,
 };
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -378,11 +380,24 @@ fn load_mib(
 
     match load(opts) {
         Ok(mib) => Ok(mib),
+        Err(LoadError::DiagnosticThreshold { report }) => {
+            eprintln!("error: diagnostic threshold exceeded");
+            for entry in report.iter() {
+                eprintln!("  {}", render_diagnostic(entry));
+            }
+            Err(2)
+        }
         Err(e) => {
             eprintln!("error: {e}");
             Err(2)
         }
     }
+}
+
+fn render_diagnostic(entry: DiagnosticEntry<'_>) -> String {
+    entry
+        .render()
+        .unwrap_or_else(|error| format!("{} [location unavailable: {error}]", entry.diagnostic()))
 }
 
 fn resolve_strictness(
@@ -463,12 +478,12 @@ fn cmd_load(
     }
 
     // Diagnostics
-    let diags = mib.diagnostics();
-    if !diags.is_empty() {
+    let report = mib.diagnostic_report();
+    if !report.is_empty() {
         eprintln!();
         eprintln!("Diagnostics:");
-        for d in diags {
-            eprintln!("  {d}");
+        for entry in report.iter() {
+            eprintln!("  {}", render_diagnostic(entry));
         }
     }
 
@@ -500,7 +515,9 @@ fn cmd_load(
         }
     }
 
-    let has_violations = diags.iter().any(|d| d.severity <= Severity::Error);
+    let has_violations = report
+        .iter()
+        .any(|entry| entry.diagnostic().severity <= Severity::Error);
     if mib.has_errors() {
         2
     } else if has_violations {
@@ -1630,33 +1647,38 @@ fn print_scoped_diagnostics(
     if module.source_id() != Some(range.source()) {
         return;
     }
+    let report = mib.diagnostic_report();
     let Some(source) = module.source() else {
         return;
     };
     if source.slice(range).is_err() {
         return;
     }
-    let (Ok((start_line, _)), Ok((end_line, _))) = (
-        source.line_column(range.start()),
-        source.line_column(range.end()),
-    ) else {
-        return;
-    };
 
     let module_name = module.name();
-    let scoped: Vec<_> = mib
-        .diagnostics()
+    let scoped: Vec<_> = report
         .iter()
-        .filter(|d| {
-            d.module.as_deref() == Some(module_name)
-                && d.line.is_some_and(|l| l >= start_line && l <= end_line)
+        .filter(|entry| {
+            let d = entry.diagnostic();
+            if d.module.as_deref() != Some(module_name) {
+                return false;
+            }
+            match entry.range() {
+                Ok(Some((_, diagnostic_range))) => {
+                    diagnostic_range.source() == range.source()
+                        && diagnostic_range.start() >= range.start()
+                        && diagnostic_range.start() <= range.end()
+                }
+                Ok(None) => false,
+                Err(_) => true,
+            }
         })
         .collect();
 
     if !scoped.is_empty() {
         println!("\nDiagnostics:");
-        for d in &scoped {
-            println!("  [{}] {}: {}", d.severity, d.code, d.message);
+        for entry in scoped {
+            println!("  {}", render_diagnostic(entry));
         }
     }
 }
@@ -1816,8 +1838,18 @@ struct LintDiagnostic {
     code: String,
     message: String,
     module: String,
-    line: usize,
-    column: usize,
+    location: Option<LintLocation>,
+    location_error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LintLocation {
+    source: String,
+    start_line: u64,
+    start_column: u64,
+    end_line: u64,
+    end_column: u64,
 }
 
 struct LintSummary {
@@ -1862,7 +1894,7 @@ fn cmd_lint(
     };
 
     let mod_count = mib.user_modules().count();
-    let diags = mib.diagnostics();
+    let report = mib.diagnostic_report();
 
     // Filter diagnostics
     let level_sev = Severity::from(level);
@@ -1879,7 +1911,8 @@ fn cmd_lint(
         exit_code: 0,
     };
 
-    for d in diags {
+    for entry in report.iter() {
+        let d = entry.diagnostic();
         // Filter by level
         if d.severity > level_sev {
             continue;
@@ -1915,14 +1948,15 @@ fn cmd_lint(
             result.exit_code = 1;
         }
 
+        let (location, location_error) = lint_location(entry);
         result.diagnostics.push(LintDiagnostic {
             severity: sev_str,
             severity_num: d.severity as u8,
             code: code_str.to_string(),
             message: d.message.clone(),
             module: d.module.clone().unwrap_or_default(),
-            line: d.line.unwrap_or(0),
-            column: d.column.unwrap_or(0),
+            location,
+            location_error,
         });
     }
 
@@ -1938,6 +1972,31 @@ fn cmd_lint(
     }
 
     result.exit_code
+}
+
+fn lint_location(entry: DiagnosticEntry<'_>) -> (Option<LintLocation>, Option<String>) {
+    let source = match entry.range() {
+        Ok(Some((source, _))) => source,
+        Ok(None) => return (None, None),
+        Err(error) => return (None, Some(error.to_string())),
+    };
+    match entry.byte_positions() {
+        Ok(Some((start, end))) => (
+            Some(LintLocation {
+                source: source.label().to_string(),
+                start_line: u64::from(start.line()) + 1,
+                start_column: u64::from(start.column()) + 1,
+                end_line: u64::from(end.line()) + 1,
+                end_column: u64::from(end.column()) + 1,
+            }),
+            None,
+        ),
+        Ok(None) => (
+            None,
+            Some("source range unexpectedly produced no positions".to_string()),
+        ),
+        Err(error) => (None, Some(error.to_string())),
+    }
 }
 
 const SEVERITY_ORDER: &[&str] = &[
@@ -2022,18 +2081,25 @@ fn print_lint_text(result: &LintResult, group_by: Option<GroupBy>, summary_only:
 }
 
 fn format_lint_location(d: &LintDiagnostic) -> String {
-    if d.module.is_empty() {
-        return String::new();
+    if let Some(location) = &d.location {
+        return format!(
+            "{}:{}:{}-{}:{}",
+            location.source,
+            location.start_line,
+            location.start_column,
+            location.end_line,
+            location.end_column
+        );
     }
-    if d.line > 0 {
-        if d.column > 0 {
-            format!("{}:{}:{}", d.module, d.line, d.column)
+    if let Some(error) = &d.location_error {
+        let prefix = if d.module.is_empty() {
+            String::new()
         } else {
-            format!("{}:{}", d.module, d.line)
-        }
-    } else {
-        d.module.clone()
+            format!("{} ", d.module)
+        };
+        return format!("{prefix}[location unavailable: {error}]");
     }
+    d.module.clone()
 }
 
 fn print_lint_summary(result: &LintResult) {
@@ -2077,15 +2143,7 @@ fn print_lint_compact(result: &LintResult, summary_only: bool) {
     }
 
     for d in &result.diagnostics {
-        let loc = if d.module.is_empty() {
-            String::new()
-        } else if d.line > 0 && d.column > 0 {
-            format!("{}:{}:{}", d.module, d.line, d.column)
-        } else if d.line > 0 {
-            format!("{}:{}", d.module, d.line)
-        } else {
-            d.module.clone()
-        };
+        let loc = format_lint_location(d);
         println!("{loc}: {} [{}] {}", d.severity, d.code, d.message);
     }
 }
@@ -2105,10 +2163,10 @@ fn print_lint_json(result: &LintResult) {
         message: String,
         #[serde(skip_serializing_if = "String::is_empty")]
         module: String,
-        #[serde(skip_serializing_if = "is_zero")]
-        line: usize,
-        #[serde(skip_serializing_if = "is_zero")]
-        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location: Option<LintLocation>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location_error: Option<String>,
         rule_id: String,
     }
 
@@ -2130,8 +2188,14 @@ fn print_lint_json(result: &LintResult) {
                 code: d.code.clone(),
                 message: d.message.clone(),
                 module: d.module.clone(),
-                line: d.line,
-                column: d.column,
+                location: d.location.as_ref().map(|location| LintLocation {
+                    source: location.source.clone(),
+                    start_line: location.start_line,
+                    start_column: location.start_column,
+                    end_line: location.end_line,
+                    end_column: location.end_column,
+                }),
+                location_error: d.location_error.clone(),
                 rule_id: d.code.clone(),
             })
             .collect(),
@@ -2144,10 +2208,6 @@ fn print_lint_json(result: &LintResult) {
     };
 
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
-}
-
-fn is_zero(v: &usize) -> bool {
-    *v == 0
 }
 
 fn print_lint_sarif(result: &LintResult) {
@@ -2229,9 +2289,10 @@ fn print_lint_sarif(result: &LintResult) {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct SarifRegion {
-        start_line: usize,
-        #[serde(skip_serializing_if = "is_zero")]
-        start_column: usize,
+        start_line: u64,
+        start_column: u64,
+        end_line: u64,
+        end_column: u64,
     }
 
     fn severity_to_sarif(sev: &str) -> &str {
@@ -2264,31 +2325,32 @@ fn print_lint_sarif(result: &LintResult) {
         .diagnostics
         .iter()
         .map(|d| {
-            let locations = if !d.module.is_empty() {
+            let locations = if let Some(location) = &d.location {
                 vec![SarifLocation {
                     physical_location: SarifPhysicalLocation {
                         artifact_location: SarifArtifactLocation {
-                            uri: d.module.clone(),
+                            uri: location.source.clone(),
                         },
-                        region: if d.line > 0 {
-                            Some(SarifRegion {
-                                start_line: d.line,
-                                start_column: d.column,
-                            })
-                        } else {
-                            None
-                        },
+                        region: Some(SarifRegion {
+                            start_line: location.start_line,
+                            start_column: location.start_column,
+                            end_line: location.end_line,
+                            end_column: location.end_column,
+                        }),
                     },
                 }]
             } else {
                 Vec::new()
             };
+            let message = if let Some(error) = &d.location_error {
+                format!("{} [location unavailable: {error}]", d.message)
+            } else {
+                d.message.clone()
+            };
             SarifResult {
                 rule_id: d.code.clone(),
                 level: severity_to_sarif(&d.severity).to_string(),
-                message: SarifMessage {
-                    text: d.message.clone(),
-                },
+                message: SarifMessage { text: message },
                 locations,
             }
         })
@@ -2613,8 +2675,9 @@ fn cmd_dump(
         Err(code) => return code,
     };
 
-    for d in mib.diagnostics() {
-        eprintln!("{d}");
+    let report = mib.diagnostic_report();
+    for entry in report.iter() {
+        eprintln!("{}", render_diagnostic(entry));
     }
 
     let mut payload = mib_rs::export::export_payload(&mib, strictness);

@@ -6,7 +6,34 @@
 use std::sync::Arc;
 
 use mib_rs::token::{self, TokenKind};
-use mib_rs::{SourceOrigin, SourceSet};
+use mib_rs::{Diagnostic, SourceDocument, SourceOrigin, SourceSet};
+
+fn render(document: &SourceDocument, diagnostic: &Diagnostic) -> String {
+    let Some(range) = diagnostic.range else {
+        return diagnostic.to_string();
+    };
+    if let Err(error) = document.slice(range) {
+        return format!("{diagnostic} [location unavailable: {error}]");
+    }
+    let start = match document.byte_position(range.start()) {
+        Ok(position) => position,
+        Err(error) => return format!("{diagnostic} [location unavailable: {error}]"),
+    };
+    let end = match document.byte_position(range.end()) {
+        Ok(position) => position,
+        Err(error) => return format!("{diagnostic} [location unavailable: {error}]"),
+    };
+    format!(
+        "[{}] {}:{}:{}-{}:{}: {}",
+        diagnostic.severity,
+        document.label(),
+        u64::from(start.line()) + 1,
+        u64::from(start.column()) + 1,
+        u64::from(end.line()) + 1,
+        u64::from(end.column()) + 1,
+        diagnostic.message
+    )
+}
 
 fn main() {
     let source = br#"EXAMPLE-MIB DEFINITIONS ::= BEGIN
@@ -79,8 +106,8 @@ END
     // -- Diagnostics from lexing --
     if !diagnostics.is_empty() {
         println!("\nLexer diagnostics:");
-        for d in &diagnostics {
-            println!("  {:?}", d);
+        for diagnostic in &diagnostics {
+            println!("  {}", render(document, diagnostic));
         }
     } else {
         println!("\nNo lexer diagnostics.");

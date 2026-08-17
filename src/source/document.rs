@@ -764,6 +764,17 @@ pub enum PositionError {
 }
 
 /// Owns the source documents retained for one compilation.
+///
+/// A source set is mutable while callers build a parse-only compilation, but
+/// it cannot be cloned into independently mutable arenas whose future IDs
+/// would alias. Resolved MIBs and diagnostic reports share one internal arena.
+///
+/// ```compile_fail
+/// use mib_rs::SourceSet;
+///
+/// let sources = SourceSet::new();
+/// let fork = sources.clone();
+/// ```
 #[derive(Debug, Default)]
 pub struct SourceSet {
     documents: Vec<Arc<SourceDocument>>,

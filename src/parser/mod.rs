@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use crate::ast::*;
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::source::{ByteOffset, SourceDocument, SourceRange};
-use crate::types::{Access, AccessKeyword, DiagCode, DiagnosticConfig, SpanDiagnostic, Status};
+use crate::types::{Access, AccessKeyword, DiagCode, Diagnostic, DiagnosticConfig, Status};
 use tracing::{debug, debug_span, info_span, trace};
 
 type TcBody = (
@@ -38,7 +38,7 @@ pub struct Parser<'src, 'cfg> {
     buf: [Token; 3],
     last_span: SourceRange,
     lexer_diagnostic_cursor: usize,
-    diagnostics: Vec<SpanDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
     diag_config: &'cfg DiagnosticConfig,
     eof_token: Token,
 }
@@ -119,7 +119,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.peek().kind == kind
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token, SpanDiagnostic> {
+    fn expect(&mut self, kind: TokenKind) -> Result<Token, Diagnostic> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
@@ -152,16 +152,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         )
     }
 
-    fn make_error(&self, message: String) -> SpanDiagnostic {
-        SpanDiagnostic {
+    fn make_error(&self, message: String) -> Diagnostic {
+        Diagnostic {
             severity: self.diag_config.effective_severity(DiagCode::ParseError),
             code: DiagCode::ParseError,
-            span: self.current_span(),
             message,
+            module: None,
+            range: Some(self.current_span()),
         }
     }
 
-    fn record_parse_error(&mut self, mut diag: SpanDiagnostic) {
+    fn record_parse_error(&mut self, mut diag: Diagnostic) {
         if !self.diag_config.should_collect(diag.code) {
             return;
         }
@@ -173,11 +174,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         if !self.diag_config.should_collect(code) {
             return;
         }
-        self.diagnostics.push(SpanDiagnostic {
+        self.diagnostics.push(Diagnostic {
             severity: self.diag_config.effective_severity(code),
             code,
-            span,
             message: message.into(),
+            module: None,
+            range: Some(span),
         });
     }
 
@@ -188,11 +190,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         if !self.diag_config.should_collect(code) {
             return;
         }
-        self.diagnostics.push(SpanDiagnostic {
+        self.diagnostics.push(Diagnostic {
             severity: self.diag_config.effective_severity(code),
             code,
-            span,
             message: message(),
+            module: None,
+            range: Some(span),
         });
     }
 
@@ -254,7 +257,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn expect_identifier(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_identifier(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() {
             return Ok(self.advance());
         }
@@ -269,26 +272,26 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Err(self.make_error("expected identifier".to_string()))
     }
 
-    fn expect_index_object(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_index_object(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() || self.peek().kind.is_type_keyword() {
             return Ok(self.advance());
         }
         Err(self.make_error("expected index object".to_string()))
     }
 
-    fn expect_enum_label(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_enum_label(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() || self.peek().kind.is_keyword() {
             return Ok(self.advance());
         }
         Err(self.make_error("expected enum label".to_string()))
     }
 
-    fn parse_identifier_as_ident(&mut self) -> Result<Ident, SpanDiagnostic> {
+    fn parse_identifier_as_ident(&mut self) -> Result<Ident, Diagnostic> {
         let token = self.expect_identifier()?;
         Ok(self.make_ident(token))
     }
 
-    fn parse_quoted_string(&mut self) -> Result<QuotedString, SpanDiagnostic> {
+    fn parse_quoted_string(&mut self) -> Result<QuotedString, Diagnostic> {
         if !self.check(TokenKind::QuotedString) {
             return Err(self.make_error("expected quoted string".to_string()));
         }
@@ -307,7 +310,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_optional_reference(&mut self) -> Result<Option<QuotedString>, SpanDiagnostic> {
+    fn parse_optional_reference(&mut self) -> Result<Option<QuotedString>, Diagnostic> {
         if !self.check(TokenKind::KwReference) {
             return Ok(None);
         }
@@ -315,7 +318,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(Some(self.parse_quoted_string()?))
     }
 
-    fn parse_u32(&mut self, span: SourceRange, context: &str) -> Result<u32, SpanDiagnostic> {
+    fn parse_u32(&mut self, span: SourceRange, context: &str) -> Result<u32, Diagnostic> {
         let text = self.text(span);
         match text.parse::<u32>() {
             Ok(v) => Ok(v),
@@ -330,7 +333,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_i64(&mut self, span: SourceRange, context: &str) -> Result<i64, SpanDiagnostic> {
+    fn parse_i64(&mut self, span: SourceRange, context: &str) -> Result<i64, Diagnostic> {
         let text = self.text(span);
         match text.parse::<i64>() {
             Ok(v) => Ok(v),
@@ -366,11 +369,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn collect_module_diagnostics(&mut self, ownership_end: ByteOffset) -> Vec<SpanDiagnostic> {
+    fn collect_module_diagnostics(
+        &mut self,
+        ownership_end: ByteOffset,
+        module_name: Option<&str>,
+    ) -> Vec<Diagnostic> {
         let lexer_diagnostics = self.lexer.diagnostics();
         let owned_count = lexer_diagnostics[self.lexer_diagnostic_cursor..]
             .iter()
-            .take_while(|diag| diag.span.start() < ownership_end)
+            .take_while(|diag| {
+                diag.range
+                    .is_some_and(|range| range.start() < ownership_end)
+            })
             .count();
         let owned_end = self.lexer_diagnostic_cursor + owned_count;
 
@@ -378,12 +388,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         combined.extend_from_slice(&lexer_diagnostics[self.lexer_diagnostic_cursor..owned_end]);
         self.lexer_diagnostic_cursor = owned_end;
         combined.append(&mut self.diagnostics);
+        if let Some(module_name) = module_name {
+            for diagnostic in &mut combined {
+                diagnostic.module = Some(module_name.to_owned());
+            }
+        }
         combined
     }
 
     // ---- List helpers ----
 
-    fn parse_identifier_list(&mut self) -> Result<Vec<Ident>, SpanDiagnostic> {
+    fn parse_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
         let mut idents = Vec::new();
         loop {
             if self.check(TokenKind::RBrace) || self.is_eof() {
@@ -399,7 +414,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(idents)
     }
 
-    fn parse_braced_identifier_list(&mut self) -> Result<Vec<Ident>, SpanDiagnostic> {
+    fn parse_braced_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
         self.expect(TokenKind::LBrace)?;
         let idents = self.parse_identifier_list()?;
         self.expect(TokenKind::RBrace)?;
@@ -476,7 +491,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     imports: Vec::new(),
                     body: Vec::new(),
                     span,
-                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end()),
+                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end(), None),
                 };
             }
         };
@@ -573,7 +588,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         } else {
             self.last_span.end()
         };
-        let diagnostics = self.collect_module_diagnostics(ownership_end);
+        let diagnostics = self.collect_module_diagnostics(ownership_end, Some(&module_name));
 
         debug!(
             target: "mib_rs::parser",
@@ -593,7 +608,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_module_header(&mut self) -> Result<Ident, SpanDiagnostic> {
+    fn parse_module_header(&mut self) -> Result<Ident, Diagnostic> {
         let name_token = self.expect_identifier()?;
         let name = self.make_ident_with_validation(name_token);
 
@@ -612,7 +627,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Import parsing ----
 
-    fn parse_imports(&mut self) -> Result<Vec<ImportClause>, SpanDiagnostic> {
+    fn parse_imports(&mut self) -> Result<Vec<ImportClause>, Diagnostic> {
         self.expect(TokenKind::KwImports)?;
 
         let mut clauses = Vec::new();
@@ -668,7 +683,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Definition dispatch ----
 
-    fn parse_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_definition(&mut self) -> Result<Definition, Diagnostic> {
         let first = self.peek().kind;
         let second = self.peek_nth(1).kind;
 
@@ -745,7 +760,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Definition parsers ----
 
-    fn parse_object_type(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_object_type(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -818,7 +833,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })))
     }
 
-    fn parse_module_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_module_identity(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -876,7 +891,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_object_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_object_identity(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -910,7 +925,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_notification_type(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_notification_type(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -953,7 +968,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_trap_type(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_trap_type(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1002,7 +1017,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_textual_convention(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1025,7 +1040,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention_with_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_textual_convention_with_assignment(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1049,7 +1064,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention_body(&mut self) -> Result<TcBody, SpanDiagnostic> {
+    fn parse_textual_convention_body(&mut self) -> Result<TcBody, Diagnostic> {
         // DISPLAY-HINT (optional)
         let display_hint = if self.check(TokenKind::KwDisplayHint) {
             self.advance();
@@ -1075,7 +1090,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok((display_hint, status, description, reference, syntax))
     }
 
-    fn parse_type_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_type_assignment(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1092,7 +1107,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_value_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_value_assignment(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1112,7 +1127,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_object_group(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_object_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
             TokenKind::KwObjectGroup,
             TokenKind::KwObjects,
@@ -1130,7 +1145,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         )
     }
 
-    fn parse_notification_group(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_notification_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
             TokenKind::KwNotificationGroup,
             TokenKind::KwNotifications,
@@ -1153,7 +1168,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         macro_kw: TokenKind,
         members_kw: TokenKind,
         build: F,
-    ) -> Result<Definition, SpanDiagnostic>
+    ) -> Result<Definition, Diagnostic>
     where
         F: FnOnce(
             Ident,
@@ -1203,7 +1218,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         ))
     }
 
-    fn parse_module_compliance(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_module_compliance(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1244,7 +1259,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_compliance_module(&mut self) -> Result<ComplianceModule, SpanDiagnostic> {
+    fn parse_compliance_module(&mut self) -> Result<ComplianceModule, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwModule)?;
 
@@ -1293,7 +1308,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, SpanDiagnostic> {
+    fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwGroup)?;
 
@@ -1310,7 +1325,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_compliance_object(&mut self) -> Result<ComplianceObject, SpanDiagnostic> {
+    fn parse_compliance_object(&mut self) -> Result<ComplianceObject, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwObject)?;
 
@@ -1343,7 +1358,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_optional_syntax_clauses(
         &mut self,
-    ) -> Result<(Option<SyntaxClause>, Option<SyntaxClause>), SpanDiagnostic> {
+    ) -> Result<(Option<SyntaxClause>, Option<SyntaxClause>), Diagnostic> {
         let syntax = if self.check(TokenKind::KwSyntax) {
             self.advance();
             Some(self.parse_syntax_clause()?)
@@ -1361,7 +1376,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok((syntax, write_syntax))
     }
 
-    fn parse_agent_capabilities(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_agent_capabilities(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1407,7 +1422,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_supports_module(&mut self) -> Result<SupportsModule, SpanDiagnostic> {
+    fn parse_supports_module(&mut self) -> Result<SupportsModule, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwSupports)?;
 
@@ -1440,7 +1455,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_variation_clause(&mut self) -> Result<Variation, SpanDiagnostic> {
+    fn parse_variation_clause(&mut self) -> Result<Variation, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwVariation)?;
 
@@ -1488,7 +1503,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_macro_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_macro_definition(&mut self) -> Result<Definition, Diagnostic> {
         let start = self.current_span();
 
         let name_token = self.advance();
@@ -1519,7 +1534,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Clause parsers ----
 
-    fn parse_access_clause(&mut self) -> Result<AccessClause, SpanDiagnostic> {
+    fn parse_access_clause(&mut self) -> Result<AccessClause, Diagnostic> {
         let start = self.current_span();
 
         let keyword = if self.check(TokenKind::KwMaxAccess) {
@@ -1575,7 +1590,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_status_clause(&mut self) -> Result<StatusClause, SpanDiagnostic> {
+    fn parse_status_clause(&mut self) -> Result<StatusClause, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwStatus)?;
 
@@ -1609,7 +1624,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_index_or_augments(
         &mut self,
-    ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), SpanDiagnostic> {
+    ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), Diagnostic> {
         if self.check(TokenKind::KwIndex) {
             let start = self.current_span();
             self.advance();
@@ -1676,7 +1691,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok((None, None))
     }
 
-    fn parse_defval_clause(&mut self) -> Result<DefValClause, SpanDiagnostic> {
+    fn parse_defval_clause(&mut self) -> Result<DefValClause, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::KwDefval)?;
         self.expect(TokenKind::LBrace)?;
@@ -1688,7 +1703,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(DefValClause { value, span })
     }
 
-    fn parse_defval(&mut self) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval(&mut self) -> Result<DefVal, Diagnostic> {
         match self.peek().kind {
             TokenKind::Number => {
                 let token = self.advance();
@@ -1754,7 +1769,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_defval_braced_content(&mut self) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval_braced_content(&mut self) -> Result<DefVal, Diagnostic> {
         let start = self.current_span();
 
         // Empty braces: BITS {}
@@ -1805,7 +1820,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         &mut self,
         start: SourceRange,
         first: Ident,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    ) -> Result<DefVal, Diagnostic> {
         let mut labels = vec![first];
 
         while self.check(TokenKind::Comma) {
@@ -1827,7 +1842,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         &mut self,
         start: SourceRange,
         first: Ident,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    ) -> Result<DefVal, Diagnostic> {
         // First component might be name(number)
         let first_component = if self.check(TokenKind::LParen) {
             self.advance();
@@ -1852,10 +1867,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_defval_oid_components(
-        &mut self,
-        start: SourceRange,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval_oid_components(&mut self, start: SourceRange) -> Result<DefVal, Diagnostic> {
         let mut components = Vec::new();
         self.collect_defval_oid_components(&mut components)?;
 
@@ -1868,7 +1880,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn collect_defval_oid_components(
         &mut self,
         components: &mut Vec<OidComponent>,
-    ) -> Result<(), SpanDiagnostic> {
+    ) -> Result<(), Diagnostic> {
         while !self.check(TokenKind::RBrace) && !self.is_eof() {
             let kind = self.peek().kind;
             if kind == TokenKind::Number
@@ -1886,14 +1898,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Type syntax parsing ----
 
-    fn parse_syntax_clause(&mut self) -> Result<SyntaxClause, SpanDiagnostic> {
+    fn parse_syntax_clause(&mut self) -> Result<SyntaxClause, Diagnostic> {
         let start = self.current_span();
         let syntax = self.parse_type_syntax()?;
         let span = cover(start, syntax.span());
         Ok(SyntaxClause { syntax, span })
     }
 
-    fn parse_type_syntax(&mut self) -> Result<TypeSyntax, SpanDiagnostic> {
+    fn parse_type_syntax(&mut self) -> Result<TypeSyntax, Diagnostic> {
         let start = self.current_span();
 
         let base = match self.peek().kind {
@@ -2105,7 +2117,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Constraint parsing ----
 
-    fn parse_constraint(&mut self) -> Result<Constraint, SpanDiagnostic> {
+    fn parse_constraint(&mut self) -> Result<Constraint, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::LParen)?;
 
@@ -2127,7 +2139,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_range_list(&mut self) -> Result<Vec<Range>, SpanDiagnostic> {
+    fn parse_range_list(&mut self) -> Result<Vec<Range>, Diagnostic> {
         let mut ranges = Vec::new();
 
         loop {
@@ -2158,7 +2170,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(ranges)
     }
 
-    fn parse_range_value(&mut self) -> Result<RangeValue, SpanDiagnostic> {
+    fn parse_range_value(&mut self) -> Result<RangeValue, Diagnostic> {
         match self.peek().kind {
             TokenKind::Number => {
                 let token = self.advance();
@@ -2218,14 +2230,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Named numbers and sequence fields ----
 
-    fn parse_named_numbers(&mut self) -> Result<Vec<NamedNumber>, SpanDiagnostic> {
+    fn parse_named_numbers(&mut self) -> Result<Vec<NamedNumber>, Diagnostic> {
         self.expect(TokenKind::LBrace)?;
         let list = self.parse_named_number_list()?;
         self.expect(TokenKind::RBrace)?;
         Ok(list)
     }
 
-    fn parse_named_number_list(&mut self) -> Result<Vec<NamedNumber>, SpanDiagnostic> {
+    fn parse_named_number_list(&mut self) -> Result<Vec<NamedNumber>, Diagnostic> {
         let mut items = Vec::new();
 
         loop {
@@ -2271,7 +2283,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(items)
     }
 
-    fn parse_sequence_fields(&mut self) -> Result<Vec<SequenceField>, SpanDiagnostic> {
+    fn parse_sequence_fields(&mut self) -> Result<Vec<SequenceField>, Diagnostic> {
         let mut fields = Vec::new();
 
         while !self.check(TokenKind::RBrace) && !self.is_eof() {
@@ -2299,7 +2311,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- OID assignment parsing ----
 
-    fn parse_oid_assignment(&mut self) -> Result<OidAssignment, SpanDiagnostic> {
+    fn parse_oid_assignment(&mut self) -> Result<OidAssignment, Diagnostic> {
         let start = self.current_span();
         self.expect(TokenKind::LBrace)?;
 
@@ -2315,7 +2327,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(OidAssignment { components, span })
     }
 
-    fn parse_oid_component(&mut self) -> Result<OidComponent, SpanDiagnostic> {
+    fn parse_oid_component(&mut self) -> Result<OidComponent, Diagnostic> {
         match self.peek().kind {
             TokenKind::Number => {
                 let token = self.advance();
@@ -2477,8 +2489,12 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.byte_range(), 11..13);
-        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 11..13);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
+        assert_eq!(diagnostics[0].module.as_deref(), Some("TEST-MIB"));
     }
 
     #[test]
@@ -2494,8 +2510,11 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.byte_range(), 8..10);
-        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 8..10);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
     }
 
     #[test]
@@ -2510,8 +2529,11 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::UnexpectedCharacter)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.byte_range(), 0..1);
-        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 0..1);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
     }
 
     #[test]
@@ -2527,8 +2549,11 @@ mod tests {
             .collect();
         assert_eq!(diagnostics.len(), 1);
         let at = input.find('@').unwrap();
-        assert_eq!(diagnostics[0].span.byte_range(), at..at + 1);
-        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), at..at + 1);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
         assert!(
             modules[0]
                 .diagnostics
@@ -2560,10 +2585,13 @@ SECOND-MIB { 02 } DEFINITIONS ::= BEGIN\nEND\n";
         assert_eq!(diagnostics.len(), 1);
         let number_start = input.find("02").unwrap();
         assert_eq!(
-            diagnostics[0].span.byte_range(),
+            diagnostics[0].range.unwrap().byte_range(),
             number_start..number_start + 2
         );
-        assert_eq!(diagnostics[0].span.source(), modules[1].span.source());
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[1].span.source()
+        );
     }
 
     #[test]

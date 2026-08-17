@@ -18,7 +18,7 @@ use crate::parser;
 use crate::scan;
 use crate::searchpath;
 use crate::source::{CandidateId, Source, SourceCandidate, SourceDocument, SourceSet};
-use crate::types::{Diagnostic, DiagnosticConfig, ResolverStrictness};
+use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
 ///
@@ -215,7 +215,7 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
     let mib =
         crate::mib::resolver::resolve(loaded.modules, loaded.sources, strictness, &diag_config);
 
-    check_load_result(&mib, &diag_config, requested_names.as_deref())?;
+    let mib = check_load_result(mib, &diag_config, requested_names.as_deref())?;
 
     info!(
         target: "mib_rs::load",
@@ -751,7 +751,7 @@ END
     }
 
     #[test]
-    fn threshold_failure_releases_retained_sources() {
+    fn threshold_report_retains_sources_after_failed_mib_is_dropped() {
         let bytes: Arc<[u8]> = Arc::from(
             &br#"LEAK-CHECK-MIB { 01 } DEFINITIONS ::= BEGIN
 badName OBJECT IDENTIFIER ::= { iso 99999 }
@@ -778,7 +778,17 @@ END
             .diagnostic_config(diagnostics)
             .load();
 
-        assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
+        let Err(LoadError::DiagnosticThreshold { report }) = result else {
+            panic!("expected diagnostic threshold report");
+        };
+        assert!(weak_bytes.upgrade().is_some());
+        let entry = report
+            .iter()
+            .find(|entry| entry.diagnostic().code == DiagCode::NumberLeadingZero)
+            .expect("expected threshold-triggering diagnostic");
+        assert_eq!(entry.slice().unwrap(), Some(&b"01"[..]));
+        assert!(entry.render().unwrap().contains(":1:18-1:20"));
+        drop(report);
         assert!(weak_bytes.upgrade().is_none());
     }
 }
@@ -1186,10 +1196,10 @@ fn decode_modules(document: &SourceDocument, diag_config: &DiagnosticConfig) -> 
 
 /// Check the resolved Mib for diagnostic threshold violations and missing modules.
 fn check_load_result(
-    mib: &Mib,
+    mib: Mib,
     diag_config: &DiagnosticConfig,
     requested_modules: Option<&[String]>,
-) -> Result<(), LoadError> {
+) -> Result<Mib, LoadError> {
     // Check for missing requested modules.
     if let Some(requested) = requested_modules {
         let mut missing = Vec::new();
@@ -1225,25 +1235,9 @@ fn check_load_result(
             "diagnostic threshold exceeded",
         );
 
-        let mut diagnostics = mib.diagnostics().to_vec();
-        sort_diagnostics(&mut diagnostics);
-        return Err(LoadError::DiagnosticThreshold { diagnostics });
+        let report = mib.into_diagnostic_report();
+        return Err(LoadError::DiagnosticThreshold { report });
     }
 
-    Ok(())
-}
-
-/// Sort diagnostics using the canonical order also used by resolved-MIB export.
-fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
-    diagnostics.sort_by(|left, right| {
-        left.code
-            .phase()
-            .cmp(right.code.phase())
-            .then_with(|| left.code.as_code().cmp(right.code.as_code()))
-            .then(left.severity.cmp(&right.severity))
-            .then(left.module.cmp(&right.module))
-            .then(left.line.cmp(&right.line))
-            .then(left.column.cmp(&right.column))
-            .then(left.message.cmp(&right.message))
-    });
+    Ok(mib)
 }

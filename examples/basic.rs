@@ -122,8 +122,14 @@ END
     println!("  Errors:  {}", mib.has_errors());
     if !mib.diagnostics().is_empty() {
         println!("  Diagnostics:");
-        for d in mib.diagnostics() {
-            println!("    {d}");
+        let report = mib.diagnostic_report();
+        for entry in report.iter() {
+            match entry.render() {
+                Ok(rendered) => println!("    {rendered}"),
+                Err(error) => {
+                    println!("    {} [location unavailable: {error}]", entry.diagnostic())
+                }
+            }
         }
     }
 }

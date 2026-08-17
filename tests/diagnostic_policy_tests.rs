@@ -33,26 +33,30 @@ fn promoted_diagnostic_uses_effective_severity_and_fails_load() {
     assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
 }
 
-fn diagnostic_key(
-    diagnostic: &mib_rs::Diagnostic,
-) -> (
-    &'static str,
-    &'static str,
-    Severity,
-    Option<&str>,
-    Option<usize>,
-    Option<usize>,
-    &str,
-) {
-    (
-        diagnostic.code.phase(),
-        diagnostic.code.as_code(),
-        diagnostic.severity,
-        diagnostic.module.as_deref(),
-        diagnostic.line,
-        diagnostic.column,
-        &diagnostic.message,
-    )
+#[derive(Debug, PartialEq, Eq)]
+struct DiagnosticKey {
+    phase: &'static str,
+    code: &'static str,
+    severity: Severity,
+    module: Option<String>,
+    location: Option<(String, std::ops::Range<usize>)>,
+    message: String,
+}
+
+fn diagnostic_key(entry: mib_rs::DiagnosticEntry<'_>) -> DiagnosticKey {
+    let diagnostic = entry.diagnostic();
+    let location = entry
+        .range()
+        .expect("diagnostic range should resolve")
+        .map(|(source, range)| (source.label().to_string(), range.byte_range()));
+    DiagnosticKey {
+        phase: diagnostic.code.phase(),
+        code: diagnostic.code.as_code(),
+        severity: diagnostic.severity,
+        module: diagnostic.module.clone(),
+        location,
+        message: diagnostic.message.clone(),
+    }
 }
 
 #[test]
@@ -70,12 +74,8 @@ fn threshold_error_retains_all_diagnostics_in_canonical_order() {
         .diagnostic_config(non_failing_config)
         .load()
         .expect("fatal-only threshold should permit this MIB");
-    let mut expected_keys: Vec<_> = expected_mib
-        .diagnostics()
-        .iter()
-        .map(diagnostic_key)
-        .collect();
-    expected_keys.sort();
+    let expected_report = expected_mib.diagnostic_report();
+    let expected_keys: Vec<_> = expected_report.iter().map(diagnostic_key).collect();
 
     let error = Loader::new()
         .source(source())
@@ -83,15 +83,15 @@ fn threshold_error_retains_all_diagnostics_in_canonical_order() {
         .diagnostic_config(failing_config.clone())
         .load()
         .expect_err("promoted diagnostic should fail loading");
-    let LoadError::DiagnosticThreshold { diagnostics } = error else {
+    let LoadError::DiagnosticThreshold { report } = error else {
         panic!("expected diagnostic threshold error");
     };
-    let actual_keys: Vec<_> = diagnostics.iter().map(diagnostic_key).collect();
+    let actual_keys: Vec<_> = report.iter().map(diagnostic_key).collect();
 
     assert!(
-        diagnostics
+        report
             .iter()
-            .any(|diagnostic| !failing_config.should_fail(diagnostic.severity))
+            .any(|entry| !failing_config.should_fail(entry.diagnostic().severity))
     );
     assert_eq!(actual_keys, expected_keys);
 }
@@ -178,6 +178,45 @@ fn emitters_store_effective_severity_across_pipeline_phases() {
             .find(|diagnostic| diagnostic.code == code)
             .unwrap_or_else(|| panic!("expected {code} diagnostic"));
         assert_eq!(diagnostic.severity, Severity::Info, "code {code}");
+    }
+}
+
+#[test]
+fn diagnostics_preserve_exact_ranges_across_all_pipeline_phases() {
+    const LEXER_SOURCE: &[u8] = b"LEXER-DIAGNOSTIC-MIB DEFINITIONS ::= BEGIN\n@\nEND\n";
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    let mib = Loader::new()
+        .source(mib_rs::source::memory_modules([
+            ("DIAGNOSTIC-POLICY-MIB", SOURCE),
+            ("LEXER-DIAGNOSTIC-MIB", LEXER_SOURCE),
+        ]))
+        .modules(["DIAGNOSTIC-POLICY-MIB", "LEXER-DIAGNOSTIC-MIB"])
+        .diagnostic_config(config)
+        .load()
+        .expect("fatal-only threshold should retain phase diagnostics");
+    let report = mib.diagnostic_report();
+
+    let expected = [
+        (DiagCode::UnexpectedCharacter, &b"@"[..]),
+        (DiagCode::IdentifierUnderscore, &b"bad_name"[..]),
+        (DiagCode::MissingModuleIdentity, &SOURCE[..SOURCE.len() - 1]),
+        (DiagCode::ImportUnused, &b"Integer32"[..]),
+    ];
+    for (code, bytes) in expected {
+        let entry = report
+            .iter()
+            .find(|entry| entry.diagnostic().code == code)
+            .unwrap_or_else(|| panic!("expected {code} diagnostic"));
+        assert_eq!(entry.slice().unwrap(), Some(bytes), "code {code}");
+        let range = entry
+            .diagnostic()
+            .range
+            .expect("phase diagnostic should be ranged");
+        assert_eq!(
+            range.end().as_usize() - range.start().as_usize(),
+            bytes.len()
+        );
     }
 }
 

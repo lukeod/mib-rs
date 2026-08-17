@@ -11,7 +11,7 @@ pub use keyword::{is_forbidden_keyword, lookup_keyword};
 pub use token::{Token, TokenKind};
 
 use crate::source::{SourceDocument, SourceRange};
-use crate::types::{DiagCode, DiagnosticConfig, SpanDiagnostic};
+use crate::types::{DiagCode, Diagnostic, DiagnosticConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LexerState {
@@ -35,7 +35,7 @@ pub struct Lexer<'src, 'cfg> {
     pos: usize,
     state: LexerState,
     comment_start: usize,
-    diagnostics: Vec<SpanDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
     diag_config: &'cfg DiagnosticConfig,
 }
 
@@ -55,7 +55,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
     /// Consume all source text and return the token stream and diagnostics.
     /// The token stream always ends with `TokenKind::Eof`.
-    pub fn tokenize(mut self) -> (Vec<Token>, Vec<SpanDiagnostic>) {
+    pub fn tokenize(mut self) -> (Vec<Token>, Vec<Diagnostic>) {
         let estimated = (self.source.len() / 6).max(64);
         let mut tokens: Vec<Token> = Vec::with_capacity(estimated);
         tokens.extend(&mut self);
@@ -160,11 +160,12 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             return;
         }
         let severity = self.diag_config.effective_severity(code);
-        self.diagnostics.push(SpanDiagnostic {
+        self.diagnostics.push(Diagnostic {
             code,
             severity,
-            span,
             message: message.into(),
+            module: None,
+            range: Some(span),
         });
     }
 
@@ -616,7 +617,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 
     /// Returns diagnostics accumulated so far during tokenization.
-    pub fn diagnostics(&self) -> &[SpanDiagnostic] {
+    pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 }
@@ -679,7 +680,7 @@ mod tests {
         })
     }
 
-    fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<SpanDiagnostic>) {
+    fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<Diagnostic>) {
         let cfg = DiagnosticConfig::verbose();
         with_document(input, |document| Lexer::new(document, &cfg).tokenize())
     }
@@ -818,6 +819,13 @@ mod tests {
         assert_eq!(diags.len(), 2);
         assert_eq!(diags[0].code, DiagCode::NumberLeadingZero);
         assert_eq!(diags[1].code, DiagCode::NumberLeadingZero);
+        assert_eq!(diags[0].range.unwrap().byte_range(), 0..3);
+        assert_eq!(diags[1].range.unwrap().byte_range(), 4..8);
+        assert_eq!(
+            diags[0].range.unwrap().source(),
+            diags[1].range.unwrap().source()
+        );
+        assert!(diags.iter().all(|diagnostic| diagnostic.module.is_none()));
     }
 
     #[test]

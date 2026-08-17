@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
 - Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
 - Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
-- Include all collected diagnostics in deterministic order in `LoadError::DiagnosticThreshold`
+- Make `LoadError::DiagnosticThreshold` own a source-retaining `DiagnosticReport`; reports order diagnostics by stable source identity rather than compilation-local IDs and derive checked full ranges on demand
+- Make diagnostic reports internal products of a resolved MIB's exact shared source arena and remove `SourceSet::clone` to prevent cross-arena `SourceId` aliasing
+- Expose checked diagnostic locations and rendering only through report-owned `DiagnosticEntry` handles; raw diagnostic metadata can no longer be resolved through an arbitrary report
+- Replace exported diagnostic `line`/`column` fields with an explicit source identity, label, and half-open byte range location model; resolved-MIB export schema version is now 2
 - Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, include deliberate adaptations, and allow configured sources to override them
 - Replace unqualified source spans, synthetic sentinels, copied module paths, and line tables with checked `SourceRange` values, retained `SourceDocument`s, and typed source origins
 

@@ -210,9 +210,8 @@ impl ResolverContext {
 
     /// Emit a diagnostic if the config says to report it.
     ///
-    /// Resolves source location (line/column) from the range's retained source
-    /// document. Diagnostics filtered out by the [`DiagnosticConfig`] are
-    /// silently dropped.
+    /// Diagnostics filtered out by the [`DiagnosticConfig`] are silently
+    /// dropped. Source ranges are retained exactly for later presentation.
     pub fn emit_diagnostic(
         &mut self,
         code: DiagCode,
@@ -225,18 +224,12 @@ impl ResolverContext {
         }
         let severity = self.diag_config.effective_severity(code);
         let module_name = ir_mod.map(|id| self.modules[id.index()].name.clone());
-        let location = range.and_then(|range| {
-            let source = self.mib.sources.get(range.source())?;
-            source.slice(range).ok()?;
-            source.line_column(range.start()).ok()
-        });
         self.mib.add_diagnostic(Diagnostic {
             severity,
             code,
             message,
             module: module_name.filter(|s| !s.is_empty()),
-            line: location.map(|(line, _)| line),
-            column: location.map(|(_, column)| column),
+            range,
         });
     }
 
@@ -718,8 +711,9 @@ mod tests {
         emit_test_diagnostic(&mut ctx, Some(range));
 
         let diagnostic = &ctx.mib.diagnostics()[0];
-        assert_eq!(diagnostic.line, Some(2));
-        assert_eq!(diagnostic.column, Some(3));
+        assert_eq!(diagnostic.range, Some(range));
+        let report = ctx.mib.diagnostic_report();
+        assert_eq!(report.get(0).unwrap().slice().unwrap(), Some(&b"co"[..]));
     }
 
     #[test]
@@ -729,12 +723,11 @@ mod tests {
         emit_test_diagnostic(&mut ctx, None);
 
         let diagnostic = &ctx.mib.diagnostics()[0];
-        assert_eq!(diagnostic.line, None);
-        assert_eq!(diagnostic.column, None);
+        assert_eq!(diagnostic.range, None);
     }
 
     #[test]
-    fn diagnostic_with_unretained_source_has_no_location() {
+    fn diagnostic_preserves_unretained_range_for_checked_report_failure() {
         let mut retained_sources = SourceSet::new();
         insert_source(&mut retained_sources, "retained", b"retained");
 
@@ -751,8 +744,12 @@ mod tests {
         emit_test_diagnostic(&mut ctx, Some(foreign_range));
 
         let diagnostic = &ctx.mib.diagnostics()[0];
-        assert_eq!(diagnostic.line, None);
-        assert_eq!(diagnostic.column, None);
+        assert_eq!(diagnostic.range, Some(foreign_range));
+        let report = ctx.mib.diagnostic_report();
+        assert!(matches!(
+            report.get(0).unwrap().range(),
+            Err(crate::DiagnosticReportError::SourceNotRetained(id)) if id == foreign_id
+        ));
     }
 
     #[test]

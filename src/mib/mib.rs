@@ -6,10 +6,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::mib::{Oid, ParseOidError};
 use crate::source::{SourceDocument, SourceId, SourceSet};
-use crate::types::{BaseType, Diagnostic, Kind, Severity};
+use crate::types::{BaseType, Diagnostic, DiagnosticReport, Kind, Severity};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -37,7 +38,7 @@ use super::types::*;
 /// see [`Mib::raw`].
 pub struct Mib {
     pub(crate) tree: OidTree,
-    pub(crate) sources: SourceSet,
+    pub(crate) sources: Arc<SourceSet>,
 
     // Entity arenas
     pub(crate) objects: Vec<ObjectData>,
@@ -67,7 +68,7 @@ impl Mib {
     pub(crate) fn new() -> Self {
         Self {
             tree: OidTree::new(),
-            sources: SourceSet::new(),
+            sources: Arc::new(SourceSet::new()),
             objects: Vec::new(),
             types: Vec::new(),
             notifications: Vec::new(),
@@ -97,7 +98,7 @@ impl Mib {
 
     pub(crate) fn with_sources(sources: SourceSet) -> Self {
         Self {
-            sources,
+            sources: Arc::new(sources),
             ..Self::new()
         }
     }
@@ -1061,6 +1062,18 @@ impl Mib {
         &self.diagnostics
     }
 
+    /// Build a source-owning report for all retained diagnostics.
+    ///
+    /// Source documents are shared with the MIB, so the report remains valid
+    /// after the MIB is dropped without copying source bytes.
+    pub fn diagnostic_report(&self) -> DiagnosticReport {
+        DiagnosticReport::new(self.diagnostics.clone(), Arc::clone(&self.sources))
+    }
+
+    pub(crate) fn into_diagnostic_report(self) -> DiagnosticReport {
+        DiagnosticReport::new(self.diagnostics, self.sources)
+    }
+
     /// Return all unresolved symbol references collected during resolution.
     pub fn unresolved(&self) -> &[UnresolvedRef] {
         &self.unresolved
@@ -1306,15 +1319,33 @@ mod tests {
     use crate::source::SourceOrigin;
 
     fn test_range(mib: &mut Mib) -> crate::source::SourceRange {
-        let id = mib
-            .sources
+        let sources = Arc::get_mut(&mut mib.sources).expect("test MIB uniquely owns its sources");
+        let id = sources
             .insert(
                 SourceOrigin::memory("mib-test"),
                 "mib-test",
                 Arc::from(&b"test"[..]),
             )
             .unwrap();
-        mib.sources.get(id).unwrap().range(0..4).unwrap()
+        sources.get(id).unwrap().range(0..4).unwrap()
+    }
+
+    #[test]
+    fn diagnostic_report_outlives_the_mib_and_shares_its_source() {
+        let mut mib = Mib::new();
+        let range = test_range(&mut mib);
+        mib.add_diagnostic(Diagnostic {
+            severity: Severity::Error,
+            code: crate::DiagCode::ParseError,
+            message: "test".to_string(),
+            module: Some("TEST-MIB".to_string()),
+            range: Some(range),
+        });
+        let report = mib.diagnostic_report();
+        assert!(Arc::ptr_eq(&mib.sources, report.shared_sources()));
+        drop(mib);
+
+        assert_eq!(report.get(0).unwrap().slice().unwrap(), Some(&b"test"[..]));
     }
 
     fn make_mib_with_two_modules() -> Mib {

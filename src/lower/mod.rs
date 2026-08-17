@@ -47,17 +47,12 @@ impl<'a> LoweringContext<'a> {
         self.document
             .slice(range)
             .expect("lowering range belongs to its source document");
-        let (line, col) = self
-            .document
-            .line_column(range.start())
-            .expect("lowering range starts within its source document");
         self.diagnostics.push(Diagnostic {
             severity,
             code,
             message,
             module: Some(self.module_name.clone()),
-            line: Some(line),
-            column: Some(col),
+            range: Some(range),
         });
     }
 }
@@ -158,25 +153,24 @@ pub fn lower(
     });
 
     run_phase("diagnostics", || {
-        // Convert AST span-based diagnostics to line/col diagnostics.
         for d in &ast_module.diagnostics {
             if !ctx.diag_config.should_collect(d.code) {
                 continue;
             }
-            ctx.document
-                .slice(d.span)
-                .expect("parser diagnostic belongs to its source document");
-            let (line, col) = ctx
-                .document
-                .line_column(d.span.start())
-                .expect("parser diagnostic starts within its source document");
+            if let Some(range) = d.range {
+                ctx.document
+                    .slice(range)
+                    .expect("parser diagnostic belongs to its source document");
+            }
             module.diagnostics.push(Diagnostic {
                 severity: ctx.diag_config.effective_severity(d.code),
                 code: d.code,
                 message: d.message.clone(),
-                module: Some(module.name.clone()),
-                line: Some(line),
-                column: Some(col),
+                module: d
+                    .module
+                    .clone()
+                    .or_else(|| (!module.name.is_empty()).then(|| module.name.clone())),
+                range: d.range,
             });
         }
 
@@ -1442,6 +1436,65 @@ mod tests {
     use crate::types::{Access, AccessKeyword, DiagCode, DiagnosticConfig};
 
     use super::*;
+
+    #[test]
+    fn lowering_diagnostic_retains_exact_range_and_module() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("lowering-diagnostic"),
+                "lowering-diagnostic",
+                Arc::from(&b"abcde"[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.range(1..4).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let mut context = LoweringContext::new(document, &config);
+        context.module_name = "TEST-MIB".to_string();
+
+        context.emit_diagnostic(DiagCode::EmptyDescription, range, "test".to_string());
+
+        assert_eq!(context.diagnostics.len(), 1);
+        assert_eq!(context.diagnostics[0].range, Some(range));
+        assert_eq!(context.diagnostics[0].module.as_deref(), Some("TEST-MIB"));
+    }
+
+    #[test]
+    fn malformed_unnamed_module_diagnostic_remains_unattributed() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("malformed-header"),
+                "malformed-header",
+                Arc::from(&b"BAD HEADER"[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(parsed.name.is_none());
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.module.is_none())
+        );
+
+        let lowered = lower(parsed, document, &config);
+
+        assert!(lowered.name.is_empty());
+        assert!(!lowered.diagnostics.is_empty());
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.module.is_none())
+        );
+    }
 
     #[test]
     fn object_type_missing_syntax_emits_unknown_type_syntax() {

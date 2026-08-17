@@ -68,6 +68,15 @@
 //! values identify byte coordinates without sentinel values. [`BytePosition`]
 //! round-trips arbitrary source bytes, while [`Position`] requires an explicit
 //! [`PositionEncoding`] for UTF-8, UTF-16, or UTF-32 editor coordinates.
+//! [`Diagnostic`] retains an optional full source range, and
+//! [`DiagnosticReport`] keeps the referenced documents alive while deriving
+//! report-owned [`DiagnosticEntry`] handles. Entry rendering includes the
+//! source label plus the full start and exclusive end; invalid or unretained
+//! ranges return [`DiagnosticReportError`] instead of fabricated coordinates.
+//! Reports are obtained from a resolved [`Mib`] or a threshold [`LoadError`]
+//! and share that compilation's exact source arena; callers cannot combine
+//! diagnostics with an unrelated [`SourceSet`] or resolve raw diagnostic
+//! metadata through a different report.
 //!
 //! # Loading MIBs
 //!
@@ -722,8 +731,9 @@
 //!
 //! - `fail_at` - change which severity causes `load()` to return an
 //!   error. For example, set to [`Severity::Minor`] to fail on any
-//!   minor issue. [`LoadError::DiagnosticThreshold`] retains every collected
-//!   diagnostic in deterministic order when the load fails.
+//!   minor issue. [`LoadError::DiagnosticThreshold`] owns a [`DiagnosticReport`]
+//!   containing every collected diagnostic in deterministic order and retaining
+//!   the source documents needed to render locations after the load fails.
 //! - `overrides` - promote or demote specific diagnostic codes (e.g.
 //!   turn a warning into an error). The effective severity is stored on
 //!   collected diagnostics and controls `fail_at`; demotion does not suppress
@@ -795,8 +805,9 @@ pub use source::{
 };
 pub use token::{Token, TokenKind};
 pub use types::{
-    Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,
-    Language, ReportingLevel, ResolverStrictness, Severity, Status,
+    Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, DiagnosticEntry,
+    DiagnosticReport, DiagnosticReportError, IndexEncoding, Kind, Language, ReportingLevel,
+    ResolverStrictness, Severity, Status,
 };
 
 /// Low-level resolved data access.
