@@ -327,8 +327,8 @@
 //!   even if nothing imports them. Use [`Module::is_base`] to distinguish
 //!   them from user-supplied modules (e.g. when iterating modules).
 //! - **Source locations:** Definitions have ordinary source spans. Embedded
-//!   modules use source paths such as `embedded:SNMPv2-SMI`; configured copies
-//!   retain the path reported by their source.
+//!   modules use source labels such as `embedded:SNMPv2-SMI`; configured copies
+//!   retain the label reported by their source.
 //! - **Included in iteration:** [`Mib::modules`], [`Mib::objects`],
 //!   [`Mib::types`], and [`Mib::nodes`] all include base module content.
 //!   Filter with [`Module::is_base`] when you only want user-supplied
@@ -782,7 +782,7 @@ pub use mib::{
         OctetIndexKind, PartialRange, ReportedIndexViolation, VariableFraming,
     },
 };
-pub use source::{FindResult, Source};
+pub use source::{CandidateId, Source, SourceCandidate, SourceOrigin};
 pub use token::{Token, TokenKind};
 pub use types::{
     Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,

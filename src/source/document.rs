@@ -35,7 +35,7 @@ impl fmt::Display for SourceId {
 
 /// The stable identity of source content, independent of its display label.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum SourceOrigin {
+pub enum SourceOrigin {
     /// A file identified by its path.
     File { path: PathBuf },
     /// A source bundled into the library or another component.
@@ -47,6 +47,35 @@ pub(crate) enum SourceOrigin {
         provider: Arc<str>,
         identity: Arc<str>,
     },
+}
+
+impl SourceOrigin {
+    /// Identify a source by its filesystem path.
+    pub fn file(path: impl Into<PathBuf>) -> Self {
+        Self::File { path: path.into() }
+    }
+
+    /// Identify content bundled into a library or application.
+    pub fn embedded(identity: impl Into<Arc<str>>) -> Self {
+        Self::Embedded {
+            identity: identity.into(),
+        }
+    }
+
+    /// Identify an in-memory or editor document.
+    pub fn memory(identity: impl Into<Arc<str>>) -> Self {
+        Self::Memory {
+            identity: identity.into(),
+        }
+    }
+
+    /// Identify content supplied by a custom kind of provider.
+    pub fn custom(provider: impl Into<Arc<str>>, identity: impl Into<Arc<str>>) -> Self {
+        Self::Custom {
+            provider: provider.into(),
+            identity: identity.into(),
+        }
+    }
 }
 
 /// Byte offsets at which each line in a source begins.

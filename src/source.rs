@@ -1,44 +1,138 @@
 //! MIB source implementations for the loading pipeline.
 //!
-//! A [`Source`] provides access to MIB file content by module name. The library
+//! A [`Source`] provides access to MIB source documents by module name. The library
 //! ships with directory-tree, in-memory, and chained multi-source
 //! implementations.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tracing::debug;
 
 use crate::lower::base_modules;
 use crate::scan;
 
-// This is the source-retaining compilation core. It is intentionally not used
-// by the legacy loading facade until that facade is replaced in a later slice.
 #[allow(dead_code)]
 mod document;
 
-#[allow(unused_imports)]
-pub(crate) use document::{
-    LineIndex, SourceDocument, SourceId, SourceOrigin, SourceSet, SourceSetError,
-};
+pub use document::SourceOrigin;
+pub(crate) use document::{SourceDocument, SourceSet};
 
 /// Default file extensions recognized as MIB files.
 ///
 /// The empty string matches files with no extension (e.g., `IF-MIB`).
 pub const DEFAULT_EXTENSIONS: &[&str] = &["", ".mib", ".smi", ".txt", ".my"];
 
-/// The content and location of a found MIB file.
+/// Identifies one physical candidate within a [`Source`] implementation.
 ///
-/// Returned by [`Source::find`] when a module is located.
-pub struct FindResult {
-    /// Raw file content (bytes, not necessarily UTF-8).
-    pub content: Vec<u8>,
-    /// Path used in diagnostic messages to identify the source.
-    ///
-    /// For on-disk sources this is the absolute file path. For in-memory
-    /// sources it is a synthetic label like `<memory:MY-MIB>`.
-    pub path: PathBuf,
+/// Candidate identities are scoped to the source that returns them. The same
+/// identity returned for different requested module names tells the loader
+/// that both names refer to the same physical document. An identity must stay
+/// associated with the same origin and content for the duration of a load.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CandidateId(Arc<str>);
+
+impl CandidateId {
+    /// Create a provider-scoped candidate identity.
+    pub fn new(identity: impl Into<Arc<str>>) -> Self {
+        Self(identity.into())
+    }
+
+    /// Return the provider-local identity text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn scoped(&self, scope: usize) -> Self {
+        Self::new(format!("{scope}:{}:{}", self.0.len(), self.0))
+    }
+}
+
+impl fmt::Display for CandidateId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl From<&str> for CandidateId {
+    fn from(identity: &str) -> Self {
+        Self::new(identity)
+    }
+}
+
+impl From<String> for CandidateId {
+    fn from(identity: String) -> Self {
+        Self::new(identity)
+    }
+}
+
+impl From<Arc<str>> for CandidateId {
+    fn from(identity: Arc<str>) -> Self {
+        Self(identity)
+    }
+}
+
+/// A physical source document advertised as a candidate for a module name.
+///
+/// Its provider-scoped [`CandidateId`], physical [`SourceOrigin`], display
+/// label, and immutable bytes are independent. In particular, custom and
+/// in-memory sources do not need to invent filesystem paths.
+#[derive(Clone, Debug)]
+pub struct SourceCandidate {
+    identity: CandidateId,
+    origin: SourceOrigin,
+    label: Arc<str>,
+    bytes: Arc<[u8]>,
+}
+
+impl SourceCandidate {
+    /// Create a source candidate.
+    pub fn new(
+        identity: impl Into<CandidateId>,
+        origin: SourceOrigin,
+        label: impl Into<Arc<str>>,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Self {
+        Self {
+            identity: identity.into(),
+            origin,
+            label: label.into(),
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Return this candidate's stable identity within its provider.
+    pub fn identity(&self) -> &CandidateId {
+        &self.identity
+    }
+
+    /// Return the physical origin of the document.
+    pub fn origin(&self) -> &SourceOrigin {
+        &self.origin
+    }
+
+    /// Return the label used to identify the document to users.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Return the immutable source bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the shared allocation containing the immutable source bytes.
+    pub fn shared_bytes(&self) -> &Arc<[u8]> {
+        &self.bytes
+    }
+
+    fn with_scoped_identity(mut self, scope: usize) -> Self {
+        self.identity = self.identity.scoped(scope);
+        self
+    }
 }
 
 /// Provides access to MIB files for the loading pipeline.
@@ -52,7 +146,7 @@ pub struct FindResult {
 /// - [`memory`] / [`memory_modules`] - in-memory content
 /// - [`chain`] - combine arbitrary sources in priority order
 pub trait Source: Send + Sync {
-    /// Look up a module by name and return its content and source path.
+    /// Look up a module by name and return its first document candidate.
     ///
     /// Returns `Ok(None)` if this source does not contain the named module.
     /// The `name` parameter is the MIB module name (e.g. `"IF-MIB"`), not a
@@ -60,21 +154,22 @@ pub trait Source: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] if the underlying storage cannot be read (e.g.
-    /// file I/O failure, permission denied).
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>>;
+    /// Returns [`io::Error`] if the underlying storage cannot be read (for
+    /// example, a file I/O failure or permission denial).
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>>;
 
     /// Iterate over candidates for a module name in precedence order.
     ///
     /// Candidates and their I/O errors are produced lazily. This lets callers
     /// stop after validating an earlier candidate without accessing lower
-    /// priority storage. Each candidate is independently identified by its
-    /// position as well as its diagnostic path. Custom sources that expose at
-    /// most one candidate can rely on this default implementation.
+    /// priority storage. Each candidate supplies a stable provider-scoped
+    /// identity; returning the same identity for multiple requested names
+    /// associates those names with one physical document. Custom sources that
+    /// expose at most one candidate can rely on this default implementation.
     fn find_candidates<'a>(
         &'a self,
         name: &'a str,
-    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+    ) -> Box<dyn Iterator<Item = io::Result<SourceCandidate>> + 'a> {
         Box::new(
             std::iter::once_with(move || self.find(name)).filter_map(|result| result.transpose()),
         )
@@ -96,13 +191,15 @@ pub trait Source: Send + Sync {
 pub(crate) struct EmbeddedSource;
 
 impl Source for EmbeddedSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        Ok(
-            base_modules::embedded_content(name).map(|content| FindResult {
-                content: content.to_vec(),
-                path: PathBuf::from(format!("embedded:{name}")),
-            }),
-        )
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        Ok(base_modules::embedded_content(name).map(|content| {
+            SourceCandidate::new(
+                name,
+                SourceOrigin::embedded(name),
+                format!("embedded:{name}"),
+                Arc::<[u8]>::from(content),
+            )
+        }))
     }
 
     fn list_modules(&self) -> io::Result<Vec<String>> {
@@ -163,7 +260,7 @@ impl SourceConfig {
 /// The directory is eagerly indexed at construction time.
 struct DirSource {
     root: PathBuf,
-    index: HashMap<String, Vec<PathBuf>>,
+    index: HashMap<String, Vec<(usize, PathBuf)>>,
 }
 
 /// Create a [`Source`] that recursively indexes a directory tree.
@@ -237,16 +334,16 @@ pub fn dirs(roots: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box
 }
 
 impl Source for DirSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
         self.find_candidates(name).next().transpose()
     }
 
     fn find_candidates<'a>(
         &'a self,
         name: &'a str,
-    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
-        let rel_paths = self.index.get(name).into_iter().flatten();
-        Box::new(rel_paths.filter_map(move |rel_path| {
+    ) -> Box<dyn Iterator<Item = io::Result<SourceCandidate>> + 'a> {
+        let entries = self.index.get(name).into_iter().flatten();
+        Box::new(entries.filter_map(move |(document_index, rel_path)| {
             let full_path = self.root.join(rel_path);
             let content = match std::fs::read(&full_path) {
                 Ok(content) => content,
@@ -258,10 +355,12 @@ impl Source for DirSource {
             scan::scan_module_names(&content)
                 .iter()
                 .any(|candidate| candidate == name)
-                .then_some(Ok(FindResult {
-                    content,
-                    path: full_path,
-                }))
+                .then_some(Ok(SourceCandidate::new(
+                    document_index.to_string(),
+                    SourceOrigin::file(full_path.clone()),
+                    full_path.to_string_lossy().into_owned(),
+                    Arc::<[u8]>::from(content),
+                )))
         }))
     }
 
@@ -289,10 +388,10 @@ pub fn chain(sources: Vec<Box<dyn Source>>) -> Box<dyn Source> {
 }
 
 impl Source for MultiSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        for src in &self.sources {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        for (index, src) in self.sources.iter().enumerate() {
             match src.find(name)? {
-                Some(result) => return Ok(Some(result)),
+                Some(result) => return Ok(Some(result.with_scoped_identity(index))),
                 None => continue,
             }
         }
@@ -302,11 +401,16 @@ impl Source for MultiSource {
     fn find_candidates<'a>(
         &'a self,
         name: &'a str,
-    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+    ) -> Box<dyn Iterator<Item = io::Result<SourceCandidate>> + 'a> {
         Box::new(
             self.sources
                 .iter()
-                .flat_map(move |source| source.find_candidates(name)),
+                .enumerate()
+                .flat_map(move |(index, source)| {
+                    source.find_candidates(name).map(move |candidate| {
+                        candidate.map(|item| item.with_scoped_identity(index))
+                    })
+                }),
         )
     }
 
@@ -360,18 +464,21 @@ pub fn file(path: impl AsRef<Path>) -> io::Result<Box<dyn Source>> {
 /// contain a valid module definition.
 pub fn files(paths: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Box<dyn Source>> {
     let mut modules = HashMap::new();
+    let mut documents = Vec::new();
     let mut first_path = None;
     for path in paths {
         let path = path.as_ref();
         first_path.get_or_insert_with(|| path.to_path_buf());
         let content = std::fs::read(path)?;
         let names = crate::scan::scan_module_names(&content);
+        let document_index = documents.len();
         let diag_path = path.to_path_buf();
+        documents.push((diag_path.clone(), Arc::<[u8]>::from(content)));
         for name in names {
             modules
                 .entry(name)
                 .or_insert_with(Vec::new)
-                .push((diag_path.clone(), content.clone()));
+                .push(document_index);
         }
     }
     if modules.is_empty() {
@@ -383,33 +490,37 @@ pub fn files(paths: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Bo
             format!("no module definition found in {location}"),
         ));
     }
-    Ok(Box::new(FileSource { modules }))
+    Ok(Box::new(FileSource { modules, documents }))
 }
 
 /// A source backed by file contents grouped by advertised module name.
 struct FileSource {
-    modules: HashMap<String, Vec<(PathBuf, Vec<u8>)>>,
+    modules: HashMap<String, Vec<usize>>,
+    documents: Vec<(PathBuf, Arc<[u8]>)>,
 }
 
 impl Source for FileSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
         self.find_candidates(name).next().transpose()
     }
 
     fn find_candidates<'a>(
         &'a self,
         name: &'a str,
-    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+    ) -> Box<dyn Iterator<Item = io::Result<SourceCandidate>> + 'a> {
         Box::new(
             self.modules
                 .get(name)
                 .into_iter()
                 .flatten()
-                .map(|(path, content)| {
-                    Ok(FindResult {
-                        content: content.clone(),
-                        path: path.clone(),
-                    })
+                .map(|&document_index| {
+                    let (path, bytes) = &self.documents[document_index];
+                    Ok(SourceCandidate::new(
+                        document_index.to_string(),
+                        SourceOrigin::file(path.clone()),
+                        path.to_string_lossy().into_owned(),
+                        Arc::clone(bytes),
+                    ))
                 }),
         )
     }
@@ -423,7 +534,7 @@ impl Source for FileSource {
 
 /// A source backed by in-memory byte buffers keyed by module name.
 struct MemorySource {
-    modules: HashMap<String, (PathBuf, Vec<u8>)>,
+    modules: HashMap<String, Arc<[u8]>>,
 }
 
 /// Create a [`Source`] backed by a single in-memory MIB module.
@@ -453,19 +564,20 @@ pub fn memory_modules(
     let mut map = HashMap::new();
     for (name, bytes) in modules {
         let name = name.into();
-        map.insert(
-            name.clone(),
-            (PathBuf::from(format!("<memory:{name}>")), bytes.into()),
-        );
+        map.insert(name, Arc::from(bytes.into()));
     }
     Box::new(MemorySource { modules: map })
 }
 
 impl Source for MemorySource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        Ok(self.modules.get(name).map(|(path, content)| FindResult {
-            content: content.clone(),
-            path: path.clone(),
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        Ok(self.modules.get(name).map(|bytes| {
+            SourceCandidate::new(
+                name,
+                SourceOrigin::memory(name),
+                format!("<memory:{name}>"),
+                Arc::clone(bytes),
+            )
         }))
     }
 
@@ -480,9 +592,10 @@ impl Source for MemorySource {
 fn build_tree_index(
     root: &Path,
     extensions: &[String],
-) -> io::Result<HashMap<String, Vec<PathBuf>>> {
+) -> io::Result<HashMap<String, Vec<(usize, PathBuf)>>> {
     let ext_set: HashSet<&str> = extensions.iter().map(|s| s.as_str()).collect();
-    let mut index: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut index: HashMap<String, Vec<(usize, PathBuf)>> = HashMap::new();
+    let mut document_index = 0;
 
     for entry in walkdir::WalkDir::new(root).into_iter() {
         let entry = match entry {
@@ -527,8 +640,12 @@ fn build_tree_index(
         let rel_path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
         for name in names {
-            index.entry(name).or_default().push(rel_path.clone());
+            index
+                .entry(name)
+                .or_default()
+                .push((document_index, rel_path.clone()));
         }
+        document_index += 1;
     }
 
     Ok(index)
@@ -553,5 +670,43 @@ mod tests {
         assert!(has_valid_extension(Path::new("test.mib"), &ext_set));
         assert!(has_valid_extension(Path::new("test.MIB"), &ext_set));
         assert!(!has_valid_extension(Path::new("test.txt"), &ext_set));
+    }
+
+    #[test]
+    fn candidate_retains_shared_bytes_and_independent_metadata() {
+        let bytes: Arc<[u8]> = Arc::from(&b"contents"[..]);
+        let candidate = SourceCandidate::new(
+            "document-42",
+            SourceOrigin::custom("workspace", "buffer-42"),
+            "ACME-MIB (modified)",
+            Arc::clone(&bytes),
+        );
+
+        assert_eq!(candidate.identity().as_str(), "document-42");
+        assert_eq!(
+            candidate.origin(),
+            &SourceOrigin::custom("workspace", "buffer-42")
+        );
+        assert_eq!(candidate.label(), "ACME-MIB (modified)");
+        assert_eq!(candidate.bytes().as_ptr(), bytes.as_ptr());
+        assert!(Arc::ptr_eq(candidate.shared_bytes(), &bytes));
+    }
+
+    #[test]
+    fn built_in_non_file_sources_use_typed_origins() {
+        let memory = memory("DISPLAY-NAME", b"bytes".as_slice());
+        let memory_candidate = memory.find("DISPLAY-NAME").unwrap().unwrap();
+        assert_eq!(
+            memory_candidate.origin(),
+            &SourceOrigin::memory("DISPLAY-NAME")
+        );
+        assert_eq!(memory_candidate.label(), "<memory:DISPLAY-NAME>");
+
+        let embedded = EmbeddedSource
+            .find("SNMPv2-SMI")
+            .unwrap()
+            .expect("embedded module");
+        assert_eq!(embedded.origin(), &SourceOrigin::embedded("SNMPv2-SMI"));
+        assert_eq!(embedded.label(), "embedded:SNMPv2-SMI");
     }
 }

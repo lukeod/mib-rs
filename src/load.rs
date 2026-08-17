@@ -5,7 +5,6 @@
 //! pipeline via [`Loader::load`]. The free function [`load`] is equivalent.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -18,7 +17,7 @@ use crate::mib::Mib;
 use crate::parser;
 use crate::scan;
 use crate::searchpath;
-use crate::source::Source;
+use crate::source::{CandidateId, Source, SourceCandidate, SourceDocument, SourceSet};
 use crate::types::{Diagnostic, DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
@@ -236,8 +235,8 @@ mod tests {
     use std::sync::{Barrier, Condvar, mpsc};
     use std::time::Duration;
 
-    fn cache_key(index: usize) -> FileCacheKey {
-        (0, format!("TEST-{index}"), index, PathBuf::from("<test>"))
+    fn cache_key(index: usize) -> CandidateKey {
+        (0, CandidateId::new(format!("TEST-{index}")))
     }
 
     #[test]
@@ -308,6 +307,44 @@ mod tests {
         assert_eq!(initialization_count.load(Ordering::Relaxed), 1);
         assert!(Arc::ptr_eq(&first, &second));
     }
+
+    #[test]
+    fn source_registry_interns_provider_candidate_once() {
+        let bytes: Arc<[u8]> = Arc::from(&b"A-MIB DEFINITIONS ::= BEGIN END"[..]);
+        let candidate = SourceCandidate::new(
+            "document-7",
+            crate::source::SourceOrigin::memory("buffer-7"),
+            "untitled MIB",
+            Arc::clone(&bytes),
+        );
+        let mut registry = SourceRegistry::default();
+
+        let (first_key, first) = registry.intern(3, &candidate).unwrap();
+        let (second_key, second) = registry.intern(3, &candidate).unwrap();
+
+        assert_eq!(first_key, second_key);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(registry.sources.len(), 1);
+        assert_eq!(first.bytes().as_ptr(), bytes.as_ptr());
+    }
+
+    #[test]
+    fn candidate_identity_is_scoped_by_provider() {
+        let bytes: Arc<[u8]> = Arc::from(&b"contents"[..]);
+        let candidate = SourceCandidate::new(
+            "shared-id",
+            crate::source::SourceOrigin::memory("shared-id"),
+            "shared",
+            bytes,
+        );
+        let mut registry = SourceRegistry::default();
+
+        let (_, first) = registry.intern(0, &candidate).unwrap();
+        let (_, second) = registry.intern(1, &candidate).unwrap();
+
+        assert_ne!(first.id(), second.id());
+        assert_eq!(registry.sources.len(), 2);
+    }
 }
 
 impl Loader {
@@ -328,13 +365,43 @@ impl Loader {
     }
 }
 
-type FileCacheKey = (usize, String, usize, PathBuf);
+type CandidateKey = (usize, CandidateId);
 type ModuleCacheEntry = Arc<OnceLock<Arc<Vec<ir::Module>>>>;
-type SharedModuleCache = Mutex<HashMap<FileCacheKey, ModuleCacheEntry>>;
+type SharedModuleCache = Mutex<HashMap<CandidateKey, ModuleCacheEntry>>;
+
+#[derive(Debug, Default)]
+struct SourceRegistry {
+    sources: SourceSet,
+    documents: HashMap<CandidateKey, Arc<SourceDocument>>,
+}
+
+impl SourceRegistry {
+    fn intern(
+        &mut self,
+        provider_index: usize,
+        candidate: &SourceCandidate,
+    ) -> Result<(CandidateKey, Arc<SourceDocument>), LoadError> {
+        let key = (provider_index, candidate.identity().clone());
+        if let Some(document) = self.documents.get(&key) {
+            return Ok((key, Arc::clone(document)));
+        }
+
+        let document = self
+            .sources
+            .insert(
+                candidate.origin().clone(),
+                candidate.label(),
+                Arc::clone(candidate.shared_bytes()),
+            )
+            .map_err(LoadError::from_source)?;
+        self.documents.insert(key.clone(), Arc::clone(&document));
+        Ok((key, document))
+    }
+}
 
 fn cached_modules(
     cache: &SharedModuleCache,
-    key: FileCacheKey,
+    key: CandidateKey,
     decode: impl FnOnce() -> Vec<ir::Module>,
 ) -> Arc<Vec<ir::Module>> {
     let entry = {
@@ -392,9 +459,10 @@ fn load_all_modules(
         "parallel loading",
     );
 
-    // Cache decoded candidates without conflating module-specific lookups or
-    // sources that reuse candidate positions and diagnostic paths.
-    let path_cache: SharedModuleCache = Mutex::new(HashMap::new());
+    // Cache each provider-scoped physical candidate independently of the
+    // module name through which it was discovered.
+    let document_cache: SharedModuleCache = Mutex::new(HashMap::new());
+    let source_registry = Mutex::new(SourceRegistry::default());
 
     // Parallel load using std::thread::scope with an atomic work queue.
     let thread_count =
@@ -428,9 +496,7 @@ fn load_all_modules(
 
                     'sources: for candidate in candidates {
                         let src = &sources[candidate.source_index];
-                        for (candidate_index, result) in
-                            src.find_candidates(&candidate.name).enumerate()
-                        {
+                        for result in src.find_candidates(&candidate.name) {
                             let result = match result {
                                 Ok(result) => result,
                                 Err(error_value) => {
@@ -438,16 +504,20 @@ fn load_all_modules(
                                     break 'sources;
                                 }
                             };
-                            let cached = cached_modules(
-                                &path_cache,
-                                (
-                                    candidate.source_index,
-                                    name.clone(),
-                                    candidate_index,
-                                    result.path.clone(),
-                                ),
-                                || decode_modules(&result.content, &result.path, diag_config),
-                            );
+                            let (key, document) = match source_registry
+                                .lock()
+                                .unwrap()
+                                .intern(candidate.source_index, &result)
+                            {
+                                Ok(interned) => interned,
+                                Err(error_value) => {
+                                    *error.lock().unwrap() = Some(error_value);
+                                    break 'sources;
+                                }
+                            };
+                            let cached = cached_modules(&document_cache, key, || {
+                                decode_modules(document.bytes(), document.label(), diag_config)
+                            });
 
                             // A source advertisement is only a candidate until
                             // its decoded content contains the requested module.
@@ -460,7 +530,7 @@ fn load_all_modules(
                                 component = "load",
                                 module = %name,
                                 source_index = candidate.source_index,
-                                path = %result.path.display(),
+                                source = result.label(),
                                 reason = "decoded_module_missing",
                                 "candidate did not contain advertised module",
                             );
@@ -499,13 +569,15 @@ fn load_modules_by_name(
     diag_config: &DiagnosticConfig,
 ) -> Result<Vec<ir::Module>, LoadError> {
     let mut modules: HashMap<String, ir::Module> = HashMap::new();
-    let mut file_cache: HashMap<FileCacheKey, Vec<ir::Module>> = HashMap::new();
+    let mut document_cache: HashMap<CandidateKey, Vec<ir::Module>> = HashMap::new();
+    let mut source_registry = SourceRegistry::default();
 
     fn load_one(
         name: &str,
         sources: &[Box<dyn Source>],
         modules: &mut HashMap<String, ir::Module>,
-        file_cache: &mut HashMap<FileCacheKey, Vec<ir::Module>>,
+        document_cache: &mut HashMap<CandidateKey, Vec<ir::Module>>,
+        source_registry: &mut SourceRegistry,
         diag_config: &DiagnosticConfig,
     ) -> Result<(), LoadError> {
         if modules.contains_key(name) {
@@ -517,16 +589,12 @@ fn load_modules_by_name(
         // advertisements must not shadow valid modules in later sources.
         let mut target = None;
         'sources: for (source_index, source) in sources.iter().enumerate() {
-            for (candidate_index, result) in source.find_candidates(name).enumerate() {
+            for result in source.find_candidates(name) {
                 let result = result.map_err(LoadError::Io)?;
-                let mods = file_cache
-                    .entry((
-                        source_index,
-                        name.to_string(),
-                        candidate_index,
-                        result.path.clone(),
-                    ))
-                    .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
+                let (key, document) = source_registry.intern(source_index, &result)?;
+                let mods = document_cache.entry(key).or_insert_with(|| {
+                    decode_modules(document.bytes(), document.label(), diag_config)
+                });
                 if let Some(module) = mods.iter().find(|module| module.name == name) {
                     target = Some(module.clone());
                     break 'sources;
@@ -536,7 +604,7 @@ fn load_modules_by_name(
                     target: "mib_rs::load",
                     component = "load",
                     module = %name,
-                    path = %result.path.display(),
+                    source = result.label(),
                     reason = "decoded_module_missing",
                     "candidate did not contain advertised module",
                 );
@@ -570,20 +638,41 @@ fn load_modules_by_name(
 
         // Recursively load dependencies.
         for dep in import_modules {
-            load_one(&dep, sources, modules, file_cache, diag_config)?;
+            load_one(
+                &dep,
+                sources,
+                modules,
+                document_cache,
+                source_registry,
+                diag_config,
+            )?;
         }
 
         Ok(())
     }
 
     for name in names {
-        load_one(name, sources, &mut modules, &mut file_cache, diag_config)?;
+        load_one(
+            name,
+            sources,
+            &mut modules,
+            &mut document_cache,
+            &mut source_registry,
+            diag_config,
+        )?;
     }
 
     // Foundation modules are always present, with configured sources taking
     // precedence over the embedded fallback on a per-module basis.
     for name in lower::base_modules::base_module_names() {
-        load_one(name, sources, &mut modules, &mut file_cache, diag_config)?;
+        load_one(
+            name,
+            sources,
+            &mut modules,
+            &mut document_cache,
+            &mut source_registry,
+            diag_config,
+        )?;
     }
 
     Ok(collect_modules(modules))
@@ -599,15 +688,14 @@ fn collect_modules(modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
 /// Run the heuristic/parse/lower pipeline on raw MIB content.
 fn decode_modules(
     content: &[u8],
-    source_path: &Path,
+    source_label: &str,
     diag_config: &DiagnosticConfig,
 ) -> Vec<ir::Module> {
-    let path_display = source_path.display();
     let span = debug_span!(
         target: "mib_rs::load",
         "decode_modules",
         component = "load",
-        path = %path_display,
+        source = source_label,
         byte_count = content.len(),
     );
     let _guard = span.enter();
@@ -616,7 +704,7 @@ fn decode_modules(
         debug!(
             target: "mib_rs::load",
             component = "load",
-            path = %path_display,
+            source = source_label,
             reason = "heuristic_rejected",
             "content rejected by heuristic",
         );
@@ -624,11 +712,10 @@ fn decode_modules(
     }
 
     let ast_modules = parser::parse(content, diag_config);
-    let path_str = source_path.to_string_lossy();
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %path_display,
+        source = source_label,
         ast_module_count = ast_modules.len(),
         "parsed source into AST modules",
     );
@@ -636,13 +723,13 @@ fn decode_modules(
     let mut modules = Vec::new();
     for am in ast_modules {
         let mut module = lower::lower(am, content, diag_config);
-        module.source_path = path_str.to_string();
+        module.source_path = source_label.to_string();
         modules.push(module);
     }
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %path_display,
+        source = source_label,
         ir_module_count = modules.len(),
         "lowered source into IR modules",
     );
