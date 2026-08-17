@@ -19,7 +19,7 @@ use crate::parser;
 use crate::scan;
 use crate::searchpath;
 use crate::source::Source;
-use crate::types::{DiagnosticConfig, ResolverStrictness};
+use crate::types::{Diagnostic, DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
 ///
@@ -684,19 +684,39 @@ fn check_load_result(
     }
 
     // Check FailAt threshold.
-    for d in mib.diagnostics() {
-        if diag_config.should_fail(d.severity) {
-            warn!(
-                target: "mib_rs::load",
-                component = "load",
-                reason = "diagnostic_threshold",
-                severity = ?d.severity,
-                code = %d.code,
-                "diagnostic threshold exceeded",
-            );
-            return Err(LoadError::DiagnosticThreshold);
-        }
+    if let Some(diagnostic) = mib
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diag_config.should_fail(diagnostic.severity))
+    {
+        warn!(
+            target: "mib_rs::load",
+            component = "load",
+            reason = "diagnostic_threshold",
+            severity = ?diagnostic.severity,
+            code = %diagnostic.code,
+            "diagnostic threshold exceeded",
+        );
+
+        let mut diagnostics = mib.diagnostics().to_vec();
+        sort_diagnostics(&mut diagnostics);
+        return Err(LoadError::DiagnosticThreshold { diagnostics });
     }
 
     Ok(())
+}
+
+/// Sort diagnostics using the canonical order also used by resolved-MIB export.
+fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
+    diagnostics.sort_by(|left, right| {
+        left.code
+            .phase()
+            .cmp(right.code.phase())
+            .then_with(|| left.code.as_code().cmp(right.code.as_code()))
+            .then(left.severity.cmp(&right.severity))
+            .then(left.module.cmp(&right.module))
+            .then(left.line.cmp(&right.line))
+            .then(left.column.cmp(&right.column))
+            .then(left.message.cmp(&right.message))
+    });
 }

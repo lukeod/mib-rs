@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
 - Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
 - Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
+- Include all collected diagnostics in deterministic order in `LoadError::DiagnosticThreshold`
 
 ### Added
 

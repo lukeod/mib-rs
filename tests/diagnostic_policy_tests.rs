@@ -29,7 +29,70 @@ fn promoted_diagnostic_uses_effective_severity_and_fails_load() {
         .diagnostic_config(config)
         .load();
 
-    assert!(matches!(result, Err(LoadError::DiagnosticThreshold)));
+    assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
+}
+
+fn diagnostic_key(
+    diagnostic: &mib_rs::Diagnostic,
+) -> (
+    &'static str,
+    &'static str,
+    Severity,
+    Option<&str>,
+    Option<usize>,
+    Option<usize>,
+    &str,
+) {
+    (
+        diagnostic.code.phase(),
+        diagnostic.code.as_code(),
+        diagnostic.severity,
+        diagnostic.module.as_deref(),
+        diagnostic.line,
+        diagnostic.column,
+        &diagnostic.message,
+    )
+}
+
+#[test]
+fn threshold_error_retains_all_diagnostics_in_canonical_order() {
+    let mut failing_config = DiagnosticConfig::verbose();
+    failing_config
+        .overrides
+        .insert(DiagCode::NumberLeadingZero, Severity::Severe);
+
+    let mut non_failing_config = failing_config.clone();
+    non_failing_config.fail_at = Severity::Fatal;
+    let expected_mib = Loader::new()
+        .source(source())
+        .modules(["DIAGNOSTIC-POLICY-MIB"])
+        .diagnostic_config(non_failing_config)
+        .load()
+        .expect("fatal-only threshold should permit this MIB");
+    let mut expected_keys: Vec<_> = expected_mib
+        .diagnostics()
+        .iter()
+        .map(diagnostic_key)
+        .collect();
+    expected_keys.sort();
+
+    let error = Loader::new()
+        .source(source())
+        .modules(["DIAGNOSTIC-POLICY-MIB"])
+        .diagnostic_config(failing_config.clone())
+        .load()
+        .expect_err("promoted diagnostic should fail loading");
+    let LoadError::DiagnosticThreshold { diagnostics } = error else {
+        panic!("expected diagnostic threshold error");
+    };
+    let actual_keys: Vec<_> = diagnostics.iter().map(diagnostic_key).collect();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| !failing_config.should_fail(diagnostic.severity))
+    );
+    assert_eq!(actual_keys, expected_keys);
 }
 
 #[test]
@@ -168,5 +231,5 @@ fn fatal_override_is_collected_despite_silent_reporting_and_ignore() {
         .diagnostic_config(config)
         .load();
 
-    assert!(matches!(result, Err(LoadError::DiagnosticThreshold)));
+    assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
 }

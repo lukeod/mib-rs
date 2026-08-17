@@ -3,6 +3,8 @@
 //! The primary error type is [`LoadError`], returned by [`Loader::load`](crate::Loader::load)
 //! and the free function [`load`](crate::load::load).
 
+use crate::types::Diagnostic;
+
 /// Errors returned by [`Loader::load`](crate::Loader::load) and the
 /// free function [`load`](crate::load::load).
 ///
@@ -23,9 +25,17 @@ pub enum LoadError {
 
     /// A diagnostic exceeded the configured fail-at severity threshold.
     ///
+    /// `diagnostics` contains every diagnostic collected during the load, not
+    /// only those at or above the failure threshold. The diagnostics are
+    /// ordered by pipeline phase, code, effective severity, module, source
+    /// location, and message.
+    ///
     /// See [`DiagnosticConfig`](crate::DiagnosticConfig) for threshold configuration.
     #[error("diagnostic threshold exceeded")]
-    DiagnosticThreshold,
+    DiagnosticThreshold {
+        /// All diagnostics collected during the failed load, in deterministic order.
+        diagnostics: Vec<Diagnostic>,
+    },
 
     /// A [`Source`](crate::Source) implementation returned a custom error.
     ///

@@ -2,7 +2,8 @@
 //! and failure thresholds.
 
 use mib_rs::{
-    DiagCode, DiagnosticConfig, Loader, Mib, ReportingLevel, ResolverStrictness, Severity,
+    DiagCode, DiagnosticConfig, LoadError, Loader, Mib, ReportingLevel, ResolverStrictness,
+    Severity,
 };
 
 fn make_source() -> Box<dyn mib_rs::Source> {
@@ -115,6 +116,12 @@ fn main() {
     };
     match load_with(ResolverStrictness::Normal, config) {
         Ok(mib) => println!("  Loaded with {} diagnostics", mib.diagnostics().len()),
+        Err(LoadError::DiagnosticThreshold { diagnostics }) => {
+            println!("  Load failed with {} diagnostics:", diagnostics.len());
+            for diagnostic in diagnostics {
+                println!("    {diagnostic}");
+            }
+        }
         Err(error) => println!("  Load failed: {error}"),
     }
 

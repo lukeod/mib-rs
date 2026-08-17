@@ -719,7 +719,8 @@
 //!
 //! - `fail_at` - change which severity causes `load()` to return an
 //!   error. For example, set to [`Severity::Minor`] to fail on any
-//!   minor issue.
+//!   minor issue. [`LoadError::DiagnosticThreshold`] retains every collected
+//!   diagnostic in deterministic order when the load fails.
 //! - `overrides` - promote or demote specific diagnostic codes (e.g.
 //!   turn a warning into an error). The effective severity is stored on
 //!   collected diagnostics and controls `fail_at`; demotion does not suppress
