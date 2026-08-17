@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
+use crate::source::SourceSet;
 use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness, Span};
 
 use super::super::mib::Mib;
@@ -143,9 +144,13 @@ pub(super) struct UnresolvedTracking {
 
 impl ResolverContext {
     /// Create a new resolver context with no registered modules.
-    pub fn new(strictness: ResolverStrictness, diag_config: DiagnosticConfig) -> Self {
+    pub fn new(
+        strictness: ResolverStrictness,
+        diag_config: DiagnosticConfig,
+        sources: SourceSet,
+    ) -> Self {
         Self {
-            mib: Mib::new(),
+            mib: Mib::with_sources(sources),
             modules: Vec::new(),
             module_index: HashMap::new(),
             module_to_resolved: HashMap::new(),

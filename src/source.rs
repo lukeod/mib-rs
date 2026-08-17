@@ -19,7 +19,7 @@ use crate::scan;
 mod document;
 
 pub use document::SourceOrigin;
-pub(crate) use document::{SourceDocument, SourceSet};
+pub(crate) use document::{SourceDocument, SourceId, SourceSet};
 
 /// Default file extensions recognized as MIB files.
 ///

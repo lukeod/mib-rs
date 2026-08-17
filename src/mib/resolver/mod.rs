@@ -22,6 +22,7 @@ mod types;
 mod util;
 
 use crate::ir;
+use crate::source::SourceSet;
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 use tracing::{debug, debug_span, info, info_span, warn};
 
@@ -40,6 +41,7 @@ use context::ResolverContext;
 /// controls which diagnostics are reported.
 pub fn resolve(
     modules: Vec<ir::Module>,
+    sources: SourceSet,
     strictness: ResolverStrictness,
     diag_config: &DiagnosticConfig,
 ) -> Mib {
@@ -54,7 +56,7 @@ pub fn resolve(
     );
     let _guard = span.enter();
 
-    let mut ctx = ResolverContext::new(strictness, diag_config.clone());
+    let mut ctx = ResolverContext::new(strictness, diag_config.clone(), sources);
 
     run_phase("registration", || {
         registration::register_modules(&mut ctx, modules);

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::mib::{Oid, ParseOidError};
+use crate::source::SourceSet;
 use crate::types::{BaseType, Diagnostic, Kind, Severity};
 
 use super::capability::CapabilityData;
@@ -36,6 +37,7 @@ use super::types::*;
 /// see [`Mib::raw`].
 pub struct Mib {
     pub(crate) tree: OidTree,
+    pub(crate) sources: SourceSet,
 
     // Entity arenas
     pub(crate) objects: Vec<ObjectData>,
@@ -65,6 +67,7 @@ impl Mib {
     pub(crate) fn new() -> Self {
         Self {
             tree: OidTree::new(),
+            sources: SourceSet::new(),
             objects: Vec::new(),
             types: Vec::new(),
             notifications: Vec::new(),
@@ -90,6 +93,13 @@ impl Mib {
 
     pub(crate) fn tree(&self) -> &OidTree {
         &self.tree
+    }
+
+    pub(crate) fn with_sources(sources: SourceSet) -> Self {
+        Self {
+            sources,
+            ..Self::new()
+        }
     }
 
     /// Return a low-level view of this MIB.
@@ -1170,6 +1180,7 @@ impl fmt::Debug for Mib {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Mib")
             .field("modules", &self.modules.len())
+            .field("sources", &self.sources.len())
             .field("objects", &self.objects.len())
             .field("types", &self.types.len())
             .field("notifications", &self.notifications.len())

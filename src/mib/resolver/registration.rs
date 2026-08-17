@@ -29,6 +29,7 @@ pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir:
         let mut resolved = ModuleData::new(m.name.clone());
         resolved.language = m.language;
         resolved.source_path = m.source_path.clone();
+        resolved.source_id = m.source_id;
         resolved.is_base = base_modules::is_base_module(&m.name);
         resolved.line_table = m.line_table.clone();
 

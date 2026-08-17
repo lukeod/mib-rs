@@ -1975,8 +1975,11 @@ mod tests {
 
     #[test]
     fn compound_oid_defval_marks_only_unqualified_imports_used() {
-        let mut ctx =
-            ResolverContext::new(ResolverStrictness::Permissive, DiagnosticConfig::silent());
+        let mut ctx = ResolverContext::new(
+            ResolverStrictness::Permissive,
+            DiagnosticConfig::silent(),
+            crate::source::SourceSet::new(),
+        );
         ctx.modules = vec![
             Module::new("IMPORTER-MIB".to_string(), Span::default()),
             Module::new("SOURCE-MIB".to_string(), Span::default()),
@@ -2049,8 +2052,11 @@ mod tests {
     #[test]
     fn missing_primitive_types_emit_diagnostics() {
         for (name, syntax) in primitive_syntaxes() {
-            let mut ctx =
-                ResolverContext::new(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+            let mut ctx = ResolverContext::new(
+                ResolverStrictness::Normal,
+                DiagnosticConfig::verbose(),
+                crate::source::SourceSet::new(),
+            );
             ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
 
             let constraints = resolve_type_syntax(
@@ -2076,7 +2082,11 @@ mod tests {
     #[test]
     fn primitive_type_lookup_preserves_resolved_type() {
         let ir_mod = IrModuleId(0);
-        let mut ctx = ResolverContext::new(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+        let mut ctx = ResolverContext::new(
+            ResolverStrictness::Normal,
+            DiagnosticConfig::verbose(),
+            crate::source::SourceSet::new(),
+        );
         ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
 
         for (name, _) in primitive_syntaxes() {

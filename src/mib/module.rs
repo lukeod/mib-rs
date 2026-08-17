@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mib::Oid;
+use crate::source::SourceId;
 use crate::types::Language;
 
 use super::symbol::Symbol;
@@ -23,6 +24,7 @@ pub struct ModuleData {
     pub(crate) name: String,
     pub(crate) language: Language,
     pub(crate) source_path: String,
+    pub(crate) source_id: Option<SourceId>,
     pub(crate) is_base: bool,
     pub(crate) oid: Option<Oid>,
     pub(crate) organization: String,
@@ -60,6 +62,7 @@ impl ModuleData {
             name,
             language: Language::Unknown,
             source_path: String::new(),
+            source_id: None,
             is_base: false,
             oid: None,
             organization: String::new(),

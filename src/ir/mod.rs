@@ -16,6 +16,7 @@ pub use definition::*;
 pub use oid::{OidAssignment, OidComponent};
 pub use syntax::*;
 
+use crate::source::SourceId;
 use crate::types::{Diagnostic, Language, Span};
 
 /// A normalized, language-independent MIB module.
@@ -42,6 +43,8 @@ pub struct Module {
     /// Maps line numbers to byte offsets of line starts.
     /// Entry i holds the byte offset where line i+1 begins (0-indexed).
     pub line_table: Vec<usize>,
+    /// Compilation-local source document containing this module.
+    pub(crate) source_id: Option<SourceId>,
 }
 
 impl Module {
@@ -57,6 +60,7 @@ impl Module {
             diagnostics: Vec::new(),
             source_path: String::new(),
             line_table: Vec::new(),
+            source_id: None,
         }
     }
 
