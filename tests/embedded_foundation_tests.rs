@@ -27,6 +27,50 @@ fn requested_foundation_module_loads_without_configured_sources() {
 }
 
 #[test]
+fn embedded_snmpv2_smi_preserves_rfc_oid_definition_kinds() {
+    let mib = Loader::new()
+        .modules(["SNMPv2-SMI"])
+        .load()
+        .expect("embedded foundation load failed");
+    let module = mib.module("SNMPv2-SMI").expect("SNMPv2-SMI not loaded");
+
+    for name in [
+        "internet",
+        "directory",
+        "mgmt",
+        "mib-2",
+        "transmission",
+        "experimental",
+        "private",
+        "enterprises",
+        "security",
+        "snmpV2",
+        "snmpDomains",
+        "snmpProxys",
+        "snmpModules",
+    ] {
+        let node = module
+            .node(name)
+            .unwrap_or_else(|| panic!("missing node {name}"));
+        assert_eq!(node.kind(), mib_rs::types::Kind::Node, "node {name}");
+        assert!(node.description().is_empty(), "node {name}");
+        assert_eq!(node.status(), None, "node {name}");
+    }
+
+    let zero_dot_zero = module.node("zeroDotZero").expect("missing zeroDotZero");
+    assert_eq!(zero_dot_zero.kind(), mib_rs::types::Kind::ObjectIdentity);
+    assert!(!zero_dot_zero.description().is_empty());
+    assert!(zero_dot_zero.status().is_some());
+
+    assert!(
+        mib.diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code != mib_rs::DiagCode::NodeImplicit),
+        "ASN.1 root arcs must not be reported as implicit nodes"
+    );
+}
+
+#[test]
 fn configured_foundation_module_overrides_embedded_fallback() {
     let content = include_bytes!("../testdata/corpus/primary/ietf/SNMPv2-SMI.mib");
     let mib = Loader::new()

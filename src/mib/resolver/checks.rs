@@ -1162,6 +1162,12 @@ fn check_node_implicit(ctx: &mut ResolverContext) {
             continue;
         }
 
+        // ASN.1 defines root arcs 0, 1, and 2 intrinsically. They are not
+        // implicit registrations when an RFC module references them numerically.
+        if node.parent == Some(root) && node.arc <= 2 {
+            continue;
+        }
+
         // Find module of first named child for attribution.
         let ir_id = node
             .children()

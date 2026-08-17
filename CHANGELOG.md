@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make diagnostic reports internal products of a resolved MIB's exact shared source arena and remove `SourceSet::clone` to prevent cross-arena `SourceId` aliasing
 - Expose checked diagnostic locations and rendering only through report-owned `DiagnosticEntry` handles; raw diagnostic metadata can no longer be resolved through an arbitrary report
 - Replace exported diagnostic `line`/`column` fields with an explicit source identity, label, and half-open byte range location model; resolved-MIB export schema version is now 2
-- Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, include deliberate adaptations, and allow configured sources to override them
+- Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, keep complete RFC modules faithful to their published definitions, adapt incomplete macro excerpts only as needed for standalone loading, and allow configured sources to override them
 - Replace unqualified source spans, synthetic sentinels, copied module paths, and line tables with checked `SourceRange` values, retained `SourceDocument`s, and typed source origins
 
 ### Added

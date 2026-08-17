@@ -1,93 +1,34 @@
 SNMPv2-SMI DEFINITIONS ::= BEGIN
 
--- ASN.1 root arcs
-
-ccitt          OBJECT IDENTIFIER ::= { 0 }
-iso            OBJECT IDENTIFIER ::= { 1 }
-joint-iso-ccitt OBJECT IDENTIFIER ::= { 2 }
-
 -- the path to the root
 
 org            OBJECT IDENTIFIER ::= { iso 3 }  --  "iso" = 1
 dod            OBJECT IDENTIFIER ::= { org 6 }
-internet       OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The root of the OID subtree for the Internet."
-    ::= { dod 1 }
+internet       OBJECT IDENTIFIER ::= { dod 1 }
 
-directory      OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree reserved for use with the OSI Directory."
-    ::= { internet 1 }
+directory      OBJECT IDENTIFIER ::= { internet 1 }
 
-mgmt           OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for objects defined in IAB-approved documents."
-    ::= { internet 2 }
+mgmt           OBJECT IDENTIFIER ::= { internet 2 }
+mib-2          OBJECT IDENTIFIER ::= { mgmt 1 }
+transmission   OBJECT IDENTIFIER ::= { mib-2 10 }
 
-mib-2          OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The root of MIB-II objects, originally defined in RFC 1213."
-    ::= { mgmt 1 }
+experimental   OBJECT IDENTIFIER ::= { internet 3 }
 
-transmission   OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for transmission media specific MIB modules."
-    ::= { mib-2 10 }
+private        OBJECT IDENTIFIER ::= { internet 4 }
+enterprises    OBJECT IDENTIFIER ::= { private 1 }
 
-experimental   OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for objects used in Internet experiments."
-    ::= { internet 3 }
+security       OBJECT IDENTIFIER ::= { internet 5 }
 
-private        OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for objects defined unilaterally."
-    ::= { internet 4 }
+snmpV2         OBJECT IDENTIFIER ::= { internet 6 }
 
-enterprises    OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for enterprise-specific management objects,
-            typically registered by hardware or software vendors."
-    ::= { private 1 }
+-- transport domains
+snmpDomains    OBJECT IDENTIFIER ::= { snmpV2 1 }
 
-security       OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree reserved for future security-related objects."
-    ::= { internet 5 }
+-- transport proxies
+snmpProxys     OBJECT IDENTIFIER ::= { snmpV2 2 }
 
-snmpV2         OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The root of SNMPv2 administrative registrations."
-    ::= { internet 6 }
-
-snmpDomains    OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for SNMP transport domain registrations."
-    ::= { snmpV2 1 }
-
-snmpProxys     OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for SNMP transport proxy registrations."
-    ::= { snmpV2 2 }
-
-snmpModules    OBJECT-IDENTITY
-    STATUS     current
-    DESCRIPTION
-            "The subtree for SNMP MIB module registrations."
-    ::= { snmpV2 3 }
+-- module identities
+snmpModules    OBJECT IDENTIFIER ::= { snmpV2 3 }
 
 -- Extended UTCTime, to allow dates with four-digit years
 -- (Note that this definition of ExtUTCTime is not to be IMPORTed
