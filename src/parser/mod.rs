@@ -2131,14 +2131,27 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if let Ok(v) = text.parse::<u64>() {
                     Ok(RangeValue::Unsigned(v))
                 } else {
-                    let v = self.parse_i64(token.span, "range value")?;
-                    Ok(RangeValue::Signed(v))
+                    self.emit_diagnostic(
+                        DiagCode::UnknownRangeValue,
+                        token.span,
+                        format!("range value {text:?} is outside the supported integer range"),
+                    );
+                    Ok(RangeValue::Raw(text.into_owned()))
                 }
             }
             TokenKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "range value")?;
-                Ok(RangeValue::Signed(v))
+                let text = self.text(token.span);
+                if let Ok(v) = text.parse::<i64>() {
+                    Ok(RangeValue::Signed(v))
+                } else {
+                    self.emit_diagnostic(
+                        DiagCode::UnknownRangeValue,
+                        token.span,
+                        format!("range value {text:?} is outside the supported integer range"),
+                    );
+                    Ok(RangeValue::Raw(text.into_owned()))
+                }
             }
             TokenKind::HexString => {
                 let token = self.advance();
@@ -3514,6 +3527,50 @@ END\n";
                 .diagnostics
                 .iter()
                 .all(|d| d.code != DiagCode::InvalidHexRange)
+        );
+    }
+
+    #[test]
+    fn overflowing_decimal_range_values_preserve_raw_source() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+Overflow ::= INTEGER (18446744073709551616)
+Underflow ::= INTEGER (-9223372036854775809)
+END
+"#;
+        let modules = parse_strict(input);
+        let module = &modules[0];
+
+        let raw_values: Vec<&str> = module
+            .body
+            .iter()
+            .map(|definition| match definition {
+                Definition::TypeAssignment(d) => match &d.syntax {
+                    TypeSyntax::Constrained {
+                        constraint: Constraint::Range { ranges, .. },
+                        ..
+                    } => match &ranges[0].min {
+                        RangeValue::Raw(raw) => raw.as_str(),
+                        other => panic!("expected raw range value, got {other:?}"),
+                    },
+                    other => panic!("expected constrained range, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(raw_values, ["18446744073709551616", "-9223372036854775809"]);
+        assert_eq!(
+            module
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::UnknownRangeValue)
+                .count(),
+            2
+        );
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::InvalidI64)
         );
     }
 
