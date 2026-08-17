@@ -11,12 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
 - Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
+- Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
 
 ### Added
 
 - Preserve precise integer and octet value kinds, normalized effective constraints, component raw arcs, and typed codec failures
 - Add object-specific index codec bindings for enforcing the 128-arc complete instance-OID limit
 - Report zero-width index components and schemas without rejecting representable definitions
+- Report duplicate and unresolved `INCLUDES` groups and `CREATION-REQUIRES` objects in agent capabilities
+
+### Changed
+
+- Classify unresolved and wrong-kind `OBJECT-GROUP` and `NOTIFICATION-GROUP` members as minor diagnostics
+
+### Fixed
+
+- Validate dates, revision ordering, and `LAST-UPDATED` matching for every `MODULE-IDENTITY` regardless of inferred module language
+- Distinguish notification `OBJECTS` references to OID nodes without attached object definitions from unknown symbols
+- Report missing `INTEGER`, `BITS`, `OCTET STRING`, and `OBJECT IDENTIFIER` types when resolving inline syntax
+- Preserve overflowing decimal range endpoints as raw values with `unknown-range-value` diagnostics
 
 ## [0.9.0] - 2026-08-13
 
