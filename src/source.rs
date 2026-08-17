@@ -13,6 +13,16 @@ use tracing::debug;
 use crate::lower::base_modules;
 use crate::scan;
 
+// This is the source-retaining compilation core. It is intentionally not used
+// by the legacy loading facade until that facade is replaced in a later slice.
+#[allow(dead_code)]
+mod document;
+
+#[allow(unused_imports)]
+pub(crate) use document::{
+    LineIndex, SourceDocument, SourceId, SourceOrigin, SourceSet, SourceSetError,
+};
+
 /// Default file extensions recognized as MIB files.
 ///
 /// The empty string matches files with no extension (e.g., `IF-MIB`).
