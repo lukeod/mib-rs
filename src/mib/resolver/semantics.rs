@@ -362,8 +362,8 @@ fn resolve_type_syntax_into(
                         span,
                     );
                 }
-            } else if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "INTEGER") {
-                sc.type_id = Some(type_id);
+            } else {
+                sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "INTEGER");
             }
             sc.enums = named_numbers
                 .iter()
@@ -375,9 +375,7 @@ fn resolve_type_syntax_into(
                 .collect();
         }
         ir::TypeSyntax::Bits { named_bits, .. } => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "BITS") {
-                sc.type_id = Some(type_id);
-            }
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "BITS");
             sc.bits = named_bits
                 .iter()
                 .map(|nb| NamedValue {
@@ -406,16 +404,31 @@ fn resolve_type_syntax_into(
         }
         ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
         ir::TypeSyntax::OctetString { .. } => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OCTET STRING") {
-                sc.type_id = Some(type_id);
-            }
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "OCTET STRING");
         }
         ir::TypeSyntax::ObjectIdentifier { .. } => {
-            if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, "OBJECT IDENTIFIER") {
-                sc.type_id = Some(type_id);
-            }
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "OBJECT IDENTIFIER");
         }
     }
+}
+
+fn lookup_primitive_type(
+    ctx: &mut ResolverContext,
+    ir_mod: IrModuleId,
+    span: Span,
+    referrer: &str,
+    name: &str,
+) -> Option<TypeId> {
+    if let Some((type_id, _)) = ctx.lookup_type_for_module(ir_mod, name) {
+        return Some(type_id);
+    }
+    ctx.emit_diagnostic(
+        DiagCode::PrimitiveTypeMissing,
+        Some(ir_mod),
+        span,
+        format!("primitive type {name} not found for {referrer:?}"),
+    );
+    None
 }
 
 struct InlineParentConstraint {
@@ -1922,10 +1935,43 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hex_decode, resolve_defval_oid};
+    use super::{hex_decode, resolve_defval_oid, resolve_type_syntax};
     use crate::ir::{self, Module};
     use crate::mib::resolver::context::{IrModuleId, ResolverContext};
-    use crate::types::{DiagnosticConfig, ResolverStrictness, Span};
+    use crate::mib::typedef::TypeData;
+    use crate::types::{DiagCode, DiagnosticConfig, ResolverStrictness, Span};
+
+    fn primitive_syntaxes() -> Vec<(&'static str, ir::TypeSyntax)> {
+        vec![
+            (
+                "INTEGER",
+                ir::TypeSyntax::IntegerEnum {
+                    base: String::new(),
+                    named_numbers: Vec::new(),
+                    span: Span::default(),
+                },
+            ),
+            (
+                "BITS",
+                ir::TypeSyntax::Bits {
+                    named_bits: Vec::new(),
+                    span: Span::default(),
+                },
+            ),
+            (
+                "OCTET STRING",
+                ir::TypeSyntax::OctetString {
+                    span: Span::default(),
+                },
+            ),
+            (
+                "OBJECT IDENTIFIER",
+                ir::TypeSyntax::ObjectIdentifier {
+                    span: Span::default(),
+                },
+            ),
+        ]
+    }
 
     #[test]
     fn compound_oid_defval_marks_only_unqualified_imports_used() {
@@ -1998,5 +2044,56 @@ mod tests {
     #[test]
     fn hex_decode_pads_odd_digit_count() {
         assert_eq!(hex_decode("'ABC'H"), vec![0x0A, 0xBC]);
+    }
+
+    #[test]
+    fn missing_primitive_types_emit_diagnostics() {
+        for (name, syntax) in primitive_syntaxes() {
+            let mut ctx =
+                ResolverContext::new(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+            ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
+
+            let constraints = resolve_type_syntax(
+                &mut ctx,
+                IrModuleId(0),
+                &syntax,
+                "testObject",
+                Span::default(),
+            );
+
+            assert!(constraints.type_id.is_none(), "primitive {name}");
+            let diagnostics = ctx.mib.diagnostics();
+            assert_eq!(diagnostics.len(), 1, "primitive {name}");
+            assert_eq!(diagnostics[0].code, DiagCode::PrimitiveTypeMissing);
+            assert_eq!(diagnostics[0].module.as_deref(), Some("TEST-MIB"));
+            assert_eq!(
+                diagnostics[0].message,
+                format!("primitive type {name} not found for \"testObject\"")
+            );
+        }
+    }
+
+    #[test]
+    fn primitive_type_lookup_preserves_resolved_type() {
+        let ir_mod = IrModuleId(0);
+        let mut ctx = ResolverContext::new(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+        ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
+
+        for (name, _) in primitive_syntaxes() {
+            let type_id = ctx.mib.add_type(TypeData::new(name.to_string()));
+            ctx.module_symbol_to_type
+                .entry(ir_mod)
+                .or_default()
+                .insert(name.to_string(), type_id);
+        }
+
+        for (name, syntax) in primitive_syntaxes() {
+            let expected = ctx.module_symbol_to_type[&ir_mod][name];
+            let constraints =
+                resolve_type_syntax(&mut ctx, ir_mod, &syntax, "testObject", Span::default());
+
+            assert_eq!(constraints.type_id, Some(expected), "primitive {name}");
+        }
+        assert!(ctx.mib.diagnostics().is_empty());
     }
 }
