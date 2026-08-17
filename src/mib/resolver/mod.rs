@@ -2,7 +2,7 @@
 //!
 //! Resolution runs six sequential, single-threaded phases:
 //!
-//! - **Registration** - Index modules, create resolved module shells, seed base modules.
+//! - **Registration** - Index modules and create resolved module shells.
 //! - **Imports** - Resolve cross-module symbol references, handle forwarding and aliases.
 //! - **Types** - Build type graph, resolve parent chains, inherit base types and constraints.
 //! - **OIDs** - Build OID trie from symbolic references in topological order.

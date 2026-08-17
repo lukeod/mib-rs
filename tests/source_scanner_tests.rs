@@ -78,8 +78,12 @@ impl Source for DuplicateCandidateSource {
 }
 
 impl Source for ErrorSource {
-    fn find(&self, _name: &str) -> io::Result<Option<FindResult>> {
-        Err(io::Error::other("lower-priority source accessed"))
+    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+        if name == "REAL-MIB" {
+            Err(io::Error::other("lower-priority source accessed"))
+        } else {
+            Ok(None)
+        }
     }
 
     fn list_modules(&self) -> io::Result<Vec<String>> {

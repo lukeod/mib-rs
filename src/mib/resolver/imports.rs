@@ -547,7 +547,7 @@ pub(super) fn check_unused_imports(ctx: &mut ResolverContext) {
     let mut diagnostics = Vec::new();
 
     for (ir_id, m) in ctx.all_modules() {
-        if m.imports.is_empty() {
+        if m.imports.is_empty() || crate::lower::base_modules::is_base_module(&m.name) {
             continue;
         }
 

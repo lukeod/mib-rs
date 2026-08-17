@@ -1081,7 +1081,10 @@ END
     let min_max_diags = mib
         .diagnostics()
         .iter()
-        .filter(|diagnostic| diagnostic.code == DiagCode::MinMaxRange)
+        .filter(|diagnostic| {
+            diagnostic.module.as_deref() == Some("RANGE-SEMANTICS-MIB")
+                && diagnostic.code == DiagCode::MinMaxRange
+        })
         .count();
     assert_eq!(min_max_diags, 16);
 }
@@ -2345,8 +2348,8 @@ fn base_module_beats_vendor_with_newer_timestamp() {
 
 #[test]
 fn snmp_oid_owned_by_snmpv2_mib() {
-    // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the synthetic
-    // SNMPv2-SMI. Verify the synthetic base doesn't claim it.
+    // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the foundation
+    // SNMPv2-SMI. Verify the foundation module doesn't claim it.
     let r = load_corpus(&["SNMPv2-MIB"]);
     let mib = &r;
 

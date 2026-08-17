@@ -98,12 +98,12 @@ impl ModuleData {
         self.language
     }
 
-    /// Return the file path this module was loaded from.
+    /// Return the path or synthetic source label this module was loaded from.
     pub fn source_path(&self) -> &str {
         &self.source_path
     }
 
-    /// Return `true` if this is a synthetic base module.
+    /// Return `true` if this is an SMI foundation module.
     ///
     /// See [`Module::is_base`](super::Module::is_base) for details.
     pub fn is_base(&self) -> bool {

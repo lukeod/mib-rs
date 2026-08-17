@@ -336,7 +336,7 @@ impl<'a> Module<'a> {
         self.data().language()
     }
 
-    /// Return the file path this module was loaded from.
+    /// Return the path or synthetic source label this module was loaded from.
     pub fn source_path(self) -> &'a str {
         self.data().source_path()
     }
@@ -371,13 +371,11 @@ impl<'a> Module<'a> {
         self.data().imports()
     }
 
-    /// Return `true` if this is a synthetic base module (SNMPv2-SMI, etc.).
+    /// Return `true` if this is an SMI foundation module (SNMPv2-SMI, etc.).
     ///
-    /// Base modules define the SMI language itself and are constructed
-    /// programmatically rather than parsed from files. They have no real
-    /// source text, so spans are [`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC)
-    /// and `source_path()` returns an empty string. See the crate-level
-    /// docs for the full list of base modules and their contents.
+    /// Foundation modules define the SMI language itself. Their source may be
+    /// supplied by a configured source or by the parsed embedded fallback.
+    /// See the crate-level docs for the full list and source precedence.
     pub fn is_base(self) -> bool {
         self.data().is_base()
     }

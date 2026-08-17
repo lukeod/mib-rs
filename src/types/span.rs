@@ -12,7 +12,7 @@
 pub struct ByteOffset(pub u32);
 
 impl ByteOffset {
-    /// Sentinel value for positions not backed by source text (e.g. base modules).
+    /// Sentinel value for positions not backed by source text, such as generated primitives.
     pub const SYNTHETIC: ByteOffset = ByteOffset(u32::MAX);
 }
 
@@ -35,7 +35,7 @@ impl Span {
         end: ByteOffset(0),
     };
 
-    /// Span for compiler-generated constructs (base modules, built-in types).
+    /// Span for compiler-generated constructs, such as primitive types and the root node.
     pub const SYNTHETIC: Span = Span {
         start: ByteOffset::SYNTHETIC,
         end: ByteOffset::SYNTHETIC,

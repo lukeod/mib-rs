@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
 - Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
 - Include all collected diagnostics in deterministic order in `LoadError::DiagnosticThreshold`
+- Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, include deliberate adaptations, and allow configured sources to override them
 
 ### Added
 

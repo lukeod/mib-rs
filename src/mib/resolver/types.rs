@@ -24,6 +24,66 @@ use super::super::typedef::TypeData;
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 
+/// Recover semantic kinds for application-tagged types in foundation modules.
+///
+/// Lowering intentionally discards ASN.1 tags, so the underlying INTEGER or
+/// OCTET STRING syntax alone cannot distinguish these well-known SMI types.
+fn foundation_base_type(name: &str) -> Option<BaseType> {
+    match name {
+        "Integer32" => Some(BaseType::Integer32),
+        "Counter" | "Counter32" => Some(BaseType::Counter32),
+        "Counter64" => Some(BaseType::Counter64),
+        "Gauge" | "Gauge32" => Some(BaseType::Gauge32),
+        "Unsigned32" => Some(BaseType::Unsigned32),
+        "TimeTicks" => Some(BaseType::TimeTicks),
+        "IpAddress" | "NetworkAddress" => Some(BaseType::IpAddress),
+        "Opaque" => Some(BaseType::Opaque),
+        _ => None,
+    }
+}
+
+/// RFC-derived descriptions for primitive and application types whose plain
+/// ASN.1 assignments cannot carry DESCRIPTION clauses.
+fn foundation_type_description(name: &str) -> Option<&'static str> {
+    match name {
+        "INTEGER" => Some("An arbitrary precision integer value."),
+        "OCTET STRING" => Some("An ordered sequence of zero or more octets."),
+        "OBJECT IDENTIFIER" => Some(
+            "An administratively assigned name identifying an object type or registration point.",
+        ),
+        "BITS" => Some("A named collection of individual bit positions."),
+        "Integer32" => {
+            Some("An integer-valued type restricted to the range -2147483648 to 2147483647.")
+        }
+        "IpAddress" => Some(
+            "A 32-bit internet address represented as an OCTET STRING of length 4 in network byte-order.",
+        ),
+        "Counter" | "Counter32" => Some(
+            "A non-negative integer that monotonically increases to a maximum of 4294967295, then wraps to zero.",
+        ),
+        "Gauge32" => Some(
+            "A non-negative integer that may increase or decrease, but never exceeds 4294967295 or falls below zero.",
+        ),
+        "Gauge" => Some(
+            "A non-negative integer that may increase or decrease, but latches at a maximum of 4294967295.",
+        ),
+        "Unsigned32" => {
+            Some("An unsigned integer-valued type restricted to the range 0 to 4294967295.")
+        }
+        "TimeTicks" => {
+            Some("A non-negative integer counting hundredths of a second between two epochs.")
+        }
+        "Opaque" => Some(
+            "An arbitrary ASN.1 value double-wrapped as an OCTET STRING. Provided for backward-compatibility only.",
+        ),
+        "Counter64" => Some(
+            "A non-negative integer that monotonically increases to a maximum of 18446744073709551615, then wraps to zero.",
+        ),
+        "NetworkAddress" => Some("An address from one of possibly several protocol families."),
+        _ => None,
+    }
+}
+
 /// Phase 3: Build the type system.
 ///
 /// Seeds primitive types, creates user-defined types, then resolves parent
@@ -56,6 +116,9 @@ fn seed_primitive_types(ctx: &mut ResolverContext) {
         let mut td = TypeData::new(name.to_string());
         td.base = base;
         td.module = Some(resolved_id);
+        td.description = foundation_type_description(name)
+            .unwrap_or_default()
+            .to_string();
         let type_id = ctx.mib.add_type(td);
         ctx.module_symbol_to_type
             .entry(smi_id)
@@ -86,11 +149,16 @@ fn create_user_types(ctx: &mut ResolverContext) {
                 continue;
             }
 
-            let base = if let Some(bt) = typedef.base_type {
+            let mut base = if let Some(bt) = typedef.base_type {
                 bt
             } else {
                 syntax_to_base_type(&typedef.syntax)
             };
+            if crate::lower::base_modules::is_base_module(&m.name)
+                && let Some(application_base) = foundation_base_type(&typedef.name)
+            {
+                base = application_base;
+            }
 
             let mut td = TypeData::new(typedef.name.clone());
             td.span = typedef.span;
@@ -100,6 +168,12 @@ fn create_user_types(ctx: &mut ResolverContext) {
             td.status = typedef.status;
             td.hint = typedef.display_hint.clone();
             td.description = typedef.description.clone();
+            if td.description.is_empty()
+                && crate::lower::base_modules::is_base_module(&m.name)
+                && let Some(description) = foundation_type_description(&typedef.name)
+            {
+                td.description = description.to_string();
+            }
             td.reference = typedef.reference.clone();
             td.is_tc = typedef.is_textual_convention;
 

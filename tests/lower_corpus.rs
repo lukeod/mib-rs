@@ -66,53 +66,64 @@ fn primary_corpus_lowering_no_panics() {
 
 #[test]
 fn base_modules_have_definitions() {
-    use mib_rs::lower::base_modules::{base_module_names, get_base_module};
+    use mib_rs::lower::base_modules::base_module_names;
 
     assert_eq!(base_module_names().len(), 7);
+    let mib = mib_rs::Loader::new()
+        .modules(base_module_names().iter().copied())
+        .load()
+        .expect("embedded foundation load failed");
 
     // SNMPv2-SMI should have OIDs and type definitions
-    let smi = get_base_module("SNMPv2-SMI").expect("missing SNMPv2-SMI");
-    assert_eq!(smi.name, "SNMPv2-SMI");
-    assert_eq!(smi.language, mib_rs::types::Language::SMIv2);
-    assert!(!smi.definitions.is_empty());
+    let smi = mib.module("SNMPv2-SMI").expect("missing SNMPv2-SMI");
+    assert_eq!(smi.name(), "SNMPv2-SMI");
+    assert_eq!(smi.language(), mib_rs::types::Language::SMIv2);
     // Should have iso, internet, enterprises, etc. and Integer32, Counter32, etc.
-    let names: Vec<&str> = smi.definitions.iter().map(|d| d.name()).collect();
-    assert!(names.contains(&"iso"), "missing iso OID");
-    assert!(names.contains(&"internet"), "missing internet OID");
-    assert!(names.contains(&"enterprises"), "missing enterprises OID");
-    assert!(names.contains(&"Integer32"), "missing Integer32 type");
-    assert!(names.contains(&"Counter32"), "missing Counter32 type");
-    assert!(names.contains(&"Counter64"), "missing Counter64 type");
-    assert!(names.contains(&"IpAddress"), "missing IpAddress type");
+    for name in ["iso", "internet", "enterprises"] {
+        assert!(smi.node(name).is_some(), "missing {name} OID");
+    }
+    for name in ["Integer32", "Counter32", "Counter64", "IpAddress"] {
+        assert!(smi.r#type(name).is_some(), "missing {name} type");
+    }
 
     // SNMPv2-TC should have textual conventions
-    let tc = get_base_module("SNMPv2-TC").expect("missing SNMPv2-TC");
-    assert_eq!(tc.name, "SNMPv2-TC");
-    let tc_names: Vec<&str> = tc.definitions.iter().map(|d| d.name()).collect();
-    assert!(tc_names.contains(&"DisplayString"), "missing DisplayString");
-    assert!(tc_names.contains(&"TruthValue"), "missing TruthValue");
-    assert!(tc_names.contains(&"RowStatus"), "missing RowStatus");
-    assert!(tc_names.contains(&"MacAddress"), "missing MacAddress");
+    let tc = mib.module("SNMPv2-TC").expect("missing SNMPv2-TC");
+    assert_eq!(tc.name(), "SNMPv2-TC");
+    for name in ["DisplayString", "TruthValue", "RowStatus", "MacAddress"] {
+        assert!(tc.r#type(name).is_some(), "missing {name}");
+    }
 
     // SNMPv2-CONF should be empty (MACROs only)
-    let conf = get_base_module("SNMPv2-CONF").expect("missing SNMPv2-CONF");
-    assert_eq!(conf.name, "SNMPv2-CONF");
-    assert!(conf.definitions.is_empty());
+    let conf = mib.module("SNMPv2-CONF").expect("missing SNMPv2-CONF");
+    assert_eq!(conf.name(), "SNMPv2-CONF");
+    assert_eq!(conf.types().count(), 0);
+    assert_eq!(conf.nodes().count(), 0);
+    assert_eq!(conf.objects().count(), 0);
 
     // RFC1155-SMI should have SMIv1 types
-    let rfc1155 = get_base_module("RFC1155-SMI").expect("missing RFC1155-SMI");
-    assert_eq!(rfc1155.name, "RFC1155-SMI");
-    assert_eq!(rfc1155.language, mib_rs::types::Language::SMIv1);
-    let rfc1155_names: Vec<&str> = rfc1155.definitions.iter().map(|d| d.name()).collect();
-    assert!(rfc1155_names.contains(&"Counter"), "missing Counter type");
-    assert!(rfc1155_names.contains(&"Gauge"), "missing Gauge type");
-    assert!(rfc1155_names.contains(&"iso"), "missing iso OID");
+    let rfc1155 = mib.module("RFC1155-SMI").expect("missing RFC1155-SMI");
+    assert_eq!(rfc1155.name(), "RFC1155-SMI");
+    assert_eq!(rfc1155.language(), mib_rs::types::Language::SMIv1);
+    assert!(rfc1155.r#type("Counter").is_some(), "missing Counter type");
+    assert!(rfc1155.r#type("Gauge").is_some(), "missing Gauge type");
+    assert!(rfc1155.node("internet").is_some(), "missing internet OID");
 
-    // RFC-1212 and RFC-1215 should be empty
-    let rfc1212 = get_base_module("RFC-1212").expect("missing RFC-1212");
-    assert!(rfc1212.definitions.is_empty());
-    let rfc1215 = get_base_module("RFC-1215").expect("missing RFC-1215");
-    assert!(rfc1215.definitions.is_empty());
+    // Embedded foundations are parsed source, so their definitions retain
+    // source offsets instead of using synthetic spans.
+    assert_ne!(
+        smi.r#type("Counter32").expect("missing Counter32").span(),
+        mib_rs::types::Span::SYNTHETIC
+    );
+    assert_eq!(smi.source_path(), "embedded:SNMPv2-SMI");
+
+    // RFC-1212 contains ordinary type assignments around its macro body;
+    // RFC-1215 contains only its macro definition.
+    let rfc1212 = mib.module("RFC-1212").expect("missing RFC-1212");
+    assert!(rfc1212.r#type("IndexSyntax").is_some());
+    let rfc1215 = mib.module("RFC-1215").expect("missing RFC-1215");
+    assert_eq!(rfc1215.types().count(), 0);
+    assert_eq!(rfc1215.nodes().count(), 0);
+    assert_eq!(rfc1215.objects().count(), 0);
 }
 
 #[test]

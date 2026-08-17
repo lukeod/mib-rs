@@ -310,28 +310,25 @@
 //! | `RFC-1212` | SMIv1 | SMIv1 `OBJECT-TYPE` macro definition |
 //! | `RFC-1215` | SMIv1 | SMIv1 `TRAP-TYPE` macro definition |
 //!
-//! These modules define the SMI language itself, specifically the ASN.1
-//! macros (`OBJECT-TYPE`, `MODULE-IDENTITY`, `TEXTUAL-CONVENTION`, etc.)
-//! that all other MIB modules use. The library constructs them
-//! programmatically rather than parsing them from files, because they
-//! contain ASN.1 MACRO definitions that require a general ASN.1 macro
-//! parser to process. Since RFC 2578 Section 3 explicitly prohibits
-//! user-defined macros in MIB modules ("Additional ASN.1 macros must not
-//! be defined in SMIv2 information modules"), the library only needs to
-//! handle the fixed set of macros defined by the SMI RFCs.
+//! These modules define the SMI language itself, including the ASN.1 macros
+//! (`OBJECT-TYPE`, `MODULE-IDENTITY`, `TEXTUAL-CONVENTION`, etc.) that other
+//! MIB modules use. RFC-derived module sources are embedded as fallbacks and
+//! parsed through the normal pipeline. They are byte-synchronized with gomib
+//! and include deliberate adaptations rather than being literal RFC text;
+//! macro bodies are recognized and skipped because MIB definitions use the
+//! fixed standard macro set.
 //!
 //! Implications for users:
 //!
 //! - **No files needed:** You do not need to supply these modules as source
-//!   files. If they exist on disk in a source directory, the synthetic
-//!   versions take priority and the files are not parsed.
+//!   files. A copy in a configured source takes precedence over the embedded
+//!   fallback and is parsed normally.
 //! - **Always present:** Base modules are included in every loaded [`Mib`],
 //!   even if nothing imports them. Use [`Module::is_base`] to distinguish
 //!   them from user-supplied modules (e.g. when iterating modules).
-//! - **No source spans:** Definitions from base modules carry synthetic
-//!   span values ([`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC))
-//!   rather than real byte offsets, since there is no parsed source text.
-//!   The `source_path` for base modules is empty.
+//! - **Source locations:** Definitions have ordinary source spans. Embedded
+//!   modules use source paths such as `embedded:SNMPv2-SMI`; configured copies
+//!   retain the path reported by their source.
 //! - **Included in iteration:** [`Mib::modules`], [`Mib::objects`],
 //!   [`Mib::types`], and [`Mib::nodes`] all include base module content.
 //!   Filter with [`Module::is_base`] when you only want user-supplied

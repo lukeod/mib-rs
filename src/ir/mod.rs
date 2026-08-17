@@ -37,7 +37,7 @@ pub struct Module {
     pub span: Span,
     /// Diagnostics collected during lowering.
     pub diagnostics: Vec<Diagnostic>,
-    /// File path this module was loaded from. Empty for synthetic base modules.
+    /// File path or synthetic source label this module was loaded from.
     pub source_path: String,
     /// Maps line numbers to byte offsets of line starts.
     /// Entry i holds the byte offset where line i+1 begins (0-indexed).

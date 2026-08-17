@@ -283,11 +283,9 @@ pub struct ValueAssignment {
     pub span: Span,
     /// The OID value assignment.
     pub oid: OidAssignment,
-    /// Description text. Empty if not specified. Only populated for
-    /// synthetic base module definitions.
+    /// Description text. Empty if not supplied by programmatic IR.
     pub description: String,
-    /// Reference text. Empty if not specified. Only populated for
-    /// synthetic base module definitions.
+    /// Reference text. Empty if not supplied by programmatic IR.
     pub reference: String,
 }
 

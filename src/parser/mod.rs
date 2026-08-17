@@ -1988,6 +1988,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 })
             }
 
+            // NULL occurs as an unsupported alternative in the legacy
+            // SimpleSyntax CHOICE from RFC 1065 and RFC 1155. Preserve it as
+            // an opaque type reference so those foundation modules can pass
+            // through the ordinary parser without admitting other reserved
+            // ASN.1 keywords as type names.
+            TokenKind::ForbiddenKeyword if self.text(self.peek().span) == "NULL" => {
+                let token = self.advance();
+                TypeSyntax::TypeRef(self.make_ident(token))
+            }
+
             // Named type reference (identifier)
             TokenKind::UppercaseIdent | TokenKind::LowercaseIdent => {
                 let token = self.advance();
@@ -3138,6 +3148,36 @@ END
             },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn null_type_does_not_admit_other_forbidden_keywords() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+SimpleSyntax ::= CHOICE { number INTEGER, empty NULL }
+RejectedSyntax ::= TRUE
+END
+"#;
+        let modules = parse_strict(input);
+
+        assert!(matches!(
+            &modules[0].body[0],
+            Definition::TypeAssignment(d)
+                if matches!(
+                    &d.syntax,
+                    TypeSyntax::Choice { alternatives, .. }
+                        if matches!(
+                            &alternatives[1].syntax,
+                            TypeSyntax::TypeRef(ident) if ident.name == "NULL"
+                        )
+                )
+        ));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::ParseError),
+            "other reserved ASN.1 words must not be accepted as named types"
+        );
     }
 
     #[test]

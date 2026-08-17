@@ -23,7 +23,7 @@ occur in minor releases with no attempt to maintain backward compatibility.
 - **Table support**: Rows, columns, indexes (including augmented/implied)
 - **Diagnostics**: Configurable strictness levels with collected diagnostics instead of fail-fast
 - **Parallel bulk loading**: Loading all discoverable modules uses available CPUs; selected-module loading and resolution are sequential
-- **Synthetic base modules**: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others built in
+- **Embedded foundation modules**: RFC-derived source fallbacks, byte-synchronized with gomib and deliberately adapted, for SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others
 - **System path discovery**: Auto-detects net-snmp and libsmi MIB directories
 - **Layered API**: Handle-based query API, low-level arena access, and public compiler pipeline
 

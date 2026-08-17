@@ -151,8 +151,8 @@ impl Loader {
 /// [`Loader`] builder, runs the full pipeline (scan, parse, lower, resolve),
 /// and returns the resolved [`Mib`] or a [`LoadError`].
 ///
-/// Synthetic base modules (SNMPv2-SMI, SNMPv2-TC, etc.) are always included
-/// automatically, even if no external sources provide them.
+/// Embedded foundation modules (SNMPv2-SMI, SNMPv2-TC, etc.) are used as
+/// lowest-priority fallbacks when configured sources do not provide them.
 ///
 /// # Errors
 ///
@@ -177,6 +177,8 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
     );
     let _guard = span.enter();
 
+    let has_explicit_sources = !options.sources.is_empty();
+    let has_requested_modules = options.modules.is_some();
     let mut sources = options.sources;
 
     if options.system_paths {
@@ -188,9 +190,10 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
         );
         sources.extend(searchpath::discover_system_sources());
     }
-    if sources.is_empty() {
+    if !has_explicit_sources && !options.system_paths && !has_requested_modules {
         return Err(LoadError::NoSources);
     }
+    sources.push(Box::new(crate::source::EmbeddedSource));
 
     let strictness = options.resolver_strictness;
     let diag_config = options.diag_config;
@@ -314,7 +317,8 @@ impl Loader {
     ///
     /// # Errors
     ///
-    /// Returns [`LoadError::NoSources`] if no sources are configured,
+    /// Returns [`LoadError::NoSources`] if neither sources, system paths, nor
+    /// an explicit module selection are configured,
     /// [`LoadError::MissingModules`] if explicitly requested modules cannot
     /// be found, [`LoadError::DiagnosticThreshold`] if any diagnostic
     /// exceeds the configured severity threshold, or [`LoadError::Io`] on
@@ -378,11 +382,6 @@ fn load_all_modules(
                 all_modules.push((name, vec![candidate]));
             }
         }
-    }
-
-    if all_modules.is_empty() {
-        let base = collect_base_modules(HashMap::new());
-        return Ok(base);
     }
 
     info!(
@@ -490,7 +489,7 @@ fn load_all_modules(
         "parallel loading complete",
     );
 
-    Ok(collect_base_modules(modules))
+    Ok(collect_modules(modules))
 }
 
 /// Load specific modules and their dependencies sequentially.
@@ -510,12 +509,6 @@ fn load_modules_by_name(
         diag_config: &DiagnosticConfig,
     ) -> Result<(), LoadError> {
         if modules.contains_key(name) {
-            return Ok(());
-        }
-
-        // Check base modules.
-        if let Some(base) = lower::base_modules::get_base_module(name) {
-            modules.insert(name.to_string(), base.clone());
             return Ok(());
         }
 
@@ -587,18 +580,17 @@ fn load_modules_by_name(
         load_one(name, sources, &mut modules, &mut file_cache, diag_config)?;
     }
 
-    Ok(collect_base_modules(modules))
+    // Foundation modules are always present, with configured sources taking
+    // precedence over the embedded fallback on a per-module basis.
+    for name in lower::base_modules::base_module_names() {
+        load_one(name, sources, &mut modules, &mut file_cache, diag_config)?;
+    }
+
+    Ok(collect_modules(modules))
 }
 
-/// Ensure base modules are included and return sorted module list.
-fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
-    for &name in lower::base_modules::base_module_names() {
-        if !modules.contains_key(name)
-            && let Some(base) = lower::base_modules::get_base_module(name)
-        {
-            modules.insert(name.to_string(), base.clone());
-        }
-    }
+/// Return modules sorted by name.
+fn collect_modules(modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
     let mut mods: Vec<ir::Module> = modules.into_values().collect();
     mods.sort_by(|a, b| a.name.cmp(&b.name));
     mods

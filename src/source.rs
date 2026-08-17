@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
+use crate::lower::base_modules;
 use crate::scan;
 
 /// Default file extensions recognized as MIB files.
@@ -79,6 +80,27 @@ pub trait Source: Send + Sync {
     ///
     /// Returns [`io::Error`] if listing fails (e.g. directory read error).
     fn list_modules(&self) -> io::Result<Vec<String>>;
+}
+
+/// A final fallback source for the embedded SMI foundation modules.
+pub(crate) struct EmbeddedSource;
+
+impl Source for EmbeddedSource {
+    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+        Ok(
+            base_modules::embedded_content(name).map(|content| FindResult {
+                content: content.to_vec(),
+                path: PathBuf::from(format!("embedded:{name}")),
+            }),
+        )
+    }
+
+    fn list_modules(&self) -> io::Result<Vec<String>> {
+        Ok(base_modules::base_module_names()
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect())
+    }
 }
 
 /// Configuration for directory-based [`Source`] file matching.

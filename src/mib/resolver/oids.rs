@@ -561,7 +561,20 @@ fn lookup_name_component(ctx: &mut ResolverContext, od: &OidDef, name: &str) -> 
     if let Some(arc) = well_known_root_arc(name) {
         let root = ctx.mib.tree().root();
         let child = ctx.mib.tree.get_or_create_child(root, arc);
-        if ctx.mib.tree().get(child).name.is_empty() {
+        if ctx.mib.tree().get(child).module.is_none()
+            && let Some(smi) = ctx.snmpv2_smi
+            && let Some(&resolved) = ctx.module_to_resolved.get(&smi)
+        {
+            ctx.mib.tree.set_name(child, name.to_string());
+            ctx.mib.tree.set_module(child, resolved);
+            ctx.mib.tree.set_kind(child, Kind::Node);
+            ctx.mib.module_mut(resolved).add_node(name, child);
+            ctx.mib.register_node(name, child);
+            ctx.module_symbol_to_node
+                .entry(smi)
+                .or_default()
+                .insert(name.to_string(), child);
+        } else if ctx.mib.tree().get(child).name.is_empty() {
             ctx.mib.tree.set_name(child, name.to_string());
         }
         return Some(child);

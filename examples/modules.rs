@@ -92,21 +92,19 @@ fn main() {
     // the SMI language itself (ASN.1 macros like OBJECT-TYPE, MODULE-IDENTITY,
     // TEXTUAL-CONVENTION) plus the core types and OID tree roots.
     //
-    // These are constructed programmatically, not parsed from files:
+    // Embedded RFC-derived text, byte-synchronized with gomib and deliberately
+    // adapted where needed, supplies a lowest-priority parsed fallback:
     //   - You don't need to supply them as source files
-    //   - If they exist on disk, the synthetic versions take priority
-    //   - Spans are synthetic (no real source text to point to)
-    //   - source_path() returns an empty string
+    //   - Copies from configured sources take priority
+    //   - Definitions have ordinary source spans
+    //   - Embedded source paths use the "embedded:MODULE" form
     //
     // Use is_base() to distinguish them from user-supplied modules.
     let base = mib.module("SNMPv2-SMI").unwrap();
     println!("\n=== Base module: {} ===", base.name());
     println!("  Is base:      {}", base.is_base());
     println!("  Language:     {:?}", base.language());
-    println!(
-        "  Source path:  {:?} (empty for base modules)",
-        base.source_path()
-    );
+    println!("  Source path:  {:?}", base.source_path());
 
     // Base modules provide the well-known OID tree roots.
     println!("  Some nodes:");

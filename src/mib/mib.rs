@@ -592,7 +592,7 @@ impl Mib {
 
     /// Iterate all resolved modules as [`Module`] handles.
     ///
-    /// This includes the seven synthetic base modules (SNMPv2-SMI, etc.)
+    /// This includes the seven SMI foundation modules (SNMPv2-SMI, etc.)
     /// which are always present. Use [`Module::is_base`] to filter them out
     /// when you only want user-supplied modules.
     pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
@@ -604,7 +604,7 @@ impl Mib {
 
     /// Iterate user-supplied (non-base) modules as [`Module`] handles.
     ///
-    /// Excludes the seven synthetic base modules. Equivalent to
+    /// Excludes the seven SMI foundation modules. Equivalent to
     /// `self.modules().filter(|m| !m.is_base())` but more convenient.
     pub fn user_modules(&self) -> impl Iterator<Item = Module<'_>> + '_ {
         self.modules
@@ -746,7 +746,7 @@ impl Mib {
 
     /// Return all non-base modules that define a symbol with the given name.
     ///
-    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
+    /// SMI foundation modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_defining(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -758,7 +758,7 @@ impl Mib {
 
     /// Return all non-base modules that import a symbol with the given name.
     ///
-    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
+    /// SMI foundation modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_importing(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
