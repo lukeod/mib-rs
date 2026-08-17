@@ -18,8 +18,9 @@ use crate::scan;
 #[allow(dead_code)]
 mod document;
 
-pub use document::SourceOrigin;
-pub(crate) use document::{SourceDocument, SourceId, SourceSet};
+pub use document::{
+    ByteOffset, SourceDocument, SourceId, SourceOrigin, SourceRange, SourceRangeError, SourceSet,
+};
 
 /// Default file extensions recognized as MIB files.
 ///

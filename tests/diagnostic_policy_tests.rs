@@ -1,4 +1,5 @@
-use mib_rs::{DiagCode, DiagnosticConfig, LoadError, Loader, Severity};
+use mib_rs::{DiagCode, DiagnosticConfig, LoadError, Loader, Severity, SourceOrigin, SourceSet};
+use std::sync::Arc;
 
 const SOURCE: &[u8] = br#"DIAGNOSTIC-POLICY-MIB { 01 } DEFINITIONS ::= BEGIN
 IMPORTS
@@ -117,7 +118,16 @@ fn demoted_diagnostic_is_retained_with_effective_severity() {
 #[test]
 fn lowering_recomputes_parser_diagnostic_severity_with_its_own_config() {
     let parser_config = DiagnosticConfig::default();
-    let mut modules = mib_rs::parser::parse(SOURCE, &parser_config);
+    let mut sources = SourceSet::new();
+    let source_id = sources
+        .insert(
+            SourceOrigin::memory("diagnostic-policy"),
+            "diagnostic-policy",
+            Arc::from(SOURCE),
+        )
+        .unwrap();
+    let document = sources.get(source_id).unwrap();
+    let mut modules = mib_rs::parser::parse(document, &parser_config);
     let ast_module = modules.pop().expect("expected parsed module");
     let parsed_diagnostic = ast_module
         .diagnostics
@@ -127,7 +137,7 @@ fn lowering_recomputes_parser_diagnostic_severity_with_its_own_config() {
     assert_eq!(parsed_diagnostic.severity, Severity::Minor);
 
     let lower_config = config_with_override(DiagCode::NumberLeadingZero, Severity::Severe);
-    let ir_module = mib_rs::lower::lower(ast_module, SOURCE, &lower_config);
+    let ir_module = mib_rs::lower::lower(ast_module, document, &lower_config);
     let lowered_diagnostic = ir_module
         .diagnostics
         .iter()

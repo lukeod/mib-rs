@@ -28,10 +28,8 @@ pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir:
 
         let mut resolved = ModuleData::new(m.name.clone());
         resolved.language = m.language;
-        resolved.source_path = m.source_path.clone();
         resolved.source_id = m.source_id;
         resolved.is_base = base_modules::is_base_module(&m.name);
-        resolved.line_table = m.line_table.clone();
 
         // Extract MODULE-IDENTITY metadata.
         for def in &m.definitions {
@@ -46,7 +44,7 @@ pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir:
                     .map(|r| Revision {
                         date: r.date.clone(),
                         description: r.description.clone(),
-                        span: r.span,
+                        range: r.range,
                     })
                     .collect();
                 break;
@@ -109,13 +107,13 @@ pub(super) fn group_imports(ir_mod: &ir::Module) -> Vec<Import> {
                 order.push(imp.module.as_str());
                 e.insert(vec![ImportSymbol {
                     name: imp.symbol.clone(),
-                    span: imp.span,
+                    range: imp.range,
                 }]);
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 e.get_mut().push(ImportSymbol {
                     name: imp.symbol.clone(),
-                    span: imp.span,
+                    range: imp.range,
                 });
             }
         }

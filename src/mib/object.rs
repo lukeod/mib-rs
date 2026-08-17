@@ -10,7 +10,8 @@
 //!
 //! For handle-oriented access, see [`Object`](super::handle::Object).
 
-use crate::types::{Access, Kind, Span};
+use crate::source::SourceRange;
+use crate::types::{Access, Kind};
 
 use super::types::*;
 
@@ -24,15 +25,15 @@ use super::types::*;
 #[derive(Debug, Clone)]
 pub struct EntityData {
     pub(crate) name: String,
-    pub(crate) span: Span,
+    pub(crate) range: Option<SourceRange>,
     pub(crate) node: Option<NodeId>,
     pub(crate) module: Option<ModuleId>,
     pub(crate) status: crate::types::Status,
     pub(crate) description: String,
     pub(crate) reference: String,
-    pub(crate) status_span: Span,
-    pub(crate) desc_span: Span,
-    pub(crate) ref_span: Span,
+    pub(crate) status_range: Option<SourceRange>,
+    pub(crate) description_range: Option<SourceRange>,
+    pub(crate) reference_range: Option<SourceRange>,
     pub(crate) oid_refs: Vec<OidRef>,
 }
 
@@ -40,15 +41,15 @@ impl EntityData {
     pub(crate) fn new(name: String) -> Self {
         Self {
             name,
-            span: Span::SYNTHETIC,
+            range: None,
             node: None,
             module: None,
             status: crate::types::Status::Current,
             description: String::new(),
             reference: String::new(),
-            status_span: Span::SYNTHETIC,
-            desc_span: Span::SYNTHETIC,
-            ref_span: Span::SYNTHETIC,
+            status_range: None,
+            description_range: None,
+            reference_range: None,
             oid_refs: Vec::new(),
         }
     }
@@ -68,11 +69,11 @@ pub struct ObjectData {
     pub(crate) def_val: Option<DefVal>,
     pub(crate) augments: Option<ObjectId>,
     pub(crate) augmented_by: Vec<ObjectId>,
-    pub(crate) syntax_span: Span,
-    pub(crate) access_span: Span,
-    pub(crate) units_span: Span,
-    pub(crate) augments_span: Span,
-    pub(crate) def_val_span: Span,
+    pub(crate) syntax_range: Option<SourceRange>,
+    pub(crate) access_range: Option<SourceRange>,
+    pub(crate) units_range: Option<SourceRange>,
+    pub(crate) augments_range: Option<SourceRange>,
+    pub(crate) default_value_range: Option<SourceRange>,
     pub(crate) index: Vec<IndexEntry>,
     pub(crate) hint: String,
     pub(crate) sizes: Vec<Range>,
@@ -96,11 +97,11 @@ impl ObjectData {
             def_val: None,
             augments: None,
             augmented_by: Vec::new(),
-            syntax_span: Span::SYNTHETIC,
-            access_span: Span::SYNTHETIC,
-            units_span: Span::SYNTHETIC,
-            augments_span: Span::SYNTHETIC,
-            def_val_span: Span::SYNTHETIC,
+            syntax_range: None,
+            access_range: None,
+            units_range: None,
+            augments_range: None,
+            default_value_range: None,
             index: Vec::new(),
             hint: String::new(),
             sizes: Vec::new(),
@@ -123,9 +124,9 @@ impl ObjectData {
         &self.entity.name
     }
 
-    /// Return the source span.
-    pub fn span(&self) -> Span {
-        self.entity.span
+    /// Return the source range, if this object came from source text.
+    pub fn range(&self) -> Option<SourceRange> {
+        self.entity.range
     }
 
     /// Return the OID tree node id, if resolved.
@@ -276,29 +277,29 @@ impl ObjectData {
         &self.index
     }
 
-    /// Return the source span of the SYNTAX clause.
-    pub fn syntax_span(&self) -> Span {
-        self.syntax_span
+    /// Return the source range of the SYNTAX clause, if present.
+    pub fn syntax_range(&self) -> Option<SourceRange> {
+        self.syntax_range
     }
 
-    /// Return the source span of the ACCESS/MAX-ACCESS clause.
-    pub fn access_span(&self) -> Span {
-        self.access_span
+    /// Return the source range of the ACCESS/MAX-ACCESS clause, if present.
+    pub fn access_range(&self) -> Option<SourceRange> {
+        self.access_range
     }
 
-    /// Return the source span of the UNITS clause.
-    pub fn units_span(&self) -> Span {
-        self.units_span
+    /// Return the source range of the UNITS clause, if present.
+    pub fn units_range(&self) -> Option<SourceRange> {
+        self.units_range
     }
 
-    /// Return the source span of the AUGMENTS clause.
-    pub fn augments_span(&self) -> Span {
-        self.augments_span
+    /// Return the source range of the AUGMENTS clause, if present.
+    pub fn augments_range(&self) -> Option<SourceRange> {
+        self.augments_range
     }
 
-    /// Return the source span of the DEFVAL clause.
-    pub fn default_value_span(&self) -> Span {
-        self.def_val_span
+    /// Return the source range of the DEFVAL clause, if present.
+    pub fn default_value_range(&self) -> Option<SourceRange> {
+        self.default_value_range
     }
 
     /// Look up an enumeration value by label name.

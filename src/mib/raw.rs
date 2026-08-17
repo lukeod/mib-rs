@@ -6,6 +6,7 @@
 //! For most queries, prefer the handle API instead.
 
 use crate::mib::Oid;
+use crate::source::{SourceDocument, SourceId};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -115,6 +116,11 @@ impl<'a> RawMib<'a> {
     /// Panics if `id` is not a valid module in this MIB.
     pub fn module(self, id: ModuleId) -> &'a ModuleData {
         self.mib.module_data(id)
+    }
+
+    /// Look up a retained source document by its compilation-local identity.
+    pub fn source(self, id: SourceId) -> Option<&'a SourceDocument> {
+        self.mib.source(id)
     }
 
     /// Find the node at an exact numeric [`Oid`], if any.

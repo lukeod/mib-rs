@@ -1,21 +1,22 @@
 //! Token types produced by the SMI/MIB [`Lexer`](super::Lexer).
 //!
-//! Contains the [`Token`] struct (pairing a [`TokenKind`] with a [`Span`])
+//! Contains the [`Token`] struct (pairing a [`TokenKind`] with a
+//! [`SourceRange`])
 //! and the [`TokenKind`] enum covering all SMIv1/SMIv2 token categories:
 //! identifiers, literals, punctuation, and keywords.
 
-use crate::types::Span;
+use crate::source::SourceRange;
 
 /// A single lexed token with its classification and source location.
 ///
 /// Use [`TokenKind`] to determine what the token represents, and
-/// [`Span`] to index back into the original source bytes.
+/// [`SourceRange`] to index back into its [`SourceDocument`](crate::SourceDocument).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     /// What kind of token this is (keyword, identifier, literal, etc.).
     pub kind: TokenKind,
     /// Byte range in the source text that produced this token.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// Classification of a [`Token`].

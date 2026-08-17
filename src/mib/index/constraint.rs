@@ -332,7 +332,6 @@ impl ConstraintNumber for usize {
 #[cfg(test)]
 mod tests {
     use crate::mib::types::{Range, RangeBound};
-    use crate::types::Span;
 
     use super::{InclusiveRange, NormalizedConstraint, normalize_usize};
 
@@ -340,7 +339,7 @@ mod tests {
         Range {
             min: RangeBound::Unsigned(minimum),
             max: RangeBound::Unsigned(maximum),
-            span: Span::SYNTHETIC,
+            range: None,
         }
     }
 

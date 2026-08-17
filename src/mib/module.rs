@@ -23,7 +23,6 @@ use super::types::*;
 pub struct ModuleData {
     pub(crate) name: String,
     pub(crate) language: Language,
-    pub(crate) source_path: String,
     pub(crate) source_id: Option<SourceId>,
     pub(crate) is_base: bool,
     pub(crate) oid: Option<Oid>,
@@ -42,8 +41,6 @@ pub struct ModuleData {
     pub(crate) capabilities: Vec<CapabilityId>,
     pub(crate) nodes: Vec<NodeId>,
 
-    pub(crate) line_table: Vec<usize>,
-
     pub(crate) used_import_names: HashSet<String>,
     pub(crate) resolved_imports: HashMap<String, ModuleId>,
 
@@ -61,7 +58,6 @@ impl ModuleData {
         Self {
             name,
             language: Language::Unknown,
-            source_path: String::new(),
             source_id: None,
             is_base: false,
             oid: None,
@@ -78,7 +74,6 @@ impl ModuleData {
             compliances: Vec::new(),
             capabilities: Vec::new(),
             nodes: Vec::new(),
-            line_table: Vec::new(),
             used_import_names: HashSet::new(),
             resolved_imports: HashMap::new(),
             objects_by_name: HashMap::new(),
@@ -101,9 +96,9 @@ impl ModuleData {
         self.language
     }
 
-    /// Return the path or synthetic source label this module was loaded from.
-    pub fn source_path(&self) -> &str {
-        &self.source_path
+    /// Return the compilation-local source identity, if this module came from source text.
+    pub fn source_id(&self) -> Option<SourceId> {
+        self.source_id
     }
 
     /// Return `true` if this is an SMI foundation module.
@@ -111,11 +106,6 @@ impl ModuleData {
     /// See [`Module::is_base`](super::Module::is_base) for details.
     pub fn is_base(&self) -> bool {
         self.is_base
-    }
-
-    /// Convert a byte offset to a line and column number.
-    pub fn line_col(&self, offset: crate::types::ByteOffset) -> (usize, usize) {
-        crate::types::line_col_from_table(&self.line_table, offset)
     }
 
     /// Return the module's MODULE-IDENTITY OID, if any.

@@ -5,10 +5,9 @@ use clap::Parser;
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
-use mib_rs::source::dir;
+use mib_rs::source::{SourceRange, dir};
 use mib_rs::types::{
-    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, Span,
-    all_diagnostic_codes,
+    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, all_diagnostic_codes,
 };
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -1228,7 +1227,7 @@ fn inspect_object(mib: &Mib, obj: mib_rs::mib::Object<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, obj.module(), obj.span());
+    print_scoped_diagnostics(mib, obj.module(), obj.range());
     print_related_unresolved(mib, obj.name());
 
     // Description / Reference.
@@ -1265,7 +1264,7 @@ fn inspect_notification(mib: &Mib, notif: mib_rs::mib::Notification<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, notif.module(), notif.span());
+    print_scoped_diagnostics(mib, notif.module(), notif.range());
     print_related_unresolved(mib, notif.name());
 
     print_description_reference(notif.description(), notif.reference());
@@ -1295,7 +1294,7 @@ fn inspect_group(mib: &Mib, g: mib_rs::mib::Group<'_>) {
     print_compliance_references(mib, g.name());
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, g.module(), g.span());
+    print_scoped_diagnostics(mib, g.module(), g.range());
     print_related_unresolved(mib, g.name());
 
     print_description_reference(g.description(), g.reference());
@@ -1332,7 +1331,7 @@ fn inspect_compliance(mib: &Mib, c: mib_rs::mib::Compliance<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, c.module(), c.span());
+    print_scoped_diagnostics(mib, c.module(), c.range());
     print_related_unresolved(mib, c.name());
 
     print_description_reference(c.description(), c.reference());
@@ -1371,7 +1370,7 @@ fn inspect_capability(mib: &Mib, cap: mib_rs::mib::Capability<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, cap.module(), cap.span());
+    print_scoped_diagnostics(mib, cap.module(), cap.range());
     print_related_unresolved(mib, cap.name());
 
     print_description_reference(cap.description(), cap.reference());
@@ -1385,7 +1384,7 @@ fn inspect_bare_node(mib: &Mib, node: mib_rs::mib::Node<'_>) {
         println!("Macro:   OBJECT-IDENTITY");
     }
 
-    print_scoped_diagnostics(mib, node.module(), node.span());
+    print_scoped_diagnostics(mib, node.module(), node.range());
     print_related_unresolved(mib, node.name());
 
     print_description_reference(node.description(), node.reference());
@@ -1408,7 +1407,7 @@ fn inspect_standalone_type(mib: &Mib, ty: mib_rs::mib::Type<'_>) {
 
     print_type_chain(ty);
 
-    print_scoped_diagnostics(mib, ty.module(), ty.span());
+    print_scoped_diagnostics(mib, ty.module(), ty.range());
     print_related_unresolved(mib, ty.name());
 
     print_description_reference(ty.description(), ty.reference());
@@ -1616,20 +1615,33 @@ fn print_compliance_references(mib: &Mib, group_name: &str) {
     }
 }
 
-fn print_scoped_diagnostics(mib: &Mib, module: Option<mib_rs::mib::Module<'_>>, span: Span) {
+fn print_scoped_diagnostics(
+    mib: &Mib,
+    module: Option<mib_rs::mib::Module<'_>>,
+    range: Option<SourceRange>,
+) {
     let module = match module {
         Some(m) => m,
         None => return,
     };
-    if span == Span::ZERO || span == Span::SYNTHETIC {
+    let Some(range) = range else {
+        return;
+    };
+    if module.source_id() != Some(range.source()) {
         return;
     }
-
-    let (start_line, _) = module.line_col(span.start);
-    let (end_line, _) = module.line_col(span.end);
-    if start_line == 0 {
+    let Some(source) = module.source() else {
+        return;
+    };
+    if source.slice(range).is_err() {
         return;
     }
+    let (Ok((start_line, _)), Ok((end_line, _))) = (
+        source.line_column(range.start()),
+        source.line_column(range.end()),
+    ) else {
+        return;
+    };
 
     let module_name = module.name();
     let scoped: Vec<_> = mib

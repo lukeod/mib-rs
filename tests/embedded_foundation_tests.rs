@@ -17,7 +17,11 @@ fn requested_foundation_module_loads_without_configured_sources() {
 
     let module = mib.module("SNMPv2-SMI").expect("SNMPv2-SMI not loaded");
     assert!(module.is_base());
-    assert_eq!(module.source_path(), "embedded:SNMPv2-SMI");
+    assert_eq!(module.source_label(), Some("embedded:SNMPv2-SMI"));
+    assert!(matches!(
+        module.source_origin(),
+        Some(mib_rs::SourceOrigin::Embedded { identity }) if identity.as_ref() == "SNMPv2-SMI"
+    ));
     assert!(module.r#type("Counter32").is_some());
     assert!(module.node("enterprises").is_some());
 }
@@ -32,7 +36,7 @@ fn configured_foundation_module_overrides_embedded_fallback() {
         .expect("configured foundation load failed");
 
     let module = mib.module("SNMPv2-SMI").expect("SNMPv2-SMI not loaded");
-    assert_eq!(module.source_path(), "<memory:SNMPv2-SMI>");
+    assert_eq!(module.source_label(), Some("<memory:SNMPv2-SMI>"));
     assert_eq!(
         mib.node("iso")
             .expect("well-known root not loaded")
@@ -75,8 +79,8 @@ END
     assert_eq!(
         mib.module("SNMPv2-TC")
             .expect("SNMPv2-TC not loaded")
-            .source_path(),
-        "embedded:SNMPv2-TC"
+            .source_label(),
+        Some("embedded:SNMPv2-TC")
     );
     assert!(mib.object("testValue").is_some());
 }

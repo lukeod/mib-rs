@@ -17,7 +17,8 @@ use tracing::trace;
 use crate::graph;
 use crate::ir;
 use crate::lower::base_modules;
-use crate::types::{Kind, Span};
+use crate::source::SourceRange;
+use crate::types::Kind;
 
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
@@ -117,8 +118,8 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
         .filter(|od| cycle_symbols.contains(&od.symbol))
         .map(|od| {
             let m = &ctx.modules[od.ir_mod.index()];
-            let span = get_def_span(m, od.def_idx);
-            (od.symbol.name.clone(), m.name.clone(), od.ir_mod, span)
+            let range = get_def_range(m, od.def_idx);
+            (od.symbol.name.clone(), m.name.clone(), od.ir_mod, range)
         })
         .collect();
     if !result.cycles.is_empty() {
@@ -131,14 +132,14 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
             "detected oid dependency cycles",
         );
     }
-    for (name, mod_name, ir_mod, span) in cycle_unresolved {
+    for (name, mod_name, ir_mod, range) in cycle_unresolved {
         ctx.record_unresolved_oid(
             &name,
             &name,
             &mod_name,
             UnresolvedReason::DependencyCycle,
             ir_mod,
-            span,
+            range,
         );
     }
 
@@ -169,7 +170,7 @@ pub(super) fn resolve_oids(ctx: &mut ResolverContext) {
 fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDef>) {
     let mut oid_defs = Vec::new();
     let mut trap_defs = Vec::new();
-    let mut notif_without_oid: Vec<(IrModuleId, Span, String)> = Vec::new();
+    let mut notif_without_oid: Vec<(IrModuleId, SourceRange, String)> = Vec::new();
 
     for (ir_id, m) in ctx.all_modules() {
         for (def_idx, def) in m.definitions.iter().enumerate() {
@@ -230,7 +231,7 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
                             kind: OidDefKind::Notification,
                         });
                     } else {
-                        notif_without_oid.push((ir_id, d.span, d.name.clone()));
+                        notif_without_oid.push((ir_id, d.range, d.name.clone()));
                     }
                 }
                 ir::Definition::ValueAssignment(d) => {
@@ -293,11 +294,11 @@ fn collect_oid_definitions(ctx: &mut ResolverContext) -> (Vec<OidDef>, Vec<OidDe
         }
     }
 
-    for (ir_id, span, name) in notif_without_oid {
+    for (ir_id, range, name) in notif_without_oid {
         ctx.emit_diagnostic(
             crate::types::DiagCode::NotifNoOid,
             Some(ir_id),
-            span,
+            Some(range),
             format!("notification {:?} has no OID or trap info", name),
         );
     }
@@ -309,8 +310,8 @@ fn get_oid_assignment(m: &ir::Module, def_idx: usize) -> Option<&ir::OidAssignme
     m.definitions[def_idx].oid()
 }
 
-fn get_def_span(m: &ir::Module, def_idx: usize) -> Span {
-    m.definitions[def_idx].span()
+fn get_def_range(m: &ir::Module, def_idx: usize) -> SourceRange {
+    m.definitions[def_idx].range()
 }
 
 fn first_component_dep_symbol(
@@ -466,7 +467,7 @@ fn resolve_oid_component(
             let parent = current.unwrap_or_else(|| ctx.mib.tree().root());
             Some(ctx.mib.tree.get_or_create_child(parent, *value))
         }
-        ir::OidComponent::Name { name, span } => resolve_name_component(ctx, od, name, *span),
+        ir::OidComponent::Name { name, range } => resolve_name_component(ctx, od, name, *range),
         ir::OidComponent::NamedNumber { name, number, .. } => {
             // Try name lookup first.
             if let Some(node) = lookup_name_component(ctx, od, name) {
@@ -489,7 +490,7 @@ fn resolve_oid_component(
         ir::OidComponent::QualifiedName {
             module,
             name,
-            span: _,
+            range: _,
         } => {
             if let Some(node) = ctx.lookup_node_in_module(module, name) {
                 Some(node)
@@ -502,7 +503,7 @@ fn resolve_oid_component(
                     &mod_name,
                     UnresolvedReason::ComponentNotFound,
                     od.ir_mod,
-                    comp.span(),
+                    comp.range(),
                 );
                 None
             }
@@ -611,7 +612,7 @@ fn resolve_name_component(
     ctx: &mut ResolverContext,
     od: &OidDef,
     name: &str,
-    span: Span,
+    range: SourceRange,
 ) -> Option<NodeId> {
     if let Some(node) = lookup_name_component(ctx, od, name) {
         return Some(node);
@@ -624,7 +625,7 @@ fn resolve_name_component(
         &mod_name,
         UnresolvedReason::ComponentNotFound,
         od.ir_mod,
-        span,
+        range,
     );
     None
 }
@@ -650,10 +651,10 @@ fn lookup_smi_global_oid_root(ctx: &ResolverContext, name: &str) -> Option<NodeI
 }
 
 fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {
-    let (def_span, oid_definition_text, oid_definition_status) = {
+    let (def_range, oid_definition_text, oid_definition_status) = {
         let m = &ctx.modules[od.ir_mod.index()];
         let def = &m.definitions[od.def_idx];
-        let def_span = def.span();
+        let def_range = def.range();
         let (oid_definition_text, oid_definition_status) = match def {
             ir::Definition::ValueAssignment(va) => {
                 (Some((va.description.clone(), va.reference.clone())), None)
@@ -668,7 +669,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
             // if this changes.
             _ => (None, None),
         };
-        (def_span, oid_definition_text, oid_definition_status)
+        (def_range, oid_definition_text, oid_definition_status)
     };
     let resolved_mod_id = ctx.module_to_resolved[&od.ir_mod];
 
@@ -693,7 +694,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
                 existing_name
             )
         };
-        ctx.emit_diagnostic(code, Some(od.ir_mod), def_span, msg);
+        ctx.emit_diagnostic(code, Some(od.ir_mod), Some(def_range), msg);
     }
 
     // RFC 2578 section 7.10: for administrative assignments the last
@@ -707,13 +708,13 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
             ctx.emit_diagnostic(
                 crate::types::DiagCode::LastSubidZero,
                 Some(od.ir_mod),
-                def_span,
+                Some(def_range),
                 format!("{:?}: last sub-identifier must not be zero", od.name()),
             );
         }
     }
 
-    // The node's kind, name, span, description, and module all reflect the
+    // The node's kind, name, range, description, and module all reflect the
     // preferred module. Gate all of them behind the same preference check
     // so they stay in sync.
     let existing_mod = ctx.mib.tree().get(node_id).module;
@@ -725,7 +726,7 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         let node_kind = od.kind.to_node_kind();
         ctx.mib.tree.set_kind(node_id, node_kind);
 
-        ctx.mib.tree.set_span(node_id, def_span);
+        ctx.mib.tree.set_range(node_id, Some(def_range));
 
         if let Some((description, reference)) = oid_definition_text {
             if !description.is_empty() {
@@ -813,7 +814,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
 
     for od in trap_defs {
         // Extract data from IR before mutable operations.
-        let (enterprise_name, trap_number, span) = {
+        let (enterprise_name, trap_number, range) = {
             let m = &ctx.modules[od.ir_mod.index()];
             let def = &m.definitions[od.def_idx];
             let notif = match def {
@@ -827,7 +828,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
             (
                 trap_info.enterprise.clone(),
                 trap_info.trap_number,
-                notif.span,
+                notif.range,
             )
         };
 
@@ -855,7 +856,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
                     &mod_name,
                     UnresolvedReason::EnterpriseNotFound,
                     od.ir_mod,
-                    span,
+                    range,
                 );
                 continue;
             }
@@ -872,7 +873,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
             // Generic trap: snmpTraps.(trapNumber+1)
             let Some(arc) = trap_number.checked_add(1) else {
                 let mod_name = ctx.modules[od.ir_mod.index()].name.clone();
-                ctx.record_trap_number_overflow(od.name(), mod_name, od.ir_mod, span);
+                ctx.record_trap_number_overflow(od.name(), mod_name, od.ir_mod, range);
                 continue;
             };
             ctx.mib.tree.get_or_create_child(enterprise_node, arc)

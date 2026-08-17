@@ -3,7 +3,10 @@
 //! The token API lets you work with raw MIB syntax without parsing,
 //! useful for syntax highlighting, linting, or custom tooling.
 
+use std::sync::Arc;
+
 use mib_rs::token::{self, TokenKind};
+use mib_rs::{SourceOrigin, SourceSet};
 
 fn main() {
     let source = br#"EXAMPLE-MIB DEFINITIONS ::= BEGIN
@@ -29,15 +32,30 @@ exValue OBJECT-TYPE
 END
 "#;
 
+    let mut sources = SourceSet::new();
+    let source_id = sources
+        .insert(
+            SourceOrigin::memory("tokens-example"),
+            "EXAMPLE-MIB",
+            Arc::from(source.as_slice()),
+        )
+        .expect("example source should fit the compiler coordinate space");
+    let document = sources
+        .get(source_id)
+        .expect("the example source was just inserted");
+
     // -- Tokenize --
-    let (tokens, diagnostics) = token::tokenize(source);
+    let (tokens, diagnostics) = token::tokenize(document);
 
     println!("=== Tokens ({} total) ===", tokens.len());
     for tok in &tokens {
         // Extract the token text from the source bytes.
-        let start = tok.span.start.0 as usize;
-        let end = tok.span.end.0 as usize;
-        let text = std::str::from_utf8(&source[start..end]).unwrap_or("<binary>");
+        let text = std::str::from_utf8(
+            document
+                .slice(tok.span)
+                .expect("tokens belong to the example source document"),
+        )
+        .unwrap_or("<binary>");
 
         // Skip comments for brevity.
         if tok.kind == TokenKind::Comment {

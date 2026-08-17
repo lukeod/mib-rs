@@ -617,7 +617,6 @@ fn minimum_length(lengths: &LengthConstraint) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::mib::types::{Range, RangeBound};
-    use crate::types::Span;
 
     use super::*;
 
@@ -626,7 +625,7 @@ mod tests {
         let sizes = [Range {
             min: RangeBound::Unsigned(0),
             max: RangeBound::Unsigned(0),
-            span: Span::ZERO,
+            range: None,
         }];
         let source = ConstraintSource {
             sizes: &sizes,

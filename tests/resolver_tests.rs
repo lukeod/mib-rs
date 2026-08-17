@@ -766,7 +766,7 @@ END
         &[Range {
             min: RangeBound::Raw("'1G'H".to_string()),
             max: RangeBound::Unsigned(5),
-            span: raw_child.ranges()[0].span,
+            range: raw_child.ranges()[0].range,
         }]
     );
 
@@ -776,7 +776,7 @@ END
         &[Range {
             min: RangeBound::Raw("'0G'H".to_string()),
             max: RangeBound::Unsigned(5),
-            span: known_child.ranges()[0].span,
+            range: known_child.ranges()[0].range,
         }]
     );
 

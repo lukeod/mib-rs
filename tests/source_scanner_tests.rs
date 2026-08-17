@@ -175,13 +175,13 @@ const MALFORMED: &[u8] = b"LEADING-TOKEN REAL-MIB DEFINITIONS ::= BEGIN\nEND\n";
 const PHANTOM: &[u8] = b"OTHER-MIB DEFINITIONS ::= BEGIN\nEND\n";
 const VALID: &[u8] = b"REAL-MIB DEFINITIONS ::= BEGIN\nEND\n";
 
-fn assert_real_mib_loaded(loader: Loader, expected_path: &Path) {
+fn assert_real_mib_loaded(loader: Loader, expected_origin: SourceOrigin) {
     let mib = loader
         .diagnostic_config(permissive_diagnostics())
         .load()
         .expect("valid candidate should load");
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), expected_path.to_string_lossy());
+    assert_eq!(module.source_origin(), Some(&expected_origin));
 }
 
 fn candidate_file_path(candidate: &SourceCandidate) -> &Path {
@@ -242,7 +242,7 @@ END
         .expect("later valid source should satisfy the requested module");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn explicit_chain_load_continues_after_phantom_child() {
         .expect("later valid chain child should satisfy the requested module");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn load_all_chain_continues_after_phantom_child() {
         .expect("later valid chain child should win after candidate validation");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -321,7 +321,7 @@ END
         .expect("later valid source should win after candidate validation");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
     assert!(mib.module("OTHER-MIB").is_none());
 }
 
@@ -426,7 +426,10 @@ fn explicit_files_load_skips_malformed_first_path() {
     let (malformed, valid) = write_malformed_and_valid_files(&dir);
     let files = source::files([malformed, valid.clone()]).expect("build file source");
 
-    assert_real_mib_loaded(Loader::new().source(files).modules(["REAL-MIB"]), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(files).modules(["REAL-MIB"]),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -435,7 +438,10 @@ fn load_all_files_skips_malformed_first_path() {
     let (malformed, valid) = write_malformed_and_valid_files(&dir);
     let files = source::files([malformed, valid.clone()]).expect("build file source");
 
-    assert_real_mib_loaded(Loader::new().source(files).parallelism(2), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(files).parallelism(2),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -446,7 +452,7 @@ fn explicit_directory_load_skips_malformed_first_path() {
 
     assert_real_mib_loaded(
         Loader::new().source(directory).modules(["REAL-MIB"]),
-        &valid,
+        SourceOrigin::file(&valid),
     );
 }
 
@@ -456,7 +462,10 @@ fn load_all_directory_skips_malformed_first_path() {
     let (_, valid) = write_malformed_and_valid_files(&dir);
     let directory = source::dir(dir.path()).expect("build directory source");
 
-    assert_real_mib_loaded(Loader::new().source(directory).parallelism(2), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(directory).parallelism(2),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -466,7 +475,7 @@ fn chained_valid_candidate_stops_before_later_io_error() {
 
     assert_real_mib_loaded(
         Loader::new().source(chained).modules(["REAL-MIB"]),
-        Path::new("<valid:REAL-MIB>"),
+        SourceOrigin::custom("valid", "REAL-MIB"),
     );
 }
 
@@ -477,7 +486,7 @@ fn load_all_chain_stops_before_later_io_error() {
 
     assert_real_mib_loaded(
         Loader::new().source(chained).parallelism(1),
-        Path::new("<valid:REAL-MIB>"),
+        SourceOrigin::custom("valid", "REAL-MIB"),
     );
 }
 
@@ -507,7 +516,7 @@ fn directory_valid_candidate_stops_before_later_stale_path() {
 
     assert_real_mib_loaded(
         Loader::new().source(directory).modules(["REAL-MIB"]),
-        &valid_path,
+        SourceOrigin::file(&valid_path),
     );
 }
 
@@ -516,7 +525,10 @@ fn load_all_directory_stops_before_later_stale_path() {
     let dir = TempDir::new();
     let (directory, valid_path) = directory_with_later_stale_candidate(&dir);
 
-    assert_real_mib_loaded(Loader::new().source(directory).parallelism(1), &valid_path);
+    assert_real_mib_loaded(
+        Loader::new().source(directory).parallelism(1),
+        SourceOrigin::file(&valid_path),
+    );
 }
 
 #[test]
@@ -564,13 +576,11 @@ fn same_candidate_loads_all_modules_under_aliased_requests() {
 
         assert!(mib.module("A-MIB").is_some());
         assert!(mib.module("B-MIB").is_some());
-        assert_eq!(
-            mib.module("A-MIB").unwrap().source_path(),
-            "two modules in one buffer"
-        );
-        assert_eq!(
-            mib.module("B-MIB").unwrap().source_path(),
-            "two modules in one buffer"
-        );
+        let a = mib.module("A-MIB").unwrap();
+        let b = mib.module("B-MIB").unwrap();
+        assert_eq!(a.source_label(), Some("two modules in one buffer"));
+        assert_eq!(b.source_label(), Some("two modules in one buffer"));
+        assert_eq!(a.source_id(), b.source_id());
+        assert!(std::ptr::eq(a.source().unwrap(), b.source().unwrap()));
     }
 }

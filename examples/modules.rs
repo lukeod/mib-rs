@@ -27,7 +27,11 @@ fn main() {
     println!("\n=== {} (handle) ===", module.name());
     println!("  Language:    {:?}", module.language());
     println!("  Is base:     {}", module.is_base());
-    println!("  Source path: {}", module.source_path());
+    println!(
+        "  Source label: {}",
+        module.source_label().unwrap_or("<generated>")
+    );
+    println!("  Source origin: {:?}", module.source_origin());
     if let Some(oid) = module.oid() {
         println!("  OID:         {oid}");
     }
@@ -96,15 +100,16 @@ fn main() {
     // adapted where needed, supplies a lowest-priority parsed fallback:
     //   - You don't need to supply them as source files
     //   - Copies from configured sources take priority
-    //   - Definitions have ordinary source spans
-    //   - Embedded source paths use the "embedded:MODULE" form
+    //   - Definitions have ordinary source ranges
+    //   - Embedded documents use typed origins and "embedded:MODULE" labels
     //
     // Use is_base() to distinguish them from user-supplied modules.
     let base = mib.module("SNMPv2-SMI").unwrap();
     println!("\n=== Base module: {} ===", base.name());
     println!("  Is base:      {}", base.is_base());
     println!("  Language:     {:?}", base.language());
-    println!("  Source path:  {:?}", base.source_path());
+    println!("  Source label: {:?}", base.source_label());
+    println!("  Source origin: {:?}", base.source_origin());
 
     // Base modules provide the well-known OID tree roots.
     println!("  Some nodes:");

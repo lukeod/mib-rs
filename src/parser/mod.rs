@@ -8,9 +8,8 @@ use std::borrow::Cow;
 
 use crate::ast::*;
 use crate::lexer::{Lexer, Token, TokenKind};
-use crate::types::{
-    Access, AccessKeyword, ByteOffset, DiagCode, DiagnosticConfig, Span, SpanDiagnostic, Status,
-};
+use crate::source::{ByteOffset, SourceDocument, SourceRange};
+use crate::types::{Access, AccessKeyword, DiagCode, DiagnosticConfig, SpanDiagnostic, Status};
 use tracing::{debug, debug_span, info_span, trace};
 
 type TcBody = (
@@ -21,6 +20,10 @@ type TcBody = (
     SyntaxClause,
 );
 
+fn cover(first: SourceRange, last: SourceRange) -> SourceRange {
+    SourceRange::cover(first, last).expect("parser ranges belong to one source document")
+}
+
 /// Recursive descent parser for SMI MIB modules.
 ///
 /// Consumes tokens from a lexer and produces [`Module`] AST nodes
@@ -30,10 +33,10 @@ type TcBody = (
 /// Uses a 3-token lookahead buffer and recovers from parse errors by
 /// scanning forward to the next definition boundary.
 pub struct Parser<'src, 'cfg> {
-    source: &'src [u8],
+    document: &'src SourceDocument,
     lexer: Lexer<'src, 'cfg>,
     buf: [Token; 3],
-    last_end: ByteOffset,
+    last_span: SourceRange,
     lexer_diagnostic_cursor: usize,
     diagnostics: Vec<SpanDiagnostic>,
     diag_config: &'cfg DiagnosticConfig,
@@ -50,12 +53,14 @@ fn next_non_comment(lexer: &mut Lexer<'_, '_>) -> Token {
 }
 
 impl<'src, 'cfg> Parser<'src, 'cfg> {
-    /// Create a new parser over the given source bytes.
+    /// Create a new parser over a retained source document.
     ///
     /// Internally constructs a lexer and primes the lookahead buffer.
-    pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
-        let mut lexer = Lexer::new(source, diag_config);
-        let eof_span = Span::from_usize_offsets(source.len(), source.len());
+    pub fn new(document: &'src SourceDocument, diag_config: &'cfg DiagnosticConfig) -> Self {
+        let mut lexer = Lexer::new(document, diag_config);
+        let eof_span = document
+            .empty_range(document.bytes().len())
+            .expect("the document EOF is a valid source position");
         let eof_token = Token {
             kind: TokenKind::Eof,
             span: eof_span,
@@ -74,10 +79,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         );
 
         Parser {
-            source,
+            document,
             lexer,
             buf,
-            last_end: ByteOffset(0),
+            last_span: document
+                .empty_range(0)
+                .expect("the document start is a valid source position"),
             lexer_diagnostic_cursor: 0,
             diagnostics: Vec::new(),
             diag_config,
@@ -104,7 +111,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.buf[0] = self.buf[1];
         self.buf[1] = self.buf[2];
         self.buf[2] = next_non_comment(&mut self.lexer);
-        self.last_end = tok.span.end;
+        self.last_span = tok.span;
         tok
     }
 
@@ -120,16 +127,29 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn current_span(&self) -> Span {
+    fn current_span(&self) -> SourceRange {
         self.peek().span
+    }
+
+    fn range_to_current_start(&self, start: SourceRange) -> SourceRange {
+        let current = self.current_span();
+        assert_eq!(start.source(), self.document.id());
+        assert_eq!(current.source(), self.document.id());
+        self.document
+            .range(start.start().as_usize()..current.start().as_usize())
+            .expect("parser range endpoints are ordered within its source document")
     }
 
     fn is_eof(&self) -> bool {
         self.peek().kind == TokenKind::Eof
     }
 
-    fn text(&self, span: Span) -> Cow<'src, str> {
-        String::from_utf8_lossy(&self.source[span.start.0 as usize..span.end.0 as usize])
+    fn text(&self, span: SourceRange) -> Cow<'src, str> {
+        String::from_utf8_lossy(
+            self.document
+                .slice(span)
+                .expect("parser ranges belong to its source document"),
+        )
     }
 
     fn make_error(&self, message: String) -> SpanDiagnostic {
@@ -149,7 +169,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.diagnostics.push(diag);
     }
 
-    fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
+    fn emit_diagnostic(&mut self, code: DiagCode, span: SourceRange, message: impl Into<String>) {
         if !self.diag_config.should_collect(code) {
             return;
         }
@@ -161,7 +181,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         });
     }
 
-    fn emit_diagnostic_with<F>(&mut self, code: DiagCode, span: Span, message: F)
+    fn emit_diagnostic_with<F>(&mut self, code: DiagCode, span: SourceRange, message: F)
     where
         F: FnOnce() -> String,
     {
@@ -194,7 +214,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn validate_identifier(&mut self, name: &str, span: Span) {
+    fn validate_identifier(&mut self, name: &str, span: SourceRange) {
         if name.contains('_') {
             self.emit_diagnostic_with(DiagCode::IdentifierUnderscore, span, || {
                 format!("identifier {:?} contains underscore (RFC violation)", name)
@@ -224,7 +244,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn validate_value_reference(&mut self, name: &str, span: Span) {
+    fn validate_value_reference(&mut self, name: &str, span: SourceRange) {
         if let Some(first) = name.bytes().next()
             && first.is_ascii_uppercase()
         {
@@ -295,7 +315,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(Some(self.parse_quoted_string()?))
     }
 
-    fn parse_u32(&mut self, span: Span, context: &str) -> Result<u32, SpanDiagnostic> {
+    fn parse_u32(&mut self, span: SourceRange, context: &str) -> Result<u32, SpanDiagnostic> {
         let text = self.text(span);
         match text.parse::<u32>() {
             Ok(v) => Ok(v),
@@ -310,7 +330,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_i64(&mut self, span: Span, context: &str) -> Result<i64, SpanDiagnostic> {
+    fn parse_i64(&mut self, span: SourceRange, context: &str) -> Result<i64, SpanDiagnostic> {
         let text = self.text(span);
         match text.parse::<i64>() {
             Ok(v) => Ok(v),
@@ -350,7 +370,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let lexer_diagnostics = self.lexer.diagnostics();
         let owned_count = lexer_diagnostics[self.lexer_diagnostic_cursor..]
             .iter()
-            .take_while(|diag| diag.span.start < ownership_end)
+            .take_while(|diag| diag.span.start() < ownership_end)
             .count();
         let owned_end = self.lexer_diagnostic_cursor + owned_count;
 
@@ -438,7 +458,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_one_module(&mut self) -> Module {
         self.diagnostics.clear();
 
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name = match self.parse_module_header() {
             Ok(name) => name,
@@ -450,13 +470,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     reason = "module_header_parse_failed",
                     "failed to parse module header",
                 );
-                let span = Span::new(start, self.current_span().end);
+                let span = cover(start, self.current_span());
                 return Module {
                     name: None,
                     imports: Vec::new(),
                     body: Vec::new(),
                     span,
-                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end),
+                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end()),
                 };
             }
         };
@@ -519,12 +539,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 break;
             }
 
-            let pos_before = self.current_span().start;
+            let pos_before = self.current_span();
             trace!(
                 target: "mib_rs::parser",
                 component = "parser",
                 phase = "definitions",
-                offset = pos_before.0,
+                offset = pos_before.start().get(),
                 first = %self.peek().kind.display_name(),
                 second = %self.peek_nth(1).kind.display_name(),
                 "parsing definition",
@@ -534,7 +554,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 Err(diag) => {
                     self.record_parse_error(diag);
                     self.recover_to_definition();
-                    if self.current_span().start == pos_before {
+                    if self.current_span() == pos_before {
                         self.advance();
                     }
                 }
@@ -547,11 +567,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             self.record_parse_error(self.make_error("expected END".to_string()));
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         let ownership_end = if self.is_eof() {
-            self.eof_token.span.end
+            self.eof_token.span.end()
         } else {
-            self.last_end
+            self.last_span.end()
         };
         let diagnostics = self.collect_module_diagnostics(ownership_end);
 
@@ -598,7 +618,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut clauses = Vec::new();
 
         while !self.check(TokenKind::Semicolon) && !self.check(TokenKind::KwEnd) && !self.is_eof() {
-            let start = self.current_span().start;
+            let start = self.current_span();
             let mut symbols = Vec::new();
 
             // Collect symbols until FROM
@@ -629,7 +649,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let module_token = self.expect(TokenKind::UppercaseIdent)?;
             let from_module = self.make_ident(module_token);
 
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             clauses.push(ImportClause {
                 symbols,
                 from_module,
@@ -726,7 +746,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Definition parsers ----
 
     fn parse_object_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -781,8 +801,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
-        Ok(Definition::ObjectType(ObjectTypeDef {
+        let span = cover(start, oid.span);
+        Ok(Definition::ObjectType(Box::new(ObjectTypeDef {
             name,
             syntax: Some(syntax),
             units,
@@ -795,11 +815,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             defval,
             oid,
             span,
-        }))
+        })))
     }
 
     fn parse_module_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -826,12 +846,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // REVISION clauses (0+)
         let mut revisions = Vec::new();
         while self.check(TokenKind::KwRevision) {
-            let rev_start = self.current_span().start;
+            let rev_start = self.current_span();
             self.advance();
             let date = self.parse_quoted_string()?;
             self.expect(TokenKind::KwDescription)?;
             let rev_desc = self.parse_quoted_string()?;
-            let rev_span = Span::new(rev_start, rev_desc.span.end);
+            let rev_span = cover(rev_start, rev_desc.span);
             revisions.push(RevisionClause {
                 date,
                 description: rev_desc,
@@ -843,7 +863,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ModuleIdentity(ModuleIdentityDef {
             name,
             last_updated,
@@ -857,7 +877,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_object_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -879,7 +899,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ObjectIdentity(ObjectIdentityDef {
             name,
             status,
@@ -891,7 +911,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_notification_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -921,7 +941,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::NotificationType(NotificationTypeDef {
             name,
             objects,
@@ -934,7 +954,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_trap_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -970,7 +990,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let num_token = self.expect(TokenKind::Number)?;
         let trap_number = self.parse_u32(num_token.span, "trap number")?;
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(Definition::TrapType(TrapTypeDef {
             name,
             enterprise,
@@ -983,7 +1003,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_textual_convention(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -993,7 +1013,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
 
-        let span = Span::new(start, syntax.span.end);
+        let span = cover(start, syntax.span);
         Ok(Definition::TextualConvention(TextualConventionDef {
             name,
             display_hint,
@@ -1006,7 +1026,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_textual_convention_with_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1017,7 +1037,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
 
-        let span = Span::new(start, syntax.span.end);
+        let span = cover(start, syntax.span);
         Ok(Definition::TextualConvention(TextualConventionDef {
             name,
             display_hint,
@@ -1056,7 +1076,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_type_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1064,7 +1084,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let syntax = self.parse_type_syntax()?;
 
-        let span = Span::new(start, syntax.span().end);
+        let span = cover(start, syntax.span());
         Ok(Definition::TypeAssignment(TypeAssignmentDef {
             name,
             syntax,
@@ -1073,7 +1093,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_value_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1084,7 +1104,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ValueAssignment(ValueAssignmentDef {
             name,
             oid,
@@ -1142,10 +1162,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             QuotedString,
             Option<QuotedString>,
             OidAssignment,
-            Span,
+            SourceRange,
         ) -> Definition,
     {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1171,7 +1191,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(build(
             name,
             members,
@@ -1184,7 +1204,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_module_compliance(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1212,7 +1232,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ModuleCompliance(ModuleComplianceDef {
             name,
             status,
@@ -1225,7 +1245,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_compliance_module(&mut self) -> Result<ComplianceModule, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwModule)?;
 
         // Optional module name
@@ -1257,11 +1277,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             if self.check(TokenKind::KwGroup) {
                 compliances.push(Compliance::Group(self.parse_compliance_group()?));
             } else {
-                compliances.push(Compliance::Object(self.parse_compliance_object()?));
+                compliances.push(Compliance::Object(Box::new(
+                    self.parse_compliance_object()?,
+                )));
             }
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(ComplianceModule {
             module_name,
             module_oid,
@@ -1272,7 +1294,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwGroup)?;
 
         let group = self.parse_identifier_as_ident()?;
@@ -1280,7 +1302,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(ComplianceGroup {
             group,
             description,
@@ -1289,7 +1311,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_compliance_object(&mut self) -> Result<ComplianceObject, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwObject)?;
 
         let object = self.parse_identifier_as_ident()?;
@@ -1308,7 +1330,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(ComplianceObject {
             object,
             syntax,
@@ -1340,7 +1362,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_agent_capabilities(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1372,7 +1394,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::AgentCapabilities(AgentCapabilitiesDef {
             name,
             product_release,
@@ -1386,7 +1408,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_supports_module(&mut self) -> Result<SupportsModule, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwSupports)?;
 
         let module_name = self.parse_identifier_as_ident()?;
@@ -1408,7 +1430,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             variations.push(self.parse_variation_clause()?);
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(SupportsModule {
             module_name,
             module_oid,
@@ -1419,7 +1441,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_variation_clause(&mut self) -> Result<Variation, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwVariation)?;
 
         let name = self.parse_identifier_as_ident()?;
@@ -1453,7 +1475,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.expect(TokenKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(Variation {
             name,
             syntax,
@@ -1467,7 +1489,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_macro_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident(name_token);
@@ -1488,7 +1510,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             self.advance();
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(Definition::MacroDefinition(MacroDefinitionDef {
             name,
             span,
@@ -1498,7 +1520,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Clause parsers ----
 
     fn parse_access_clause(&mut self) -> Result<AccessClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let keyword = if self.check(TokenKind::KwMaxAccess) {
             self.advance();
@@ -1545,7 +1567,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             _ => return Err(self.make_error("expected access value".to_string())),
         };
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(AccessClause {
             keyword,
             value,
@@ -1554,7 +1576,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_status_clause(&mut self) -> Result<StatusClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwStatus)?;
 
         let value = match self.peek().kind {
@@ -1581,7 +1603,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             _ => return Err(self.make_error("expected status value".to_string())),
         };
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(StatusClause { value, span })
     }
 
@@ -1589,7 +1611,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         &mut self,
     ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), SpanDiagnostic> {
         if self.check(TokenKind::KwIndex) {
-            let start = self.current_span().start;
+            let start = self.current_span();
             self.advance();
             self.expect(TokenKind::LBrace)?;
 
@@ -1599,7 +1621,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     break;
                 }
 
-                let item_start = self.current_span().start;
+                let item_start = self.current_span();
                 let implied = if self.check(TokenKind::KwImplied) {
                     self.advance();
                     true
@@ -1615,13 +1637,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                         let string_token = self.advance();
                         Ident {
                             name: "OCTET STRING".to_string(),
-                            span: Span::new(obj_token.span.start, string_token.span.end),
+                            span: cover(obj_token.span, string_token.span),
                         }
                     } else {
                         self.make_ident(obj_token)
                     };
 
-                let item_span = Span::new(item_start, self.last_end);
+                let item_span = cover(item_start, self.last_span);
                 items.push(IndexItem {
                     implied,
                     object,
@@ -1636,18 +1658,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             self.expect(TokenKind::RBrace)?;
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             return Ok((Some(IndexClause { items, span }), None));
         }
 
         if self.check(TokenKind::KwAugments) {
-            let start = self.current_span().start;
+            let start = self.current_span();
             self.advance();
             self.expect(TokenKind::LBrace)?;
             let target_token = self.expect_identifier()?;
             let target = self.make_ident(target_token);
             self.expect(TokenKind::RBrace)?;
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             return Ok((None, Some(AugmentsClause { target, span })));
         }
 
@@ -1655,14 +1677,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_defval_clause(&mut self) -> Result<DefValClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::KwDefval)?;
         self.expect(TokenKind::LBrace)?;
 
         let value = self.parse_defval()?;
 
         self.expect(TokenKind::RBrace)?;
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(DefValClause { value, span })
     }
 
@@ -1723,21 +1745,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
             _ => {
                 // Unknown - skip to matching brace
-                let start = self.current_span().start;
+                let start = self.current_span();
                 // We're inside DEFVAL { ... }, just skip unknown content
                 Ok(DefVal::Unparsed {
-                    span: Span::new(start, self.current_span().end),
+                    span: cover(start, self.current_span()),
                 })
             }
         }
     }
 
     fn parse_defval_braced_content(&mut self) -> Result<DefVal, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         // Empty braces: BITS {}
         if self.check(TokenKind::RBrace) {
-            let span = Span::new(start, self.current_span().end);
+            let span = cover(start, self.current_span());
             self.advance(); // consume inner closing brace
             return Ok(DefVal::Bits {
                 labels: Vec::new(),
@@ -1775,13 +1797,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // Unknown content - skip
         self.skip_braced_content(true); // consume inner closing brace
         Ok(DefVal::Unparsed {
-            span: Span::new(start, self.current_span().end),
+            span: cover(start, self.current_span()),
         })
     }
 
     fn parse_defval_bits_labels(
         &mut self,
-        start: ByteOffset,
+        start: SourceRange,
         first: Ident,
     ) -> Result<DefVal, SpanDiagnostic> {
         let mut labels = vec![first];
@@ -1796,14 +1818,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         Ok(DefVal::Bits {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             labels,
         })
     }
 
     fn parse_defval_oid_with_first_ident(
         &mut self,
-        start: ByteOffset,
+        start: SourceRange,
         first: Ident,
     ) -> Result<DefVal, SpanDiagnostic> {
         // First component might be name(number)
@@ -1813,7 +1835,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let num = self.parse_u32(num_token.span, "OID component")?;
             self.expect(TokenKind::RParen)?;
             OidComponent::NamedNumber {
-                span: Span::new(first.span.start, self.last_end),
+                span: cover(first.span, self.last_span),
                 name: first,
                 num,
             }
@@ -1825,17 +1847,20 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.collect_defval_oid_components(&mut components)?;
 
         Ok(DefVal::ObjectIdentifier {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             components,
         })
     }
 
-    fn parse_defval_oid_components(&mut self, start: ByteOffset) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval_oid_components(
+        &mut self,
+        start: SourceRange,
+    ) -> Result<DefVal, SpanDiagnostic> {
         let mut components = Vec::new();
         self.collect_defval_oid_components(&mut components)?;
 
         Ok(DefVal::ObjectIdentifier {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             components,
         })
     }
@@ -1862,14 +1887,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Type syntax parsing ----
 
     fn parse_syntax_clause(&mut self) -> Result<SyntaxClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         let syntax = self.parse_type_syntax()?;
-        let span = Span::new(start, syntax.span().end);
+        let span = cover(start, syntax.span());
         Ok(SyntaxClause { syntax, span })
     }
 
     fn parse_type_syntax(&mut self) -> Result<TypeSyntax, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let base = match self.peek().kind {
             TokenKind::KwInteger => {
@@ -1877,7 +1902,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if self.check(TokenKind::LBrace) {
                     // INTEGER { enum-values }
                     let named_numbers = self.parse_named_numbers()?;
-                    let span = Span::new(start, self.last_end);
+                    let span = cover(start, self.last_span);
                     TypeSyntax::IntegerEnum {
                         base: None,
                         named_numbers,
@@ -1886,7 +1911,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 } else {
                     TypeSyntax::TypeRef(Ident {
                         name: "INTEGER".to_string(),
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     })
                 }
             }
@@ -1897,12 +1922,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     self.expect(TokenKind::LBrace)?;
                     let named_bits = self.parse_named_number_list()?;
                     self.expect(TokenKind::RBrace)?;
-                    let span = Span::new(start, self.last_end);
+                    let span = cover(start, self.last_span);
                     TypeSyntax::Bits { named_bits, span }
                 } else {
                     TypeSyntax::TypeRef(Ident {
                         name: "BITS".to_string(),
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     })
                 }
             }
@@ -1912,17 +1937,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 self.expect(TokenKind::KwString)?;
                 if self.check(TokenKind::LParen) {
                     let constraint = self.parse_constraint()?;
-                    let span = Span::new(start, constraint.span().end);
+                    let span = cover(start, constraint.span());
                     TypeSyntax::Constrained {
                         base: Box::new(TypeSyntax::OctetString {
-                            span: Span::new(start, self.last_end),
+                            span: cover(start, self.last_span),
                         }),
                         constraint,
                         span,
                     }
                 } else {
                     TypeSyntax::OctetString {
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 }
             }
@@ -1931,7 +1956,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 self.advance();
                 self.expect(TokenKind::KwIdentifier)?;
                 TypeSyntax::ObjectIdentifier {
-                    span: Span::new(start, self.last_end),
+                    span: cover(start, self.last_span),
                 }
             }
 
@@ -1944,7 +1969,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     let entry_type = self.make_ident(entry_token);
                     TypeSyntax::SequenceOf {
                         entry_type,
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 } else {
                     // SEQUENCE { fields }
@@ -1953,7 +1978,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     self.expect(TokenKind::RBrace)?;
                     TypeSyntax::Sequence {
                         fields,
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 }
             }
@@ -1965,7 +1990,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 self.expect(TokenKind::RBrace)?;
                 TypeSyntax::Choice {
                     alternatives,
-                    span: Span::new(start, self.last_end),
+                    span: cover(start, self.last_span),
                 }
             }
 
@@ -2015,7 +2040,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if self.check(TokenKind::LParen) {
                     // Type with constraint
                     let constraint = self.parse_constraint()?;
-                    let span = Span::new(start, constraint.span().end);
+                    let span = cover(start, constraint.span());
                     TypeSyntax::Constrained {
                         base: Box::new(TypeSyntax::TypeRef(ident)),
                         constraint,
@@ -2024,7 +2049,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 } else if self.check(TokenKind::LBrace) {
                     // Restricted integer enum: TypeName { val1(1), val2(2) }
                     let named_numbers = self.parse_named_numbers()?;
-                    let span = Span::new(start, self.last_end);
+                    let span = cover(start, self.last_span);
                     TypeSyntax::IntegerEnum {
                         base: Some(ident),
                         named_numbers,
@@ -2052,7 +2077,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     self.advance();
                 }
                 let underlying = self.parse_type_syntax()?;
-                let span = Span::new(start, underlying.span().end);
+                let span = cover(start, underlying.span());
                 TypeSyntax::Tagged {
                     underlying: Box::new(underlying),
                     span,
@@ -2067,7 +2092,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // Post-processing: check for trailing constraint on non-constrained base
         if self.check(TokenKind::LParen) && !matches!(base, TypeSyntax::Constrained { .. }) {
             let constraint = self.parse_constraint()?;
-            let span = Span::new(start, constraint.span().end);
+            let span = cover(start, constraint.span());
             return Ok(TypeSyntax::Constrained {
                 base: Box::new(base),
                 constraint,
@@ -2081,7 +2106,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Constraint parsing ----
 
     fn parse_constraint(&mut self) -> Result<Constraint, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::LParen)?;
 
         if self.check(TokenKind::KwSize) {
@@ -2091,13 +2116,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let ranges = self.parse_range_list()?;
             self.expect(TokenKind::RParen)?;
             self.expect(TokenKind::RParen)?;
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             Ok(Constraint::Size { ranges, span })
         } else {
             // Value range constraint
             let ranges = self.parse_range_list()?;
             self.expect(TokenKind::RParen)?;
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             Ok(Constraint::Range { ranges, span })
         }
     }
@@ -2106,7 +2131,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut ranges = Vec::new();
 
         loop {
-            let range_start = self.current_span().start;
+            let range_start = self.current_span();
             let min = self.parse_range_value()?;
 
             let max = if self.check(TokenKind::DotDot) {
@@ -2116,7 +2141,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 None
             };
 
-            let range_span = Span::new(range_start, self.last_end);
+            let range_span = cover(range_start, self.last_span);
             ranges.push(Range {
                 min,
                 max,
@@ -2208,7 +2233,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 break;
             }
 
-            let nn_start = self.current_span().start;
+            let nn_start = self.current_span();
             let label_token = self.expect_enum_label()?;
             let label = self.make_ident(label_token);
 
@@ -2224,7 +2249,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
             self.expect(TokenKind::RParen)?;
 
-            let nn_span = Span::new(nn_start, self.last_end);
+            let nn_span = cover(nn_start, self.last_span);
             items.push(NamedNumber {
                 name: label,
                 value,
@@ -2250,12 +2275,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut fields = Vec::new();
 
         while !self.check(TokenKind::RBrace) && !self.is_eof() {
-            let field_start = self.current_span().start;
+            let field_start = self.current_span();
             let name_token = self.expect_identifier()?;
             let name = self.make_ident(name_token);
 
             let syntax = self.parse_type_syntax()?;
-            let field_span = Span::new(field_start, syntax.span().end);
+            let field_span = cover(field_start, syntax.span());
 
             fields.push(SequenceField {
                 name,
@@ -2275,7 +2300,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- OID assignment parsing ----
 
     fn parse_oid_assignment(&mut self) -> Result<OidAssignment, SpanDiagnostic> {
-        let start = self.current_span().start;
+        let start = self.current_span();
         self.expect(TokenKind::LBrace)?;
 
         let mut components = Vec::new();
@@ -2286,7 +2311,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         self.expect(TokenKind::RBrace)?;
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(OidAssignment { components, span })
     }
 
@@ -2318,7 +2343,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                             let num_token = self.expect(TokenKind::Number)?;
                             let num = self.parse_u32(num_token.span, "OID component number")?;
                             self.expect(TokenKind::RParen)?;
-                            let span = Span::new(ident.span.start, self.last_end);
+                            let span = cover(ident.span, self.last_span);
                             return Ok(OidComponent::QualifiedNamedNumber {
                                 module_name: ident,
                                 name: name_ident,
@@ -2327,7 +2352,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                             });
                         }
 
-                        let span = Span::new(ident.span.start, name_ident.span.end);
+                        let span = cover(ident.span, name_ident.span);
                         return Ok(OidComponent::QualifiedName {
                             module_name: ident,
                             name: name_ident,
@@ -2342,7 +2367,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     let num_token = self.expect(TokenKind::Number)?;
                     let num = self.parse_u32(num_token.span, "OID component number")?;
                     self.expect(TokenKind::RParen)?;
-                    let span = Span::new(ident.span.start, self.last_end);
+                    let span = cover(ident.span, self.last_span);
                     return Ok(OidComponent::NamedNumber {
                         name: ident,
                         num,
@@ -2374,17 +2399,18 @@ fn strip_string_literal(s: &str) -> &str {
 /// This is the main entry point for parsing. A single source file may
 /// contain multiple concatenated MIB modules (common in RFC files).
 /// Each returned [`Module`] carries its own diagnostics.
-pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
+pub fn parse(document: &SourceDocument, diag_config: &DiagnosticConfig) -> Vec<Module> {
     let span = info_span!(
         target: "mib_rs::parser",
         "parse",
         component = "parser",
-        byte_count = source.len(),
+        source = document.label(),
+        byte_count = document.bytes().len(),
         reporting = ?diag_config.reporting,
     );
     let _guard = span.enter();
 
-    let mut parser = Parser::new(source, diag_config);
+    let mut parser = Parser::new(document, diag_config);
     let modules = parser.parse_modules();
     debug!(
         target: "mib_rs::parser",
@@ -2398,13 +2424,27 @@ pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{SourceOrigin, SourceSet};
+    use std::sync::Arc;
+
+    fn parse_with_config(input: &str, config: &DiagnosticConfig) -> Vec<Module> {
+        let mut sources = SourceSet::new();
+        let id = sources
+            .insert(
+                SourceOrigin::memory("parser-test"),
+                "parser-test",
+                Arc::from(input.as_bytes()),
+            )
+            .unwrap();
+        parse(sources.get(id).unwrap(), config)
+    }
 
     fn parse_str(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), &DiagnosticConfig::default())
+        parse_with_config(input, &DiagnosticConfig::default())
     }
 
     fn parse_strict(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), &DiagnosticConfig::verbose())
+        parse_with_config(input, &DiagnosticConfig::verbose())
     }
 
     #[test]
@@ -2412,6 +2452,7 @@ mod tests {
         let modules = parse_str("");
         assert_eq!(modules.len(), 1);
         assert!(modules[0].name.is_none());
+        assert_eq!(modules[0].span.byte_range(), 0..0);
     }
 
     #[test]
@@ -2436,7 +2477,8 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(11, 13));
+        assert_eq!(diagnostics[0].span.byte_range(), 11..13);
+        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
     }
 
     #[test]
@@ -2452,7 +2494,8 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(8, 10));
+        assert_eq!(diagnostics[0].span.byte_range(), 8..10);
+        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
     }
 
     #[test]
@@ -2467,7 +2510,8 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::UnexpectedCharacter)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(0, 1));
+        assert_eq!(diagnostics[0].span.byte_range(), 0..1);
+        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
     }
 
     #[test]
@@ -2483,7 +2527,8 @@ mod tests {
             .collect();
         assert_eq!(diagnostics.len(), 1);
         let at = input.find('@').unwrap();
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(at, at + 1));
+        assert_eq!(diagnostics[0].span.byte_range(), at..at + 1);
+        assert_eq!(diagnostics[0].span.source(), modules[0].span.source());
         assert!(
             modules[0]
                 .diagnostics
@@ -2515,9 +2560,10 @@ SECOND-MIB { 02 } DEFINITIONS ::= BEGIN\nEND\n";
         assert_eq!(diagnostics.len(), 1);
         let number_start = input.find("02").unwrap();
         assert_eq!(
-            diagnostics[0].span,
-            Span::from_usize_offsets(number_start, number_start + 2)
+            diagnostics[0].span.byte_range(),
+            number_start..number_start + 2
         );
+        assert_eq!(diagnostics[0].span.source(), modules[1].span.source());
     }
 
     #[test]
@@ -2945,9 +2991,13 @@ END
             Definition::ObjectType(d) => {
                 assert!(d.defval.is_some());
                 match &d.defval.as_ref().unwrap().value {
-                    DefVal::Bits { labels, .. } => {
+                    DefVal::Bits { labels, span } => {
                         assert_eq!(labels.len(), 1);
                         assert_eq!(labels[0].name, "flag1");
+                        let start = input.rfind("flag1 }").unwrap();
+                        let end = start + "flag1 ".len();
+                        assert_eq!(span.byte_range(), start..end);
+                        assert_eq!(&input[span.byte_range()], "flag1 ");
                     }
                     other => panic!("expected Bits DEFVAL, got {:?}", other),
                 }
@@ -3444,8 +3494,51 @@ END
         );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
-                DefVal::ObjectIdentifier { components, .. } => {
+                DefVal::ObjectIdentifier { components, span } => {
                     assert_eq!(components.len(), 4);
+                    let start = input.find("1 3 6 1 }").unwrap();
+                    let end = start + "1 3 6 1 ".len();
+                    assert_eq!(span.byte_range(), start..end);
+                    assert_eq!(&input[span.byte_range()], "1 3 6 1 ");
+                }
+                other => panic!("expected OID DEFVAL, got {:?}", other),
+            },
+            other => panic!("expected ObjectType, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defval_oid_first_ident_and_qualified_component_range() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+testObj OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "test"
+    DEFVAL { { iso(1) SNMPv2-SMI.enterprises 7 } }
+    ::= { test 1 }
+END
+"#;
+        let modules = parse_str(input);
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
+        match &modules[0].body[0] {
+            Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
+                DefVal::ObjectIdentifier { components, span } => {
+                    assert_eq!(components.len(), 3);
+                    assert!(matches!(components[0], OidComponent::NamedNumber { .. }));
+                    assert!(matches!(components[1], OidComponent::QualifiedName { .. }));
+                    let start = input.find("iso(1) SNMPv2-SMI.enterprises 7 }").unwrap();
+                    let end = start + "iso(1) SNMPv2-SMI.enterprises 7 ".len();
+                    assert_eq!(span.byte_range(), start..end);
+                    assert_eq!(
+                        &input[span.byte_range()],
+                        "iso(1) SNMPv2-SMI.enterprises 7 "
+                    );
                 }
                 other => panic!("expected OID DEFVAL, got {:?}", other),
             },
@@ -3561,7 +3654,7 @@ END\n";
 
         let mut ignored = DiagnosticConfig::verbose();
         ignored.ignore.push("invalid-hex-range".to_string());
-        let ignored_modules = parse(input.as_bytes(), &ignored);
+        let ignored_modules = parse_with_config(input, &ignored);
         assert!(
             ignored_modules[0]
                 .diagnostics

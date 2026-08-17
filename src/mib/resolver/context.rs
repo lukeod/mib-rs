@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
-use crate::source::SourceSet;
-use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness, Span};
+use crate::source::{SourceRange, SourceSet};
+use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness};
 
 use super::super::mib::Mib;
 use super::super::types::*;
@@ -210,35 +210,33 @@ impl ResolverContext {
 
     /// Emit a diagnostic if the config says to report it.
     ///
-    /// Resolves source location (line/column) from the module's line table
-    /// when `ir_mod` is provided. Diagnostics filtered out by the
-    /// [`DiagnosticConfig`] are silently dropped.
+    /// Resolves source location (line/column) from the range's retained source
+    /// document. Diagnostics filtered out by the [`DiagnosticConfig`] are
+    /// silently dropped.
     pub fn emit_diagnostic(
         &mut self,
         code: DiagCode,
         ir_mod: Option<IrModuleId>,
-        span: Span,
+        range: Option<SourceRange>,
         message: String,
     ) {
         if !self.diag_config.should_collect(code) {
             return;
         }
         let severity = self.diag_config.effective_severity(code);
-        let (module_name, line, col) = match ir_mod {
-            Some(id) => {
-                let m = &self.modules[id.index()];
-                let (l, c) = line_col_from_module(m, span);
-                (m.name.clone(), l, c)
-            }
-            None => (String::new(), 0, 0),
-        };
+        let module_name = ir_mod.map(|id| self.modules[id.index()].name.clone());
+        let location = range.and_then(|range| {
+            let source = self.mib.sources.get(range.source())?;
+            source.slice(range).ok()?;
+            source.line_column(range.start()).ok()
+        });
         self.mib.add_diagnostic(Diagnostic {
             severity,
             code,
             message,
-            module: Some(module_name).filter(|s| !s.is_empty()),
-            line: if line > 0 { Some(line) } else { None },
-            column: if col > 0 { Some(col) } else { None },
+            module: module_name.filter(|s| !s.is_empty()),
+            line: location.map(|(line, _)| line),
+            column: location.map(|(_, column)| column),
         });
     }
 
@@ -459,7 +457,7 @@ impl ResolverContext {
         from_module: impl AsRef<str>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: Option<SourceRange>,
     ) {
         let symbol = symbol.into();
         let importing_module = importing_module.into();
@@ -477,7 +475,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             code,
             Some(ir_mod),
-            span,
+            range,
             format!(
                 "unresolved import: {:?} from {:?} ({})",
                 symbol,
@@ -495,7 +493,7 @@ impl ResolverContext {
         module: impl Into<String>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         debug_assert!(matches!(
             reason,
@@ -528,7 +526,7 @@ impl ResolverContext {
                 ),
             )
         };
-        self.emit_diagnostic(code, Some(ir_mod), span, message);
+        self.emit_diagnostic(code, Some(ir_mod), Some(range), message);
     }
 
     /// Record an unresolved OID component and emit a diagnostic.
@@ -539,7 +537,7 @@ impl ResolverContext {
         module: impl Into<String>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let component = component.into();
         let module = module.into();
@@ -557,7 +555,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             code,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved OID: {:?} references unknown parent {:?}",
                 def_name.as_ref(),
@@ -572,7 +570,7 @@ impl ResolverContext {
         def_name: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let def_name = def_name.into();
         self.unresolved_oids.push(UnresolvedTracking {
@@ -584,7 +582,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::TrapNumberOverflow,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "TRAP-TYPE {:?} trap number overflows the snmpTraps sub-identifier",
                 def_name
@@ -599,7 +597,7 @@ impl ResolverContext {
         index_object: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let index_object = index_object.into();
         let module = module.into();
@@ -612,7 +610,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::IndexUnresolved,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved INDEX: {:?} references unknown object {:?}",
                 row.as_ref(),
@@ -628,7 +626,7 @@ impl ResolverContext {
         object: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let object = object.into();
         let module = module.into();
@@ -641,7 +639,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::ObjectsUnresolved,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved OBJECTS: {:?} references unknown object {:?}",
                 notification.as_ref(),
@@ -679,9 +677,96 @@ impl ResolverContext {
     }
 }
 
-fn line_col_from_module(m: &ir::Module, span: Span) -> (usize, usize) {
-    if span.is_synthetic() || m.line_table.is_empty() {
-        return (0, 0);
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::source::{ByteOffset, SourceOrigin, SourceRangeError};
+
+    use super::*;
+
+    fn insert_source(sources: &mut SourceSet, identity: &str, bytes: &[u8]) -> crate::SourceId {
+        sources
+            .insert(SourceOrigin::memory(identity), identity, Arc::from(bytes))
+            .unwrap()
     }
-    crate::types::line_col_from_table(&m.line_table, span.start)
+
+    fn context(sources: SourceSet) -> ResolverContext {
+        ResolverContext::new(
+            ResolverStrictness::Strict,
+            DiagnosticConfig::default(),
+            sources,
+        )
+    }
+
+    fn emit_test_diagnostic(ctx: &mut ResolverContext, range: Option<SourceRange>) {
+        ctx.emit_diagnostic(
+            DiagCode::TypeUnknown,
+            None,
+            range,
+            "test diagnostic".to_string(),
+        );
+    }
+
+    #[test]
+    fn diagnostic_uses_validated_retained_source_range() {
+        let mut sources = SourceSet::new();
+        let source_id = insert_source(&mut sources, "valid", b"first\nsecond");
+        let range = sources.get(source_id).unwrap().range(8..10).unwrap();
+        let mut ctx = context(sources);
+
+        emit_test_diagnostic(&mut ctx, Some(range));
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.line, Some(2));
+        assert_eq!(diagnostic.column, Some(3));
+    }
+
+    #[test]
+    fn diagnostic_without_source_range_has_no_location() {
+        let mut ctx = context(SourceSet::new());
+
+        emit_test_diagnostic(&mut ctx, None);
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.line, None);
+        assert_eq!(diagnostic.column, None);
+    }
+
+    #[test]
+    fn diagnostic_with_unretained_source_has_no_location() {
+        let mut retained_sources = SourceSet::new();
+        insert_source(&mut retained_sources, "retained", b"retained");
+
+        let mut foreign_sources = SourceSet::new();
+        insert_source(&mut foreign_sources, "foreign-first", b"first");
+        let foreign_id = insert_source(&mut foreign_sources, "foreign-second", b"second");
+        let foreign_range = foreign_sources
+            .get(foreign_id)
+            .unwrap()
+            .range(0..1)
+            .unwrap();
+        let mut ctx = context(retained_sources);
+
+        emit_test_diagnostic(&mut ctx, Some(foreign_range));
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.line, None);
+        assert_eq!(diagnostic.column, None);
+    }
+
+    #[test]
+    fn out_of_bounds_diagnostic_range_cannot_be_safely_constructed() {
+        let mut sources = SourceSet::new();
+        let source_id = insert_source(&mut sources, "short", b"abc");
+        let source = sources.get(source_id).unwrap();
+
+        assert_eq!(
+            source.range(0..4),
+            Err(SourceRangeError::OffsetOutOfBounds {
+                offset: ByteOffset::new(4),
+                len: ByteOffset::new(3),
+            })
+        );
+    }
 }

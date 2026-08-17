@@ -17,7 +17,8 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::trace;
 
-use crate::types::{DiagCode, Language, Span};
+use crate::source::SourceRange;
+use crate::types::{DiagCode, Language};
 
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::registration::group_imports;
@@ -73,10 +74,10 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         symbol: String,
         first_module: String,
         second_module: String,
-        span: Span,
+        range: SourceRange,
     }
     let mut order: Vec<String> = Vec::new();
-    let mut by_module: HashMap<String, Vec<(String, Span)>> = HashMap::new();
+    let mut by_module: HashMap<String, Vec<(String, SourceRange)>> = HashMap::new();
     let mut seen_symbols: HashMap<String, String> = HashMap::new(); // symbol -> first module
     let mut duplicates: Vec<DuplicateImport> = Vec::new();
     for imp in &m.imports {
@@ -86,7 +87,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
                     symbol: imp.symbol.clone(),
                     first_module: first_mod.clone(),
                     second_module: imp.module.clone(),
-                    span: imp.span,
+                    range: imp.range,
                 });
             }
             continue;
@@ -95,10 +96,10 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         match by_module.entry(imp.module.clone()) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 order.push(imp.module.clone());
-                e.insert(vec![(imp.symbol.clone(), imp.span)]);
+                e.insert(vec![(imp.symbol.clone(), imp.range)]);
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().push((imp.symbol.clone(), imp.span));
+                e.get_mut().push((imp.symbol.clone(), imp.range));
             }
         }
     }
@@ -106,7 +107,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
         ctx.emit_diagnostic(
             DiagCode::ImportDuplicate,
             Some(ir_mod),
-            dup.span,
+            Some(dup.range),
             format!(
                 "duplicate import: {:?} already imported from {:?}, ignoring import from {:?}",
                 dup.symbol, dup.first_module, dup.second_module,
@@ -117,7 +118,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
     for from_module in &order {
         let symbols = by_module.get(from_module).unwrap();
         // Filter out MACRO symbols.
-        let non_macro: Vec<&(String, Span)> = symbols
+        let non_macro: Vec<&(String, SourceRange)> = symbols
             .iter()
             .filter(|(name, _)| !is_macro_symbol(name))
             .collect();
@@ -240,14 +241,14 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
             resolution = "unresolved",
             "failed to resolve import group",
         );
-        for (name, span) in &non_macro {
+        for (name, range) in &non_macro {
             ctx.record_unresolved_import(
                 name,
                 &importing_module,
                 from_module,
                 UnresolvedReason::ModuleNotFound,
                 ir_mod,
-                *span,
+                Some(*range),
             );
         }
     }
@@ -255,7 +256,7 @@ fn resolve_imports_for_module(ctx: &mut ResolverContext, ir_mod: IrModuleId) {
 
 fn count_directly_resolved_symbols(
     ctx: &ResolverContext,
-    symbols: &[&(String, Span)],
+    symbols: &[&(String, SourceRange)],
     candidates: &[IrModuleId],
 ) -> usize {
     symbols
@@ -267,7 +268,7 @@ fn count_directly_resolved_symbols(
 fn find_candidate_with_all_symbols(
     ctx: &ResolverContext,
     candidates: &[IrModuleId],
-    symbols: &[&(String, Span)],
+    symbols: &[&(String, SourceRange)],
 ) -> Option<IrModuleId> {
     if candidates.is_empty() {
         return None;
@@ -325,7 +326,7 @@ fn try_import_forwarding(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     candidates: &[IrModuleId],
-    symbols: &[&(String, Span)],
+    symbols: &[&(String, SourceRange)],
 ) -> bool {
     for &cand in candidates {
         let mut forwarded: Vec<(String, IrModuleId)> = Vec::new();
@@ -418,9 +419,9 @@ fn try_partial_resolution(
     importing_module: &str,
     from_module: &str,
     candidates: &[IrModuleId],
-    symbols: &[&(String, Span)],
+    symbols: &[&(String, SourceRange)],
 ) {
-    for (name, span) in symbols {
+    for (name, range) in symbols {
         if let Some(source) = resolve_imported_symbol(ctx, candidates, name) {
             ctx.module_imports
                 .entry(ir_mod)
@@ -433,7 +434,7 @@ fn try_partial_resolution(
                 from_module,
                 UnresolvedReason::SymbolNotExported,
                 ir_mod,
-                *span,
+                Some(*range),
             );
         }
     }
@@ -487,7 +488,7 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
         if let Some(imports) = ctx.module_imports.get_mut(&mod_id) {
             imports.remove(&symbol);
         }
-        let (from_module, span) = original_import(ctx, mod_id, &symbol, start);
+        let (from_module, range) = original_import(ctx, mod_id, &symbol, start);
         let importing_module = ctx.modules[mod_id.index()].name.clone();
         ctx.record_unresolved_import(
             symbol,
@@ -495,7 +496,7 @@ pub(super) fn resolve_transitive_imports(ctx: &mut ResolverContext) {
             from_module,
             UnresolvedReason::SymbolNotExported,
             mod_id,
-            span,
+            range,
         );
     }
 }
@@ -505,13 +506,13 @@ fn original_import(
     importing_module: IrModuleId,
     symbol: &str,
     fallback: IrModuleId,
-) -> (String, Span) {
+) -> (String, Option<SourceRange>) {
     ctx.modules[importing_module.index()]
         .imports
         .iter()
         .find(|imp| imp.symbol == symbol)
-        .map(|imp| (imp.module.clone(), imp.span))
-        .unwrap_or_else(|| (ctx.modules[fallback.index()].name.clone(), Span::ZERO))
+        .map(|imp| (imp.module.clone(), Some(imp.range)))
+        .unwrap_or_else(|| (ctx.modules[fallback.index()].name.clone(), None))
 }
 
 fn resolve_ultimate_definer(
@@ -567,15 +568,15 @@ pub(super) fn check_unused_imports(ctx: &mut ResolverContext) {
             if !is_used {
                 diagnostics.push((
                     ir_id,
-                    imp.span,
+                    imp.range,
                     format!("unused import: {} from {}", imp.symbol, imp.module),
                 ));
             }
         }
     }
 
-    for (ir_id, span, message) in diagnostics {
-        ctx.emit_diagnostic(DiagCode::ImportUnused, Some(ir_id), span, message);
+    for (ir_id, range, message) in diagnostics {
+        ctx.emit_diagnostic(DiagCode::ImportUnused, Some(ir_id), Some(range), message);
     }
 }
 
@@ -599,7 +600,7 @@ pub(super) fn check_obsolete_imports(ctx: &mut ResolverContext) {
             if let Some(repl) = replacement {
                 diagnostics.push((
                     ir_id,
-                    imp.span,
+                    imp.range,
                     format!(
                         "obsolete import: {} from {} (use {} instead)",
                         imp.symbol, imp.module, repl
@@ -609,8 +610,8 @@ pub(super) fn check_obsolete_imports(ctx: &mut ResolverContext) {
         }
     }
 
-    for (ir_id, span, message) in diagnostics {
-        ctx.emit_diagnostic(DiagCode::ObsoleteImport, Some(ir_id), span, message);
+    for (ir_id, range, message) in diagnostics {
+        ctx.emit_diagnostic(DiagCode::ObsoleteImport, Some(ir_id), Some(range), message);
     }
 }
 

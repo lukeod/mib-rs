@@ -18,7 +18,8 @@ use tracing::{Level, enabled, trace};
 
 use crate::graph;
 use crate::ir;
-use crate::types::{BaseType, DiagCode, Language, Span};
+use crate::source::SourceRange;
+use crate::types::{BaseType, DiagCode, Language};
 
 use super::super::typedef::TypeData;
 use super::super::types::*;
@@ -161,8 +162,8 @@ fn create_user_types(ctx: &mut ResolverContext) {
             }
 
             let mut td = TypeData::new(typedef.name.clone());
-            td.span = typedef.span;
-            td.syntax_span = typedef.syntax_span;
+            td.range = Some(typedef.range);
+            td.syntax_range = Some(typedef.syntax_range);
             td.module = Some(resolved_id);
             td.base = base;
             td.status = typedef.status;
@@ -240,7 +241,7 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
                 .map(|nn| NamedValue {
                     label: nn.name.clone(),
                     value: nn.value,
-                    span: nn.span,
+                    range: nn.range,
                 })
                 .collect();
         }
@@ -250,7 +251,7 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
                 .map(|nb| NamedValue {
                     label: nb.name.clone(),
                     value: nb.position as i64,
-                    span: nb.span,
+                    range: nb.range,
                 })
                 .collect();
         }
@@ -290,7 +291,7 @@ pub(super) fn resolve_range(r: &ir::syntax::Range) -> Range {
     Range {
         min,
         max,
-        span: r.span,
+        range: Some(r.range),
     }
 }
 
@@ -316,7 +317,7 @@ fn resolve_type_bases(ctx: &mut ResolverContext) {
 /// Build a dependency graph of types and resolve parent references in topo order.
 fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> {
     // Build graph: type_id -> parent type name reference.
-    let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, Span)> = Vec::new();
+    let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, SourceRange)> = Vec::new();
 
     for (ir_id, m) in ctx.all_modules() {
         for def in &m.definitions {
@@ -339,7 +340,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> 
                     type_id,
                     ir_id,
                     ref_name.to_string(),
-                    typedef.syntax.span(),
+                    typedef.syntax.range(),
                 ));
             }
         }
@@ -411,7 +412,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> 
         .flatten()
         .filter_map(|sym| graph_symbol_to_type_id.get(sym).copied())
         .collect();
-    let parent_ref_by_type: HashMap<TypeId, (IrModuleId, String, Span)> = type_to_parent_ref
+    let parent_ref_by_type: HashMap<TypeId, (IrModuleId, String, SourceRange)> = type_to_parent_ref
         .iter()
         .map(|(tid, ir_id, ref_name, span)| (*tid, (*ir_id, ref_name.clone(), *span)))
         .collect();
@@ -699,7 +700,7 @@ fn resolve_effective_constraints(
     };
     if !parent_sizes.present
         && !own_sizes.is_empty()
-        && let Some(range) = base_constraint(*base, true, own_sizes[0].span)
+        && let Some(range) = base_constraint(*base, true)
     {
         parent_sizes = EffectiveConstraint {
             values: vec![range],
@@ -708,7 +709,7 @@ fn resolve_effective_constraints(
     }
     if !parent_ranges.present
         && !own_ranges.is_empty()
-        && let Some(range) = base_constraint(*base, false, own_ranges[0].span)
+        && let Some(range) = base_constraint(*base, false)
     {
         parent_ranges = EffectiveConstraint {
             values: vec![range],
@@ -723,7 +724,7 @@ fn resolve_effective_constraints(
     constraints
 }
 
-pub(super) fn base_constraint(base: BaseType, is_size: bool, span: Span) -> Option<Range> {
+pub(super) fn base_constraint(base: BaseType, is_size: bool) -> Option<Range> {
     let (min, max) = if is_size {
         (RangeBound::Unsigned(0), RangeBound::Unsigned(65535))
     } else {
@@ -743,7 +744,11 @@ pub(super) fn base_constraint(base: BaseType, is_size: bool, span: Span) -> Opti
             _ => return None,
         }
     };
-    Some(Range { min, max, span })
+    Some(Range {
+        min,
+        max,
+        range: None,
+    })
 }
 
 fn effective_constraints(own: &[Range], parent: &EffectiveConstraint) -> EffectiveConstraint {
@@ -801,7 +806,7 @@ pub(super) fn intersect_constraints(own: &[Range], parent: &[Range]) -> Vec<Rang
             result.push(Range {
                 min: max_range_bound(&child_min, &parent_alternative.min),
                 max: min_range_bound(&child_max, &parent_alternative.max),
-                span: child.span,
+                range: child.range,
             });
         }
     }
@@ -964,7 +969,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
             if !imported.contains(ref_name.as_str()) {
                 diagnostics.push((
                     ir_id,
-                    m.span,
+                    m.range,
                     format!(
                         "{} used but not imported from SNMPv2-SMI in {}",
                         ref_name, m.name
@@ -974,7 +979,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
         }
     }
 
-    for (ir_id, span, message) in diagnostics {
-        ctx.emit_diagnostic(DiagCode::BasetypeNotImported, Some(ir_id), span, message);
+    for (ir_id, range, message) in diagnostics {
+        ctx.emit_diagnostic(DiagCode::BasetypeNotImported, Some(ir_id), range, message);
     }
 }

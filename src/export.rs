@@ -1566,17 +1566,17 @@ mod tests {
             Range {
                 min: RangeBound::Signed(1),
                 max: RangeBound::Unsigned(1),
-                span: crate::types::Span::SYNTHETIC,
+                range: None,
             },
             Range {
                 min: RangeBound::Min,
                 max: RangeBound::Max,
-                span: crate::types::Span::SYNTHETIC,
+                range: None,
             },
             Range {
                 min: RangeBound::Raw("'0G'H".to_string()),
                 max: RangeBound::Raw("'1G'H".to_string()),
-                span: crate::types::Span::SYNTHETIC,
+                range: None,
             },
         ];
         let json = serde_json::to_value(

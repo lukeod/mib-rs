@@ -4,7 +4,10 @@
 //! used by the loading pipeline to filter and index MIB files without
 //! invoking the full parser.
 
+use std::sync::Arc;
+
 use crate::lexer::{Lexer, Token, TokenKind};
+use crate::source::{SourceOrigin, SourceSet};
 use crate::types::DiagnosticConfig;
 
 /// Scans raw MIB file bytes for module names.
@@ -21,7 +24,18 @@ use crate::types::DiagnosticConfig;
 /// in the order they appear.
 pub fn scan_module_names(content: &[u8]) -> Vec<String> {
     let config = DiagnosticConfig::silent();
-    let (tokens, _) = Lexer::new(content, &config).tokenize();
+    let mut sources = SourceSet::new();
+    let source_id = sources
+        .insert(
+            SourceOrigin::memory("module-name-scan"),
+            "module-name-scan",
+            Arc::from(content),
+        )
+        .expect("scanner input fits the compiler source coordinate space");
+    let document = sources
+        .get(source_id)
+        .expect("the scanner source was just inserted");
+    let (tokens, _) = Lexer::new(document, &config).tokenize();
     let mut names = Vec::new();
     let mut i = next_scan_token(&tokens, 0);
     let mut in_module = false;
@@ -101,9 +115,11 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
             break;
         }
 
-        let start = name_token.span.start.0 as usize;
-        let end = name_token.span.end.0 as usize;
-        if let Ok(name) = std::str::from_utf8(&content[start..end]) {
+        if let Ok(name) = std::str::from_utf8(
+            document
+                .slice(name_token.span)
+                .expect("scanner tokens belong to the scanner document"),
+        ) {
             names.push(name.to_string());
         }
         in_module = true;

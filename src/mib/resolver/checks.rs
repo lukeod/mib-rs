@@ -8,7 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
-use crate::types::{Access, AccessKeyword, BaseType, DiagCode, Kind, Language, Span, Status};
+use crate::source::SourceRange;
+use crate::types::{Access, AccessKeyword, BaseType, DiagCode, Kind, Language, Status};
 
 use super::super::types::{ModuleId, NodeId, ObjectId, RangeBound, TypeId};
 use super::context::{IrModuleId, ResolverContext};
@@ -16,7 +17,7 @@ use super::context::{IrModuleId, ResolverContext};
 struct Diag {
     code: DiagCode,
     ir_id: Option<IrModuleId>,
-    span: Span,
+    span: Option<SourceRange>,
     message: String,
 }
 
@@ -103,7 +104,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::MaxAccessInSMIv1,
                         ir_id: Some(ir_id),
-                        span: ot.span,
+                        span: Some(ot.range),
                         message: format!(
                             "{:?}: MAX-ACCESS is SMIv2 style, use ACCESS in SMIv1",
                             ot.name
@@ -114,7 +115,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::AccessWriteOnlySMIv1,
                         ir_id: Some(ir_id),
-                        span: ot.access_span,
+                        span: ot.access_range.or(Some(ot.range)),
                         message: format!("{}: write-only access is discouraged", ot.name),
                     });
                 }
@@ -123,7 +124,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::AccessInSMIv2,
                         ir_id: Some(ir_id),
-                        span: ot.span,
+                        span: Some(ot.range),
                         message: format!(
                             "{:?}: ACCESS is SMIv1 style, use MAX-ACCESS in SMIv2",
                             ot.name
@@ -134,7 +135,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::AccessWriteOnlySMIv2,
                         ir_id: Some(ir_id),
-                        span: ot.span,
+                        span: Some(ot.range),
                         message: format!("{:?}: write-only is no longer allowed in SMIv2", ot.name),
                     });
                 }
@@ -145,7 +146,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::AccessTableIllegal,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{:?}: table must be not-accessible", ot.name),
                 });
             }
@@ -153,7 +154,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::AccessRowIllegal,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{:?}: row must be not-accessible", ot.name),
                 });
             }
@@ -174,7 +175,7 @@ fn check_access_and_status(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::AccessCounterIllegal,
                         ir_id: Some(ir_id),
-                        span: ot.access_span,
+                        span: ot.access_range.or(Some(ot.range)),
                         message: format!(
                             "{}: counter must be read-only or accessible-for-notify",
                             ot.name
@@ -225,7 +226,7 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::ParentTable,
                             ir_id: Some(ir_id),
-                            span: ot.span,
+                            span: Some(ot.range),
                             message: format!("{}: table's parent must be a simple node", ot.name),
                         });
                     }
@@ -235,14 +236,14 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::ParentRow,
                             ir_id: Some(ir_id),
-                            span: ot.span,
+                            span: Some(ot.range),
                             message: format!("{}: row's parent must be a table", ot.name),
                         });
                     } else if node.arc != 1 {
                         diags.push(Diag {
                             code: DiagCode::RowSubidentifierOne,
                             ir_id: Some(ir_id),
-                            span: ot.span,
+                            span: Some(ot.range),
                             message: format!("{}: row must have sub-identifier 1", ot.name),
                         });
                     }
@@ -252,7 +253,7 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::ParentColumn,
                             ir_id: Some(ir_id),
-                            span: ot.span,
+                            span: Some(ot.range),
                             message: format!("{}: column's parent must be a row", ot.name),
                         });
                     }
@@ -261,7 +262,7 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::ParentScalar,
                         ir_id: Some(ir_id),
-                        span: ot.span,
+                        span: Some(ot.range),
                         message: format!("{}: scalar's parent must be a simple node", ot.name),
                     });
                 }
@@ -307,7 +308,7 @@ fn check_node_parent_kinds(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code,
                     ir_id: Some(ir_id),
-                    span: def.span(),
+                    span: Some(def.range()),
                     message: format!(
                         "{:?}: {}'s parent node must be a simple node",
                         def.name(),
@@ -355,7 +356,7 @@ fn check_table_row_naming(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TableNameTable,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{}: table name should end with 'Table'", ot.name),
                 });
             }
@@ -364,7 +365,7 @@ fn check_table_row_naming(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::RowNameEntry,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{}: row name should end with 'Entry'", ot.name),
                 });
             }
@@ -385,7 +386,7 @@ fn check_table_row_naming(ctx: &mut ResolverContext) {
                             diags.push(Diag {
                                 code: DiagCode::RowNameTableName,
                                 ir_id: Some(ir_id),
-                                span: ot.span,
+                                span: Some(ot.range),
                                 message: format!(
                                     "{}: row prefix {:?} does not match table prefix {:?}",
                                     ot.name, row_prefix, table_prefix
@@ -419,7 +420,7 @@ fn check_description_missing(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::DescriptionMissing,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{}: OBJECT-TYPE should have a DESCRIPTION clause", ot.name),
                 });
             }
@@ -440,15 +441,15 @@ fn check_integer_misuse(ctx: &mut ResolverContext) {
 
         for def in &m.definitions {
             let (name, syntax, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
-                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.range),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.range),
                 _ => continue,
             };
             if is_integer_keyword_syntax(syntax) {
                 diags.push(Diag {
                     code: DiagCode::IntegerInSMIv2,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{}: use Integer32 instead of INTEGER in SMIv2", name),
                 });
             }
@@ -482,7 +483,7 @@ fn check_trap_in_smiv2(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TrapInSMIv2,
                     ir_id: Some(ir_id),
-                    span: n.span,
+                    span: Some(n.range),
                     message: format!(
                         "{}: use NOTIFICATION-TYPE instead of TRAP-TYPE in SMIv2",
                         n.name
@@ -560,7 +561,7 @@ fn check_type_unreferenced(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TypeUnreferenced,
                     ir_id: Some(ir_id),
-                    span: td.span,
+                    span: Some(td.range),
                     message: format!("{}: type defined but never referenced", td.name),
                 });
             }
@@ -589,8 +590,8 @@ fn check_named_number_ordering(ctx: &mut ResolverContext) {
     for (ir_id, m) in ctx.user_modules() {
         for def in &m.definitions {
             let (name, syntax, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
-                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.range),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.range),
                 _ => continue,
             };
 
@@ -606,7 +607,7 @@ fn collect_ordering_diags(
     ir_id: IrModuleId,
     name: &str,
     syntax: &ir::TypeSyntax,
-    span: Span,
+    span: SourceRange,
 ) {
     match syntax {
         ir::TypeSyntax::IntegerEnum { named_numbers, .. } => {
@@ -615,7 +616,7 @@ fn collect_ordering_diags(
                     diags.push(Diag {
                         code: DiagCode::NamedNumbersAscending,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!("{}: named numbers should be in ascending order", name),
                     });
                     break;
@@ -628,7 +629,7 @@ fn collect_ordering_diags(
                     diags.push(Diag {
                         code: DiagCode::NamedNumbersAscending,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!("{}: bit positions should be in ascending order", name),
                     });
                     break;
@@ -669,14 +670,14 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                             }
                         })
                         .or_else(|| diagnostic_base_from_syntax(&td.syntax));
-                    collect_range_diags(&mut diags, ir_id, &td.name, &td.syntax, td.span, base);
+                    collect_range_diags(&mut diags, ir_id, &td.name, &td.syntax, td.range, base);
                     if let Some(typ) = typ {
                         collect_empty_intersection_diag(
                             &mut diags,
                             ir_id,
                             &td.name,
                             &td.syntax,
-                            td.syntax_span,
+                            td.syntax_range,
                             typ.effective_sizes(ctx.mib.types_slice()),
                             typ.effective_ranges(ctx.mib.types_slice()),
                         );
@@ -692,14 +693,14 @@ fn check_range_constraints(ctx: &mut ResolverContext) {
                             .type_(tid)
                             .effective_base(ctx.mib.types_slice())
                     });
-                    collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.span, base);
+                    collect_range_diags(&mut diags, ir_id, &ot.name, &ot.syntax, ot.range, base);
                     if let Some(object) = object {
                         collect_empty_intersection_diag(
                             &mut diags,
                             ir_id,
                             &ot.name,
                             &ot.syntax,
-                            ot.syntax_span,
+                            ot.syntax_range.unwrap_or(ot.range),
                             object.effective_sizes(),
                             object.effective_ranges(),
                         );
@@ -718,7 +719,7 @@ fn collect_empty_intersection_diag(
     ir_id: IrModuleId,
     name: &str,
     syntax: &ir::TypeSyntax,
-    span: Span,
+    span: SourceRange,
     effective_sizes: &[super::super::types::Range],
     effective_ranges: &[super::super::types::Range],
 ) {
@@ -734,7 +735,7 @@ fn collect_empty_intersection_diag(
         diags.push(Diag {
             code: DiagCode::ConstraintEmptyIntersection,
             ir_id: Some(ir_id),
-            span,
+            span: Some(span),
             message: format!(
                 "{name:?}: {label} constraint has an empty intersection with its parent"
             ),
@@ -772,7 +773,7 @@ fn collect_range_diags(
     ir_id: IrModuleId,
     name: &str,
     syntax: &ir::TypeSyntax,
-    span: Span,
+    span: SourceRange,
     base: Option<BaseType>,
 ) {
     if let ir::TypeSyntax::Constrained { constraint, .. } = syntax {
@@ -787,7 +788,7 @@ fn collect_range_diags(
                 diags.push(Diag {
                     code: DiagCode::SizeIllegal,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{name:?}: SIZE constraint illegal for non-octet-string type"),
                 });
                 return;
@@ -798,7 +799,7 @@ fn collect_range_diags(
                 diags.push(Diag {
                     code: DiagCode::RangeIllegal,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{name:?}: range constraint illegal for non-numerical type"),
                 });
                 return;
@@ -809,7 +810,7 @@ fn collect_range_diags(
                 diags.push(Diag {
                     code: DiagCode::CounterRangeIllegal,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{name:?}: range constraint illegal for Counter type"),
                 });
                 return;
@@ -820,7 +821,7 @@ fn collect_range_diags(
                 diags.push(Diag {
                     code: DiagCode::TimeticksRangeIllegal,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{name:?}: range constraint illegal for TimeTicks type"),
                 });
                 return;
@@ -841,7 +842,7 @@ fn collect_range_diags(
                 diags.push(Diag {
                     code: DiagCode::RangeExchanged,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!(
                         "{:?}: range {}..{} has exchanged limits",
                         name,
@@ -868,7 +869,7 @@ fn collect_range_diags(
                     diags.push(Diag {
                         code: DiagCode::RangeAscending,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!("{name:?}: ranges not in ascending order"),
                     });
                 }
@@ -877,7 +878,7 @@ fn collect_range_diags(
                     diags.push(Diag {
                         code: DiagCode::RangeOverlap,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!(
                             "{:?}: range {} overlaps with {}",
                             name,
@@ -895,7 +896,7 @@ fn collect_range_diags(
 fn check_range_bound(
     diags: &mut Vec<Diag>,
     ir_id: IrModuleId,
-    span: Span,
+    span: SourceRange,
     name: &str,
     value: &ir::RangeValue,
     bounds_min: &RangeBound,
@@ -917,7 +918,7 @@ fn check_range_bound(
         diags.push(Diag {
             code: DiagCode::RangeBounds,
             ir_id: Some(ir_id),
-            span,
+            span: Some(span),
             message: format!("{name:?}: range {which} bound {value} exceeds basetype"),
         });
     }
@@ -965,7 +966,7 @@ fn check_type_assignment_smiv2(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TypeAssignmentSMIv2,
                     ir_id: Some(ir_id),
-                    span: td.span,
+                    span: Some(td.range),
                     message: format!(
                         "{}: type assignment in SMIv2 should be a TEXTUAL-CONVENTION",
                         td.name
@@ -1006,7 +1007,7 @@ fn check_tc_nested(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::TCNested,
                         ir_id: Some(ir_id),
-                        span: td.span,
+                        span: Some(td.range),
                         message: format!(
                             "{}: textual convention derived from textual convention {}",
                             td.name,
@@ -1056,7 +1057,7 @@ fn check_opaque_smiv2(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::OpaqueSMIv2,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!("{}: Opaque type should not be used in SMIv2", ot.name),
                 });
             }
@@ -1098,7 +1099,7 @@ fn check_notification_reversibility(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::NotifIdTooLarge,
                     ir_id: Some(ir_id),
-                    span: n.span,
+                    span: Some(n.range),
                     message: format!(
                         "last sub-identifier of notification {} is too large",
                         n.name
@@ -1121,7 +1122,7 @@ fn check_notification_reversibility(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::NotifNotReversible,
                     ir_id: Some(ir_id),
-                    span: n.span,
+                    span: Some(n.range),
                     message: format!("notification {} is not reverse mappable", n.name),
                 });
             }
@@ -1177,7 +1178,7 @@ fn check_node_implicit(ctx: &mut ResolverContext) {
         diags.push(Diag {
             code: DiagCode::NodeImplicit,
             ir_id,
-            span: Span::ZERO,
+            span: None,
             message: format!("implicit node at OID {}", oid),
         });
     }
@@ -1191,7 +1192,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
 
     for (ir_id, m) in ctx.user_modules() {
         // Group definitions by lowercased name, excluding SEQUENCE types.
-        let mut by_lower: HashMap<String, Vec<(&str, Span)>> = HashMap::new();
+        let mut by_lower: HashMap<String, Vec<(&str, SourceRange)>> = HashMap::new();
         for def in &m.definitions {
             if let ir::Definition::TypeDef(td) = def
                 && matches!(td.syntax, ir::TypeSyntax::Sequence { .. })
@@ -1199,7 +1200,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
                 continue;
             }
             let name = def.name();
-            let span = def.span();
+            let span = def.range();
             by_lower
                 .entry(name.to_ascii_lowercase())
                 .or_default()
@@ -1212,7 +1213,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
             }
             // Deduplicate by exact name.
             let mut seen = HashSet::new();
-            let mut distinct: Vec<(&str, Span)> = Vec::new();
+            let mut distinct: Vec<(&str, SourceRange)> = Vec::new();
             for &(name, span) in defs {
                 if seen.insert(name) {
                     distinct.push((name, span));
@@ -1226,7 +1227,7 @@ fn check_identifier_case_match(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::IdentifierCaseMatch,
                     ir_id: Some(ir_id),
-                    span,
+                    span: Some(span),
                     message: format!("{}: differs from {} only in case", name, first_name),
                 });
             }
@@ -1243,18 +1244,18 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
     for (ir_id, m) in ctx.user_modules() {
         for def in &m.definitions {
             let (name, status, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.span),
-                ir::Definition::ObjectIdentity(oi) => (&oi.name, oi.status, oi.span),
+                ir::Definition::ObjectType(ot) => (&ot.name, ot.status, ot.range),
+                ir::Definition::ObjectIdentity(oi) => (&oi.name, oi.status, oi.range),
                 ir::Definition::Notification(n) if n.trap_info.is_none() => {
-                    (&n.name, n.status, n.span)
+                    (&n.name, n.status, n.range)
                 }
                 ir::Definition::TypeDef(td) if td.is_textual_convention => {
-                    (&td.name, td.status, td.span)
+                    (&td.name, td.status, td.range)
                 }
-                ir::Definition::ObjectGroup(g) => (&g.name, g.status, g.span),
-                ir::Definition::NotificationGroup(g) => (&g.name, g.status, g.span),
-                ir::Definition::ModuleCompliance(c) => (&c.name, c.status, c.span),
-                ir::Definition::AgentCapabilities(c) => (&c.name, c.status, c.span),
+                ir::Definition::ObjectGroup(g) => (&g.name, g.status, g.range),
+                ir::Definition::NotificationGroup(g) => (&g.name, g.status, g.range),
+                ir::Definition::ModuleCompliance(c) => (&c.name, c.status, c.range),
+                ir::Definition::AgentCapabilities(c) => (&c.name, c.status, c.range),
                 _ => continue,
             };
 
@@ -1266,7 +1267,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::StatusInvalidSMIv1,
                             ir_id: Some(ir_id),
-                            span,
+                            span: Some(span),
                             message: format!("{:?}: invalid status current in SMIv1", name),
                         });
                     }
@@ -1275,7 +1276,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::StatusInvalidSMIv2,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!("{:?}: invalid status {} in SMIv2", name, status),
                     });
                 }
@@ -1290,7 +1291,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::AccessInvalidSMIv1,
                         ir_id: Some(ir_id),
-                        span: ot.access_span,
+                        span: ot.access_range.or(Some(ot.range)),
                         message: format!("{}: invalid access {} in SMIv1", ot.name, ot.access),
                     });
                 }
@@ -1306,7 +1307,7 @@ fn check_status_per_version(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::ScalarNotCreatable,
                             ir_id: Some(ir_id),
-                            span: ot.span,
+                            span: Some(ot.range),
                             message: format!("{:?}: scalar must not be read-create", ot.name),
                         });
                     }
@@ -1380,7 +1381,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::SequenceNoColumn,
                         ir_id: Some(ir_id),
-                        span: field.span,
+                        span: Some(field.range),
                         message: format!(
                             "{}: SEQUENCE field {} has no matching column",
                             ot.name, field.name
@@ -1397,7 +1398,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::SequenceMissingColumn,
                         ir_id: Some(ir_id),
-                        span: ot.span,
+                        span: Some(ot.range),
                         message: format!(
                             "column {:?} of row {:?} is not in SEQUENCE {:?}",
                             child.name, ot.name, seq_name
@@ -1427,7 +1428,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::SequenceOrder,
                     ir_id: Some(ir_id),
-                    span: ot.span,
+                    span: Some(ot.range),
                     message: format!(
                         "{}: SEQUENCE field order does not match column order",
                         ot.name
@@ -1467,7 +1468,7 @@ fn check_sequence_fields(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::SequenceTypeMismatch,
                         ir_id: Some(ir_id),
-                        span: field.span,
+                        span: Some(field.range),
                         message: format!(
                             "SEQUENCE {:?} field {:?} type {:?} does not match column type {:?}",
                             seq_name, field.name, field_type_name, col_type_name
@@ -1534,7 +1535,7 @@ fn check_group_membership(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::GroupMembership,
                 ir_id: ir_mod,
-                span: obj.span(),
+                span: obj.range(),
                 message: format!("{:?} is not in any OBJECT-GROUP", obj.name()),
             });
         }
@@ -1562,7 +1563,7 @@ fn check_group_membership(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::GroupMembership,
                 ir_id: ir_mod,
-                span: notif.span(),
+                span: notif.range(),
                 message: format!("{:?} is not in any NOTIFICATION-GROUP", notif.name()),
             });
         }
@@ -1575,9 +1576,9 @@ fn check_group_member_locality(ctx: &mut ResolverContext) {
     for (ir_id, m) in ctx.all_modules() {
         let local = ctx.module_symbol_to_node.get(&ir_id);
         for def in &m.definitions {
-            let (span, members): (Span, &[String]) = match def {
-                ir::Definition::ObjectGroup(g) => (g.span, &g.objects),
-                ir::Definition::NotificationGroup(g) => (g.span, &g.notifications),
+            let (span, members): (SourceRange, &[String]) = match def {
+                ir::Definition::ObjectGroup(g) => (g.range, &g.objects),
+                ir::Definition::NotificationGroup(g) => (g.range, &g.notifications),
                 _ => continue,
             };
             for member in members {
@@ -1586,7 +1587,7 @@ fn check_group_member_locality(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::ComplianceMemberNotLocal,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!(
                             "group member {:?} is not defined in module {:?}",
                             member, m.name
@@ -1616,7 +1617,7 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::ComplianceGroupInvalid,
                             ir_id: Some(ir_id),
-                            span: comp.span,
+                            span: Some(comp.range),
                             message: format!(
                                 "group {:?} is both mandatory and optional in {:?}",
                                 g.group, comp.name
@@ -1627,7 +1628,7 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::OptionalGroupExists,
                             ir_id: Some(ir_id),
-                            span: comp.span,
+                            span: Some(comp.range),
                             message: format!(
                                 "duplicate optional group {:?} in {:?}",
                                 g.group, comp.name
@@ -1642,7 +1643,7 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::RefinementExists,
                             ir_id: Some(ir_id),
-                            span: comp.span,
+                            span: Some(comp.range),
                             message: format!(
                                 "duplicate refinement for {:?} in {:?}",
                                 o.object, comp.name
@@ -1672,7 +1673,7 @@ fn check_compliance_structure(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::RefinementNotListed,
                             ir_id: Some(ir_id),
-                            span: comp.span,
+                            span: Some(comp.range),
                             message: format!(
                                 "refined object {:?} not in any mandatory or optional group of {:?}",
                                 o.object, comp.name
@@ -1734,7 +1735,7 @@ fn check_module_identity_registration(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::ModuleIdentityReg,
                     ir_id: Some(ir_id),
-                    span: mi.span,
+                    span: Some(mi.range),
                     message: format!(
                         "{:?}: MODULE-IDENTITY OID too short for valid registration",
                         mi.name
@@ -1754,7 +1755,7 @@ fn check_module_identity_registration(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::ModuleIdentityReg,
                 ir_id: Some(ir_id),
-                span: mi.span,
+                span: Some(mi.range),
                 message: format!(
                     "{:?}: MODULE-IDENTITY registered under uncontrolled mgmt OID {}",
                     mi.name, oid
@@ -1797,7 +1798,7 @@ fn check_row_status_defaults(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::RowStatusAccess,
                 ir_id: Some(ir_mod),
-                span: obj.span(),
+                span: obj.range(),
                 message: format!(
                     "{:?}: RowStatus should have MAX-ACCESS read-create, has {}",
                     obj.name(),
@@ -1808,7 +1809,7 @@ fn check_row_status_defaults(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::RowStatusAccess,
                 ir_id: Some(ir_mod),
-                span: obj.span(),
+                span: obj.range(),
                 message: format!(
                     "{:?}: RowStatus should have ACCESS read-write, has {}",
                     obj.name(),
@@ -1827,7 +1828,7 @@ fn check_row_status_defaults(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::RowStatusDefault,
                 ir_id: Some(ir_mod),
-                span: obj.span(),
+                span: obj.range(),
                 message: format!(
                     "{:?}: RowStatus DEFVAL {}({}) is an action value, must be active(1), notInService(2), or notReady(3)",
                     obj.name(),
@@ -1873,7 +1874,7 @@ fn check_storage_type_defaults(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::StorageTypeDefault,
                 ir_id: Some(ir_mod),
-                span: obj.span(),
+                span: obj.range(),
                 message: format!(
                     "{:?}: StorageType DEFVAL {}({}) is not a valid default, must be other(1), volatile(2), or nonVolatile(3)",
                     obj.name(),
@@ -1908,7 +1909,7 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
 
     struct Check {
         ir_mod: Option<IrModuleId>,
-        span: Span,
+        span: Option<SourceRange>,
         name: String,
     }
     let mut checks = Vec::new();
@@ -1946,7 +1947,7 @@ fn check_taddress_tdomain(ctx: &mut ResolverContext) {
                 ir_mod: obj
                     .module()
                     .and_then(|m| ctx.resolved_to_module.get(&m).copied()),
-                span: obj.span(),
+                span: obj.range(),
                 name: obj.name().to_string(),
             });
         }
@@ -2043,7 +2044,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
     // Collect check info before emitting diagnostics.
     struct PairingCheck {
         ir_mod: Option<IrModuleId>,
-        span: Span,
+        span: Option<SourceRange>,
         name: String,
         check: PairingCheckKind,
     }
@@ -2084,7 +2085,7 @@ fn check_address_type_pairing(ctx: &mut ResolverContext, cfg: &AddressPairingCon
             .module()
             .and_then(|m| ctx.resolved_to_module.get(&m).copied());
         let obj_name = obj.name().to_string();
-        let obj_span = obj.span();
+        let obj_span = obj.range();
 
         // Check 1: address column without address-type sibling.
         if is_derived_from_type(ctx, type_id, addr_type_id) {
@@ -2318,7 +2319,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
     // Collect all info we need before mutating ctx.
     struct DefvalCheck {
         ir_mod: Option<IrModuleId>,
-        span: Span,
+        span: Option<SourceRange>,
         name: String,
         base: BaseType,
         dv_value: DefValValue,
@@ -2348,7 +2349,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
 
         checks.push(DefvalCheck {
             ir_mod,
-            span: obj.span(),
+            span: obj.range(),
             name: obj.name().to_string(),
             base,
             dv_value: dv.value.clone(),
@@ -2435,7 +2436,7 @@ fn check_defval_constraints(ctx: &mut ResolverContext) {
 fn check_defval_numeric(
     ctx: &mut ResolverContext,
     ir_mod: Option<IrModuleId>,
-    span: Span,
+    span: Option<SourceRange>,
     name: &str,
     v: i64,
     base: BaseType,
@@ -2495,7 +2496,7 @@ fn check_defval_numeric(
 fn check_defval_unsigned(
     ctx: &mut ResolverContext,
     ir_mod: Option<IrModuleId>,
-    span: Span,
+    span: Option<SourceRange>,
     name: &str,
     v: u64,
     base: BaseType,
@@ -2572,7 +2573,7 @@ fn check_index_constraints(ctx: &mut ResolverContext) {
         let lang = module_id
             .map(|m| ctx.mib.raw().module(m).language())
             .unwrap_or(Language::Unknown);
-        let span = obj.span();
+        let span = obj.range();
         let obj_name = obj.name().to_string();
 
         for entry in index {
@@ -2782,7 +2783,7 @@ fn check_index_oid_length(ctx: &mut ResolverContext, obj_id: ObjectId) {
         ctx.emit_diagnostic(
             DiagCode::IndexExceedsTooLarge,
             ir_mod,
-            obj.span(),
+            obj.range(),
             format!(
                 "{:?} index OID exceeds 128 sub-identifiers by {}",
                 obj.name(),
@@ -2858,8 +2859,8 @@ fn check_enum_subtyping(ctx: &mut ResolverContext) {
     for (ir_id, m) in ctx.user_modules() {
         for def in &m.definitions {
             let (name, syntax, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
-                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.range),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.range),
                 _ => continue,
             };
 
@@ -2876,7 +2877,7 @@ fn check_enum_subtyping_syntax(
     ir_id: IrModuleId,
     name: &str,
     syntax: &ir::TypeSyntax,
-    span: Span,
+    span: SourceRange,
 ) {
     let (base_name, named_numbers) = match syntax {
         ir::TypeSyntax::IntegerEnum {
@@ -2912,7 +2913,7 @@ fn check_enum_subtyping_syntax(
             diags.push(Diag {
                 code: diag_code,
                 ir_id: Some(ir_id),
-                span,
+                span: Some(span),
                 message: format!(
                     "{:?}: {} {}({}) not in parent type {:?}",
                     name, label, nn.name, nn.value, base_name
@@ -2937,7 +2938,7 @@ fn check_smiv2_identifier_hyphens(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::IdentifierHyphenSMIv2,
                     ir_id: Some(ir_id),
-                    span: def.span(),
+                    span: Some(def.range()),
                     message: format!(
                         "identifier {:?} should not contain hyphens in SMIv2 MIB",
                         def.name()
@@ -2960,8 +2961,8 @@ fn check_hyphen_in_label(ctx: &mut ResolverContext) {
 
         for def in &m.definitions {
             let (name, syntax, span) = match def {
-                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.span),
-                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.span),
+                ir::Definition::ObjectType(ot) => (&ot.name, &ot.syntax, ot.range),
+                ir::Definition::TypeDef(td) => (&td.name, &td.syntax, td.range),
                 _ => continue,
             };
             check_hyphen_in_syntax(&mut diags, ir_id, name, syntax, span);
@@ -2976,7 +2977,7 @@ fn check_hyphen_in_syntax(
     ir_id: IrModuleId,
     name: &str,
     syntax: &ir::TypeSyntax,
-    span: Span,
+    span: SourceRange,
 ) {
     match syntax {
         ir::TypeSyntax::IntegerEnum { named_numbers, .. } => {
@@ -2985,7 +2986,7 @@ fn check_hyphen_in_syntax(
                     diags.push(Diag {
                         code: DiagCode::HyphenInLabel,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!(
                             "{:?}: named number {:?} contains a hyphen",
                             name, nn.name
@@ -3000,7 +3001,7 @@ fn check_hyphen_in_syntax(
                     diags.push(Diag {
                         code: DiagCode::HyphenInLabel,
                         ir_id: Some(ir_id),
-                        span,
+                        span: Some(span),
                         message: format!("{:?}: BITS label {:?} contains a hyphen", name, nb.name),
                     });
                 }
@@ -3060,7 +3061,7 @@ fn check_format_hints(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::InvalidFormat,
                         ir_id: Some(ir_id),
-                        span: td.span,
+                        span: Some(td.range),
                         message: format!(
                             "{:?}: invalid DISPLAY-HINT {:?} for base type {:?}",
                             td.name, td.display_hint, base
@@ -3079,7 +3080,7 @@ fn check_format_hints(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TypeWithoutFormat,
                     ir_id: Some(ir_id),
-                    span: td.span,
+                    span: Some(td.range),
                     message: format!("{:?}: textual convention without DISPLAY-HINT", td.name),
                 });
             }
@@ -3112,7 +3113,7 @@ fn check_capabilities_status(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::StatusInvalidCapabilities,
                     ir_id: Some(ir_id),
-                    span: ac.span,
+                    span: Some(ac.range),
                     message: format!(
                         "{:?}: AGENT-CAPABILITIES STATUS must be current or obsolete, got {}",
                         ac.name, ac.status
@@ -3152,7 +3153,7 @@ fn check_type_status_usage(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TypeStatusDeprecated,
                     ir_id: ir_mod,
-                    span: obj.span(),
+                    span: obj.range(),
                     message: format!("type {:?} used by {:?} is deprecated", t.name(), obj.name()),
                 });
             }
@@ -3160,7 +3161,7 @@ fn check_type_status_usage(ctx: &mut ResolverContext) {
                 diags.push(Diag {
                     code: DiagCode::TypeStatusObsolete,
                     ir_id: ir_mod,
-                    span: obj.span(),
+                    span: obj.range(),
                     message: format!("type {:?} used by {:?} is obsolete", t.name(), obj.name()),
                 });
             }
@@ -3252,7 +3253,7 @@ fn check_compliance_group_status_inner(
         diags.push(Diag {
             code: DiagCode::ComplianceGroupStatus,
             ir_id: Some(ir_id),
-            span: comp.span,
+            span: Some(comp.range),
             message: format!(
                 "{} compliance {:?} references {} group {:?}",
                 comp.status, comp.name, gs, group_name
@@ -3289,7 +3290,7 @@ fn check_compliance_object_status_inner(
         diags.push(Diag {
             code: DiagCode::ComplianceObjectStatus,
             ir_id: Some(ir_id),
-            span: comp.span,
+            span: Some(comp.range),
             message: format!(
                 "{} compliance {:?} references {} object {:?}",
                 comp.status, comp.name, ms, object_name
@@ -3368,7 +3369,7 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::GroupUnreferenced,
                             ir_id: Some(ir_id),
-                            span: g.span,
+                            span: Some(g.range),
                             message: format!(
                                 "{:?}: OBJECT-GROUP not referenced in any compliance module",
                                 g.name
@@ -3380,7 +3381,7 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
                     diags.push(Diag {
                         code: DiagCode::GroupUnreferenced,
                         ir_id: Some(ir_id),
-                        span: g.span,
+                        span: Some(g.range),
                         message: format!(
                             "{:?}: NOTIFICATION-GROUP not referenced in any compliance module",
                             g.name
@@ -3417,7 +3418,7 @@ fn check_includes_groups(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::IncludesDuplicate,
                             ir_id: Some(ir_id),
-                            span: supports.span,
+                            span: Some(supports.range),
                             message: format!(
                                 "duplicate INCLUDES group {:?} in SUPPORTS {}",
                                 name, supports.module_name
@@ -3429,7 +3430,7 @@ fn check_includes_groups(ctx: &mut ResolverContext) {
                         diags.push(Diag {
                             code: DiagCode::IncludesUnresolved,
                             ir_id: Some(ir_id),
-                            span: supports.span,
+                            span: Some(supports.range),
                             message: format!(
                                 "INCLUDES group {:?} not found in module {:?}",
                                 name, supports.module_name
@@ -3464,7 +3465,7 @@ fn check_creation_requires(ctx: &mut ResolverContext) {
                             diags.push(Diag {
                                 code: DiagCode::CreationRequiresDuplicate,
                                 ir_id: Some(ir_id),
-                                span: variation.span,
+                                span: Some(variation.range),
                                 message: format!(
                                     "duplicate CREATION-REQUIRES {:?} in VARIATION {}",
                                     name, variation.name
@@ -3478,7 +3479,7 @@ fn check_creation_requires(ctx: &mut ResolverContext) {
                             diags.push(Diag {
                                 code: DiagCode::CreationRequiresUnresolved,
                                 ir_id: Some(ir_id),
-                                span: variation.span,
+                                span: Some(variation.range),
                                 message: format!(
                                     "CREATION-REQUIRES {:?} not found in module {:?}",
                                     name, supports.module_name
@@ -3520,7 +3521,7 @@ fn check_ip_address_deprecation(ctx: &mut ResolverContext) {
             diags.push(Diag {
                 code: DiagCode::IpAddressInSyntax,
                 ir_id: ir_mod,
-                span: obj.span(),
+                span: obj.range(),
                 message: format!(
                     "{:?}: IpAddress is deprecated, use InetAddress (RFC 4001)",
                     obj.name()

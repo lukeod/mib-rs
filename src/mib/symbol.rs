@@ -2,10 +2,11 @@
 //!
 //! [`Symbol`] is a tagged union of all possible definition kinds. It wraps
 //! the arena id for the definition and provides uniform access to common
-//! properties (name, span, module, node, status) without requiring the
+//! properties (name, range, module, node, status) without requiring the
 //! caller to know the definition kind upfront.
 
-use crate::types::{Span, Status};
+use crate::source::SourceRange;
+use crate::types::Status;
 
 use super::types::*;
 
@@ -47,17 +48,17 @@ impl Symbol {
         }
     }
 
-    /// Return the source span of this symbol's definition.
+    /// Return the source range of this symbol's definition, if present.
     #[must_use]
-    pub fn span(&self, mib: &super::mib::Mib) -> Span {
+    pub fn range(&self, mib: &super::mib::Mib) -> Option<SourceRange> {
         match self {
-            Symbol::Object(id) => mib.raw().object(*id).span(),
-            Symbol::Notification(id) => mib.raw().notification(*id).span(),
-            Symbol::Group(id) => mib.raw().group(*id).span(),
-            Symbol::Compliance(id) => mib.raw().compliance(*id).span(),
-            Symbol::Capability(id) => mib.raw().capability(*id).span(),
-            Symbol::Type(id) => mib.raw().type_(*id).span(),
-            Symbol::Node(id) => mib.tree.get(*id).span,
+            Symbol::Object(id) => mib.raw().object(*id).range(),
+            Symbol::Notification(id) => mib.raw().notification(*id).range(),
+            Symbol::Group(id) => mib.raw().group(*id).range(),
+            Symbol::Compliance(id) => mib.raw().compliance(*id).range(),
+            Symbol::Capability(id) => mib.raw().capability(*id).range(),
+            Symbol::Type(id) => mib.raw().type_(*id).range(),
+            Symbol::Node(id) => mib.tree.get(*id).range,
         }
     }
 

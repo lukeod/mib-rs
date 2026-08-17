@@ -10,7 +10,8 @@ pub mod token;
 pub use keyword::{is_forbidden_keyword, lookup_keyword};
 pub use token::{Token, TokenKind};
 
-use crate::types::{DiagCode, DiagnosticConfig, Span, SpanDiagnostic};
+use crate::source::{SourceDocument, SourceRange};
+use crate::types::{DiagCode, DiagnosticConfig, SpanDiagnostic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LexerState {
@@ -29,6 +30,7 @@ enum LexerState {
 /// Can be used as an [`Iterator`] (yields tokens until EOF) or consumed
 /// all at once via [`tokenize`](Lexer::tokenize).
 pub struct Lexer<'src, 'cfg> {
+    document: &'src SourceDocument,
     source: &'src [u8],
     pos: usize,
     state: LexerState,
@@ -38,10 +40,11 @@ pub struct Lexer<'src, 'cfg> {
 }
 
 impl<'src, 'cfg> Lexer<'src, 'cfg> {
-    /// Create a new lexer over the given source bytes.
-    pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
+    /// Create a new lexer over a retained source document.
+    pub fn new(document: &'src SourceDocument, diag_config: &'cfg DiagnosticConfig) -> Self {
         Lexer {
-            source,
+            document,
+            source: document.bytes(),
             pos: 0,
             state: LexerState::Normal,
             comment_start: 0,
@@ -131,8 +134,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         }
     }
 
-    fn span_from(&self, start: usize) -> Span {
-        Span::from_usize_offsets(start, self.pos)
+    fn span_from(&self, start: usize) -> SourceRange {
+        self.document
+            .range(start..self.pos)
+            .expect("lexer positions remain within the source document")
     }
 
     fn token(&self, kind: TokenKind, start: usize) -> Token {
@@ -150,7 +155,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         self.remaining().starts_with(b"--")
     }
 
-    fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
+    fn emit_diagnostic(&mut self, code: DiagCode, span: SourceRange, message: impl Into<String>) {
         if !self.diag_config.should_collect(code) {
             return;
         }
@@ -407,7 +412,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 self.advance();
                 for &(char_pos, b) in &content_chars {
                     if !b.is_ascii_hexdigit() {
-                        let span = Span::from_usize_offsets(char_pos, char_pos + 1);
+                        let span = self
+                            .document
+                            .range(char_pos..char_pos + 1)
+                            .expect("scanned character lies within the source document");
                         self.emit_diagnostic(
                             DiagCode::HexStringInvalidChar,
                             span,
@@ -429,7 +437,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 self.advance();
                 for &(char_pos, b) in &content_chars {
                     if !matches!(b, b'0' | b'1') {
-                        let span = Span::from_usize_offsets(char_pos, char_pos + 1);
+                        let span = self
+                            .document
+                            .range(char_pos..char_pos + 1)
+                            .expect("scanned character lies within the source document");
                         self.emit_diagnostic(
                             DiagCode::BinStringInvalidChar,
                             span,
@@ -480,7 +491,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 
     /// Consume comment text and return a Comment token.
-    /// Span covers from '--' through comment text, not including trailing newline.
+    /// The range covers from '--' through comment text, excluding the trailing newline.
     fn emit_comment(&mut self) -> Token {
         self.skip_comment_body(true);
         let tok = self.token(TokenKind::Comment, self.comment_start);
@@ -644,18 +655,33 @@ fn punctuation_kind(b: u8) -> Option<TokenKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{SourceOrigin, SourceSet};
+    use std::sync::Arc;
+
+    fn with_document<T>(input: &str, f: impl FnOnce(&SourceDocument) -> T) -> T {
+        let mut sources = SourceSet::new();
+        let id = sources
+            .insert(
+                SourceOrigin::memory("lexer-test"),
+                "lexer-test",
+                Arc::from(input.as_bytes()),
+            )
+            .unwrap();
+        f(sources.get(id).unwrap())
+    }
 
     fn tokenize(input: &str) -> Vec<Token> {
         let cfg = DiagnosticConfig::default();
-        let lexer = Lexer::new(input.as_bytes(), &cfg);
-        let (tokens, _) = lexer.tokenize();
-        tokens
+        with_document(input, |document| {
+            let lexer = Lexer::new(document, &cfg);
+            let (tokens, _) = lexer.tokenize();
+            tokens
+        })
     }
 
     fn tokenize_with_diags(input: &str) -> (Vec<Token>, Vec<SpanDiagnostic>) {
         let cfg = DiagnosticConfig::verbose();
-        let lexer = Lexer::new(input.as_bytes(), &cfg);
-        lexer.tokenize()
+        with_document(input, |document| Lexer::new(document, &cfg).tokenize())
     }
 
     fn kinds(tokens: &[Token]) -> Vec<TokenKind> {
@@ -663,13 +689,39 @@ mod tests {
     }
 
     fn text_of<'a>(source: &'a str, token: &Token) -> &'a str {
-        &source[token.span.start.0 as usize..token.span.end.0 as usize]
+        &source[token.span.byte_range()]
     }
 
     #[test]
     fn empty_input() {
         let tokens = tokenize("");
         assert_eq!(kinds(&tokens), vec![TokenKind::Eof]);
+        assert_eq!(tokens[0].span.byte_range(), 0..0);
+    }
+
+    #[test]
+    fn token_ranges_identify_the_lexed_document() {
+        let cfg = DiagnosticConfig::default();
+        let mut sources = SourceSet::new();
+        let first_id = sources
+            .insert(
+                SourceOrigin::memory("first"),
+                "first",
+                Arc::from(&b"first"[..]),
+            )
+            .unwrap();
+        let second_id = sources
+            .insert(
+                SourceOrigin::memory("second"),
+                "second",
+                Arc::from(&b"second"[..]),
+            )
+            .unwrap();
+
+        let (tokens, _) = Lexer::new(sources.get(second_id).unwrap(), &cfg).tokenize();
+        assert!(tokens.iter().all(|token| token.span.source() == second_id));
+        assert!(tokens.iter().all(|token| token.span.source() != first_id));
+        assert_eq!(tokens.last().unwrap().span.byte_range(), 6..6);
     }
 
     #[test]
@@ -1105,7 +1157,10 @@ mod tests {
             ]
         );
         assert_eq!(text_of(input, &tokens[1]), "END");
-        assert_eq!(tokens[1].span.start.0 as usize, input.rfind("END").unwrap());
+        assert_eq!(
+            tokens[1].span.start().as_usize(),
+            input.rfind("END").unwrap()
+        );
         assert!(diags.is_empty());
     }
 
@@ -1140,7 +1195,7 @@ mod tests {
                     TokenKind::Eof,
                 ]
             );
-            assert_eq!(tokens[1].span.start.0 as usize, input.rfind(';').unwrap());
+            assert_eq!(tokens[1].span.start().as_usize(), input.rfind(';').unwrap());
         }
     }
 
@@ -1236,9 +1291,9 @@ END
     fn span_offsets_correct() {
         let input = "abc 123";
         let tokens = tokenize(input);
-        assert_eq!(tokens[0].span.start.0, 0);
-        assert_eq!(tokens[0].span.end.0, 3);
-        assert_eq!(tokens[1].span.start.0, 4);
-        assert_eq!(tokens[1].span.end.0, 7);
+        assert_eq!(tokens[0].span.start().get(), 0);
+        assert_eq!(tokens[0].span.end().get(), 3);
+        assert_eq!(tokens[1].span.start().get(), 4);
+        assert_eq!(tokens[1].span.end().get(), 7);
     }
 }

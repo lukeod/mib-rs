@@ -232,8 +232,8 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::SourceOrigin;
-    use crate::types::{DiagCode, Severity, Span};
+    use crate::source::{SourceOrigin, SourceRange};
+    use crate::types::{DiagCode, Severity};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Barrier, Condvar, mpsc};
     use std::time::Duration;
@@ -274,17 +274,155 @@ mod tests {
     }
 
     fn module_document<'a>(mib: &'a Mib, name: &str) -> &'a SourceDocument {
-        let module_id = mib
-            .module_by_name(name)
+        let module = mib
+            .module(name)
             .unwrap_or_else(|| panic!("missing module {name}"));
-        let source_id = mib
-            .raw()
-            .module(module_id)
-            .source_id
-            .unwrap_or_else(|| panic!("module {name} has no source"));
-        mib.sources
-            .get(source_id)
-            .unwrap_or_else(|| panic!("source {} is not retained", source_id))
+        module
+            .source()
+            .unwrap_or_else(|| panic!("module {name} has no source"))
+    }
+
+    fn assert_retained_range(mib: &Mib, range: SourceRange) {
+        let source = mib
+            .source(range.source())
+            .unwrap_or_else(|| panic!("source {} is not retained", range.source()));
+        source
+            .slice(range)
+            .unwrap_or_else(|error| panic!("invalid retained range {range:?}: {error}"));
+    }
+
+    fn assert_optional_range(mib: &Mib, range: Option<SourceRange>) {
+        if let Some(range) = range {
+            assert_retained_range(mib, range);
+        }
+    }
+
+    fn assert_constraint_ranges(mib: &Mib, ranges: &[crate::mib::Range]) {
+        for range in ranges {
+            assert_optional_range(mib, range.range);
+        }
+    }
+
+    fn assert_named_value_ranges(mib: &Mib, values: &[crate::mib::NamedValue]) {
+        for value in values {
+            assert_retained_range(mib, value.range);
+        }
+    }
+
+    fn assert_syntax_constraint_ranges(mib: &Mib, syntax: &crate::mib::SyntaxConstraints) {
+        assert_constraint_ranges(mib, &syntax.sizes);
+        assert_constraint_ranges(mib, &syntax.declared_sizes);
+        assert_constraint_ranges(mib, &syntax.ranges);
+        assert_constraint_ranges(mib, &syntax.declared_ranges);
+        assert_named_value_ranges(mib, &syntax.enums);
+        assert_named_value_ranges(mib, &syntax.bits);
+    }
+
+    fn assert_entity_ranges(mib: &Mib, entity: &crate::mib::object::EntityData) {
+        assert_optional_range(mib, entity.range);
+        assert_optional_range(mib, entity.status_range);
+        assert_optional_range(mib, entity.description_range);
+        assert_optional_range(mib, entity.reference_range);
+        for oid_ref in &entity.oid_refs {
+            assert_retained_range(mib, oid_ref.range);
+        }
+    }
+
+    fn assert_all_resolved_ranges_are_retained(mib: &Mib) {
+        for module in &mib.modules {
+            if let Some(source_id) = module.source_id {
+                assert!(mib.source(source_id).is_some());
+            }
+            for revision in &module.revisions {
+                assert_retained_range(mib, revision.range);
+            }
+            for import in &module.imports {
+                for symbol in &import.symbols {
+                    assert_retained_range(mib, symbol.range);
+                }
+            }
+        }
+
+        assert_optional_range(mib, mib.tree.get(mib.tree.root()).range);
+        for node_id in mib.tree.all_nodes() {
+            assert_optional_range(mib, mib.tree.get(node_id).range);
+        }
+
+        for object in &mib.objects {
+            assert_entity_ranges(mib, &object.entity);
+            for range in [
+                object.syntax_range,
+                object.access_range,
+                object.units_range,
+                object.augments_range,
+                object.default_value_range,
+            ] {
+                assert_optional_range(mib, range);
+            }
+            for index in &object.index {
+                assert_retained_range(mib, index.range);
+            }
+            assert_constraint_ranges(mib, &object.sizes);
+            assert_constraint_ranges(mib, &object.ranges);
+            assert_constraint_ranges(mib, &object.declared_sizes);
+            assert_constraint_ranges(mib, &object.declared_ranges);
+            assert_named_value_ranges(mib, &object.enums);
+            assert_named_value_ranges(mib, &object.bits);
+        }
+
+        for typ in &mib.types {
+            assert_optional_range(mib, typ.range);
+            assert_optional_range(mib, typ.syntax_range);
+            assert_constraint_ranges(mib, &typ.sizes);
+            assert_constraint_ranges(mib, &typ.ranges);
+            assert_constraint_ranges(mib, &typ.effective_sizes);
+            assert_constraint_ranges(mib, &typ.effective_ranges);
+            assert_named_value_ranges(mib, &typ.enums);
+            assert_named_value_ranges(mib, &typ.bits);
+        }
+
+        for notification in &mib.notifications {
+            assert_entity_ranges(mib, &notification.entity);
+        }
+        for group in &mib.groups {
+            assert_entity_ranges(mib, &group.entity);
+        }
+        for compliance in &mib.compliances {
+            assert_entity_ranges(mib, &compliance.entity);
+            for module in &compliance.modules {
+                assert_retained_range(mib, module.range);
+                for group in &module.groups {
+                    assert_retained_range(mib, group.range);
+                }
+                for object in &module.objects {
+                    assert_retained_range(mib, object.range);
+                    if let Some(syntax) = &object.syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                    if let Some(syntax) = &object.write_syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                }
+            }
+        }
+        for capability in &mib.capabilities {
+            assert_entity_ranges(mib, &capability.entity);
+            for module in &capability.supports {
+                assert_retained_range(mib, module.range);
+                for variation in &module.object_variations {
+                    assert_retained_range(mib, variation.range);
+                    if let Some(syntax) = &variation.syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                    if let Some(syntax) = &variation.write_syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                }
+                for variation in &module.notification_variations {
+                    assert_retained_range(mib, variation.range);
+                }
+            }
+        }
     }
 
     fn cache_key(index: usize) -> CandidateKey {
@@ -427,6 +565,49 @@ SECOND-MIB DEFINITIONS ::= BEGIN END
     }
 
     #[test]
+    fn every_resolved_source_range_is_retained_and_in_bounds() {
+        const CAPABILITIES: &[u8] = br#"
+CAP-RANGE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    AGENT-CAPABILITIES FROM SNMPv2-CONF
+    enterprises FROM SNMPv2-SMI;
+
+capRange AGENT-CAPABILITIES
+    PRODUCT-RELEASE "1.0"
+    STATUS current
+    DESCRIPTION "Range invariant capability."
+    SUPPORTS EXAMPLE-FULL-MIB
+        INCLUDES { exScalarGroup }
+        VARIATION exDeviceName
+            ACCESS read-only
+            DESCRIPTION "Read-only."
+    ::= { enterprises 99990 }
+
+END
+"#;
+        let source = crate::source::memory_modules([
+            (
+                "EXAMPLE-FULL-MIB",
+                include_bytes!("../tests/data/example-full-mib.txt").as_slice(),
+            ),
+            ("CAP-RANGE-MIB", CAPABILITIES),
+        ]);
+        let mut diagnostics = DiagnosticConfig::verbose();
+        diagnostics.fail_at = Severity::Fatal;
+        let mib = Loader::new()
+            .source(source)
+            .modules(["EXAMPLE-FULL-MIB", "CAP-RANGE-MIB"])
+            .diagnostic_config(diagnostics)
+            .load()
+            .expect("range invariant fixture should load");
+
+        assert!(!mib.objects.is_empty());
+        assert!(!mib.compliances.is_empty());
+        assert!(!mib.capabilities.is_empty());
+        assert_all_resolved_ranges_are_retained(&mib);
+    }
+
+    #[test]
     fn distinct_documents_have_distinct_source_ids() {
         let mib = Loader::new()
             .source(crate::source::memory_modules([
@@ -540,7 +721,7 @@ SECOND-MIB DEFINITIONS ::= BEGIN END
 
     #[test]
     fn generated_records_have_no_source_id() {
-        let module = ir::Module::new("GENERATED-MIB".to_string(), Span::SYNTHETIC);
+        let module = ir::Module::new("GENERATED-MIB".to_string(), None);
         assert!(module.source_id.is_none());
 
         let resolved = crate::mib::module::ModuleData::new("GENERATED-MIB".to_string());
@@ -558,13 +739,15 @@ SECOND-MIB DEFINITIONS ::= BEGIN END
             module_document(&mib, "SNMPv2-SMI").origin(),
             &SourceOrigin::embedded("SNMPv2-SMI")
         );
-        assert!(
-            mib.r#type("INTEGER")
-                .expect("generated primitive")
-                .span()
-                .is_synthetic()
-        );
-        assert!(mib.root_node().span().is_synthetic());
+        let generated_types: Vec<_> = mib.types.iter().filter(|typ| typ.range.is_none()).collect();
+        assert!(!generated_types.is_empty());
+        for typ in generated_types {
+            assert!(typ.range.is_none());
+            assert!(typ.syntax_range.is_none());
+            assert!(typ.sizes.iter().all(|range| range.range.is_none()));
+            assert!(typ.ranges.iter().all(|range| range.range.is_none()));
+        }
+        assert!(mib.root_node().range().is_none());
     }
 
     #[test]
@@ -641,7 +824,7 @@ impl SourceRegistry {
 
         let document = self
             .sources
-            .insert(
+            .insert_shared(
                 candidate.origin().clone(),
                 candidate.label(),
                 Arc::clone(candidate.shared_bytes()),
@@ -978,7 +1161,7 @@ fn decode_modules(document: &SourceDocument, diag_config: &DiagnosticConfig) -> 
         return Vec::new();
     }
 
-    let ast_modules = parser::parse(content, diag_config);
+    let ast_modules = parser::parse(document, diag_config);
     debug!(
         target: "mib_rs::load",
         component = "load",
@@ -989,10 +1172,7 @@ fn decode_modules(document: &SourceDocument, diag_config: &DiagnosticConfig) -> 
 
     let mut modules = Vec::new();
     for am in ast_modules {
-        let mut module = lower::lower(am, content, diag_config);
-        module.source_path = source_label.to_string();
-        module.source_id = Some(document.id());
-        modules.push(module);
+        modules.push(lower::lower(am, document, diag_config));
     }
     debug!(
         target: "mib_rs::load",

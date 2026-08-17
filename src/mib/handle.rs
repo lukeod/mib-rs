@@ -12,7 +12,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ptr;
 
-use crate::types::{Access, BaseType, ByteOffset, Kind, Language, Span, Status};
+use crate::source::{SourceDocument, SourceId, SourceOrigin, SourceRange};
+use crate::types::{Access, BaseType, Kind, Language, Status};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -147,9 +148,9 @@ impl<'a> Node<'a> {
         self.data().kind()
     }
 
-    /// Return the source span of this node's definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this node's definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
     /// Return the node's full numeric OID.
@@ -309,9 +310,9 @@ impl<'a> Index<'a> {
         }
     }
 
-    /// Return the source span of this index component.
-    pub fn span(self) -> Span {
-        self.entry.span
+    /// Return the source range of this index component.
+    pub fn range(self) -> SourceRange {
+        self.entry.range
     }
 
     /// Return the underlying raw index entry.
@@ -336,9 +337,24 @@ impl<'a> Module<'a> {
         self.data().language()
     }
 
-    /// Return the path or synthetic source label this module was loaded from.
-    pub fn source_path(self) -> &'a str {
-        self.data().source_path()
+    /// Return the compilation-local source identity, if this module came from source text.
+    pub fn source_id(self) -> Option<SourceId> {
+        self.data().source_id()
+    }
+
+    /// Return the retained source document, if this module came from source text.
+    pub fn source(self) -> Option<&'a SourceDocument> {
+        self.source_id().and_then(|id| self.mib.source(id))
+    }
+
+    /// Return the source document's display label, if retained.
+    pub fn source_label(self) -> Option<&'a str> {
+        self.source().map(SourceDocument::label)
+    }
+
+    /// Return the source document's stable origin, if retained.
+    pub fn source_origin(self) -> Option<&'a SourceOrigin> {
+        self.source().map(SourceDocument::origin)
     }
 
     /// Return the ORGANIZATION clause text from MODULE-IDENTITY.
@@ -383,11 +399,6 @@ impl<'a> Module<'a> {
     /// Return the module's registered OID from its MODULE-IDENTITY, if any.
     pub fn oid(self) -> Option<&'a super::oid::Oid> {
         self.data().oid()
-    }
-
-    /// Convert a byte offset within this module's source to a line and column number.
-    pub fn line_col(self, offset: ByteOffset) -> (usize, usize) {
-        self.data().line_col(offset)
     }
 
     /// Return `true` if this module imports a symbol with the given name.
@@ -485,9 +496,9 @@ impl<'a> Object<'a> {
         self.data().name()
     }
 
-    /// Return the source span of this object definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this object definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
     /// Return the module that defines this object.
@@ -760,14 +771,14 @@ impl<'a> Type<'a> {
         self.data().name()
     }
 
-    /// Return the source span of this type definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this type definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
-    /// Return the source span of the SYNTAX clause.
-    pub fn syntax_span(self) -> Span {
-        self.data().syntax_span()
+    /// Return the source range of the SYNTAX clause, if present.
+    pub fn syntax_range(self) -> Option<SourceRange> {
+        self.data().syntax_range()
     }
 
     /// Return the module that defines this type.
@@ -931,9 +942,9 @@ macro_rules! entity_handle_impl {
                 self.data().name()
             }
 
-            /// Return the source span.
-            pub fn span(self) -> Span {
-                self.data().span()
+            /// Return the source range, if this definition came from source text.
+            pub fn range(self) -> Option<SourceRange> {
+                self.data().range()
             }
 
             /// Return the defining module.

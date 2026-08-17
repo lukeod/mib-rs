@@ -17,7 +17,8 @@ use std::collections::HashMap;
 
 use crate::ir;
 use crate::mib::Oid;
-use crate::types::{Access, BaseType, DiagCode, Kind, Span, Status};
+use crate::source::SourceRange;
+use crate::types::{Access, BaseType, DiagCode, Kind, Status};
 use tracing::trace;
 
 use super::super::capability::CapabilityData;
@@ -164,45 +165,45 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         // Extract all data from ot before mutable operations.
         let name = ot.name.clone();
-        let span = ot.span;
+        let range = ot.range;
         let status = ot.status;
         let description = ot.description.clone();
         let reference = ot.reference.clone();
-        let status_span = ot.status_span;
-        let desc_span = ot.description_span;
-        let ref_span = ot.reference_span;
+        let status_range = ot.status_range;
+        let description_range = ot.description_range;
+        let reference_range = ot.reference_range;
         let access = ot.access;
         let units = ot.units.clone();
-        let syntax_span = ot.syntax_span;
-        let access_span = ot.access_span;
-        let units_span = ot.units_span;
-        let augments_span = ot.augments_span;
-        let defval_span = ot.defval_span;
+        let syntax_range = ot.syntax_range;
+        let access_range = ot.access_range;
+        let units_range = ot.units_range;
+        let augments_range = ot.augments_range;
+        let default_value_range = ot.defval_range;
         let syntax = ot.syntax.clone();
         let defval = ot.defval.clone();
         let oid = ot.oid.clone();
 
         let mut obj = ObjectData::new(name.clone());
-        obj.entity.span = span;
+        obj.entity.range = Some(range);
         obj.entity.node = node_id;
         obj.entity.module = Some(resolved_mod);
         obj.entity.status = status;
         obj.entity.description = description;
         obj.entity.reference = reference;
-        obj.entity.status_span = status_span;
-        obj.entity.desc_span = desc_span;
-        obj.entity.ref_span = ref_span;
+        obj.entity.status_range = status_range;
+        obj.entity.description_range = description_range;
+        obj.entity.reference_range = reference_range;
         obj.access = access;
         obj.units = units;
-        obj.syntax_span = syntax_span;
-        obj.access_span = access_span;
-        obj.units_span = units_span;
-        obj.augments_span = augments_span;
-        obj.def_val_span = defval_span;
+        obj.syntax_range = syntax_range;
+        obj.access_range = access_range;
+        obj.units_range = units_range;
+        obj.augments_range = augments_range;
+        obj.default_value_range = default_value_range;
 
         // Resolve type reference.
         let obj_name = obj.entity.name.clone();
-        let resolved = resolve_type_syntax(ctx, ir_id, &syntax, &obj_name, obj.syntax_span);
+        let resolved = resolve_type_syntax(ctx, ir_id, &syntax, &obj_name, syntax.range());
         obj.typ = resolved.type_id;
         obj.enums = resolved.enums;
         obj.bits = resolved.bits;
@@ -215,7 +216,13 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         // Convert DEFVAL.
         if let Some(dv) = &defval {
-            obj.def_val = Some(convert_defval(ctx, ir_id, dv, obj.typ, obj.def_val_span));
+            obj.def_val = Some(convert_defval(
+                ctx,
+                ir_id,
+                dv,
+                obj.typ,
+                obj.default_value_range.unwrap_or(range),
+            ));
         }
 
         // Compute effective values from type chain.
@@ -272,7 +279,7 @@ fn resolve_type_syntax(
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
     referrer: &str,
-    span: Span,
+    range: SourceRange,
 ) -> SyntaxConstraints {
     let mut sc = SyntaxConstraints {
         type_id: None,
@@ -285,12 +292,12 @@ fn resolve_type_syntax(
         enums: Vec::new(),
         bits: Vec::new(),
     };
-    resolve_type_syntax_into(ctx, ir_mod, syntax, referrer, span, &mut sc);
+    resolve_type_syntax_into(ctx, ir_mod, syntax, referrer, range, &mut sc);
     if let Some(type_id) = sc.type_id {
         let typ = ctx.mib.raw().type_(type_id);
         let types = ctx.mib.types_slice();
         if sc.sizes_constrained {
-            let inherited = inline_parent_constraint(typ, types, true, span);
+            let inherited = inline_parent_constraint(typ, types, true);
             if inherited.present {
                 sc.sizes = if inherited.values.is_empty() {
                     Vec::new()
@@ -300,7 +307,7 @@ fn resolve_type_syntax(
             }
         }
         if sc.ranges_constrained {
-            let inherited = inline_parent_constraint(typ, types, false, span);
+            let inherited = inline_parent_constraint(typ, types, false);
             if inherited.present {
                 sc.ranges = if inherited.values.is_empty() {
                     Vec::new()
@@ -318,7 +325,7 @@ fn resolve_type_syntax_into(
     ir_mod: IrModuleId,
     syntax: &ir::TypeSyntax,
     referrer: &str,
-    span: Span,
+    range: SourceRange,
     sc: &mut SyntaxConstraints,
 ) {
     match syntax {
@@ -336,7 +343,7 @@ fn resolve_type_syntax_into(
                     &mod_name,
                     UnresolvedReason::TypeNotFound,
                     ir_mod,
-                    span,
+                    range,
                 );
             }
         }
@@ -359,36 +366,36 @@ fn resolve_type_syntax_into(
                         &mod_name,
                         UnresolvedReason::TypeNotFound,
                         ir_mod,
-                        span,
+                        range,
                     );
                 }
             } else {
-                sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "INTEGER");
+                sc.type_id = lookup_primitive_type(ctx, ir_mod, range, referrer, "INTEGER");
             }
             sc.enums = named_numbers
                 .iter()
                 .map(|nn| NamedValue {
                     label: nn.name.clone(),
                     value: nn.value,
-                    span: nn.span,
+                    range: nn.range,
                 })
                 .collect();
         }
         ir::TypeSyntax::Bits { named_bits, .. } => {
-            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "BITS");
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, range, referrer, "BITS");
             sc.bits = named_bits
                 .iter()
                 .map(|nb| NamedValue {
                     label: nb.name.clone(),
                     value: nb.position as i64,
-                    span: nb.span,
+                    range: nb.range,
                 })
                 .collect();
         }
         ir::TypeSyntax::Constrained {
             base, constraint, ..
         } => {
-            resolve_type_syntax_into(ctx, ir_mod, base, referrer, span, sc);
+            resolve_type_syntax_into(ctx, ir_mod, base, referrer, range, sc);
             match constraint {
                 ir::Constraint::Size { ranges, .. } => {
                     sc.sizes = ranges.iter().map(super::types::resolve_range).collect();
@@ -404,10 +411,10 @@ fn resolve_type_syntax_into(
         }
         ir::TypeSyntax::SequenceOf { .. } | ir::TypeSyntax::Sequence { .. } => {}
         ir::TypeSyntax::OctetString { .. } => {
-            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "OCTET STRING");
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, range, referrer, "OCTET STRING");
         }
         ir::TypeSyntax::ObjectIdentifier { .. } => {
-            sc.type_id = lookup_primitive_type(ctx, ir_mod, span, referrer, "OBJECT IDENTIFIER");
+            sc.type_id = lookup_primitive_type(ctx, ir_mod, range, referrer, "OBJECT IDENTIFIER");
         }
     }
 }
@@ -415,7 +422,7 @@ fn resolve_type_syntax_into(
 fn lookup_primitive_type(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
-    span: Span,
+    range: SourceRange,
     referrer: &str,
     name: &str,
 ) -> Option<TypeId> {
@@ -425,7 +432,7 @@ fn lookup_primitive_type(
     ctx.emit_diagnostic(
         DiagCode::PrimitiveTypeMissing,
         Some(ir_mod),
-        span,
+        Some(range),
         format!("primitive type {name} not found for {referrer:?}"),
     );
     None
@@ -440,7 +447,6 @@ fn inline_parent_constraint(
     typ: &TypeData,
     types: &[TypeData],
     is_size: bool,
-    span: Span,
 ) -> InlineParentConstraint {
     let (values, present) = if is_size {
         (
@@ -461,7 +467,7 @@ fn inline_parent_constraint(
     }
 
     let base = typ.effective_base(types);
-    match super::types::base_constraint(base, is_size, span) {
+    match super::types::base_constraint(base, is_size) {
         Some(range) => InlineParentConstraint {
             values: vec![range],
             present: true,
@@ -515,7 +521,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
     for mod_idx in 0..ctx.modules.len() {
         let ir_id = IrModuleId(mod_idx as u32);
 
-        let work: Vec<(String, Vec<ir::definition::IndexItem>, String, Span)> = ctx.modules
+        let work: Vec<(String, Vec<ir::definition::IndexItem>, String, SourceRange)> = ctx.modules
             [mod_idx]
             .definitions
             .iter()
@@ -527,14 +533,14 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                         ot.name.clone(),
                         ot.index.clone(),
                         ot.augments.clone(),
-                        ot.augments_span,
+                        ot.augments_range.unwrap_or(ot.range),
                     ))
                 }
                 _ => None,
             })
             .collect();
 
-        for (name, index_items, augments, augments_span) in work {
+        for (name, index_items, augments, augments_range) in work {
             if !index_items.is_empty() {
                 for item in &index_items {
                     if is_bare_type_index(&item.object) {
@@ -547,7 +553,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::IndexNotObject,
                             Some(ir_id),
-                            item.span,
+                            Some(item.range),
                             format!(
                                 "INDEX {:?} of {:?} resolves to a node without an object definition",
                                 item.object, name
@@ -560,7 +566,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                             &item.object,
                             &mod_name,
                             ir_id,
-                            item.span,
+                            item.range,
                         );
                     }
                 }
@@ -571,7 +577,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                     ctx.emit_diagnostic(
                         DiagCode::AugmentsNotObject,
                         Some(ir_id),
-                        augments_span,
+                        Some(augments_range),
                         format!(
                             "AUGMENTS target {:?} of {:?} resolves to a node without an object definition",
                             augments, name
@@ -585,7 +591,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                         &mod_name,
                         UnresolvedReason::AugmentsTargetNotFound,
                         ir_id,
-                        augments_span,
+                        augments_range,
                     );
                 }
             }
@@ -644,18 +650,18 @@ fn link_object_indexes(ctx: &mut ResolverContext) {
 fn check_augments_nesting(ctx: &mut ResolverContext) {
     for mod_idx in 0..ctx.modules.len() {
         let ir_id = IrModuleId(mod_idx as u32);
-        let work: Vec<(String, String, Span)> = ctx.modules[mod_idx]
+        let work: Vec<(String, String, SourceRange)> = ctx.modules[mod_idx]
             .definitions
             .iter()
             .filter_map(|def| match def {
                 ir::Definition::ObjectType(ot) if !ot.augments.is_empty() => {
-                    Some((ot.name.clone(), ot.augments.clone(), ot.span))
+                    Some((ot.name.clone(), ot.augments.clone(), ot.range))
                 }
                 _ => None,
             })
             .collect();
 
-        for (name, augments, span) in work {
+        for (name, augments, range) in work {
             let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_id, &name) else {
                 continue;
             };
@@ -666,7 +672,7 @@ fn check_augments_nesting(ctx: &mut ResolverContext) {
                 ctx.emit_diagnostic(
                     DiagCode::AugmentNested,
                     Some(ir_id),
-                    span,
+                    Some(range),
                     format!(
                         "{:?} augments {:?} which is not a base table row",
                         name, augments
@@ -702,7 +708,7 @@ fn resolve_index_entry(
             type_id,
             implied: item.implied,
             encoding: classify_index_encoding(base, item.implied, sizes),
-            span: item.span,
+            range: item.range,
         });
     }
 
@@ -714,7 +720,7 @@ fn resolve_index_entry(
             type_id: None,
             implied: item.implied,
             encoding: crate::types::IndexEncoding::Unknown,
-            span: item.span,
+            range: item.range,
         });
     };
     let o = ctx.mib.raw().object(obj_id);
@@ -733,7 +739,7 @@ fn resolve_index_entry(
         type_id,
         implied: item.implied,
         encoding,
-        span: item.span,
+        range: item.range,
     })
 }
 
@@ -808,14 +814,14 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         let resolved_mod = ctx.module_to_resolved[&ir_id];
 
         // Extract data before mutable operations.
-        let (name, span, objects, status, description, reference, trap_info, oid) = {
+        let (name, range, objects, status, description, reference, trap_info, oid) = {
             let notif = match &ctx.modules[mod_idx].definitions[def_idx] {
                 ir::Definition::Notification(n) => n,
                 _ => continue,
             };
             (
                 notif.name.clone(),
-                notif.span,
+                notif.range,
                 notif.objects.clone(),
                 notif.status,
                 notif.description.clone(),
@@ -835,7 +841,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
         };
 
         let mut nd = NotificationData::new(name.clone());
-        nd.entity.span = span;
+        nd.entity.range = Some(range);
         nd.entity.node = Some(node_id);
         nd.entity.module = Some(resolved_mod);
         nd.entity.status = status;
@@ -850,7 +856,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                     ctx.emit_diagnostic(
                         DiagCode::NotifObjectAccess,
                         Some(ir_id),
-                        span,
+                        Some(range),
                         format!(
                             "notification {:?} references {:?} which is not-accessible",
                             name, obj_name
@@ -862,7 +868,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                 ctx.emit_diagnostic(
                     DiagCode::NotifObjectNotObject,
                     Some(ir_id),
-                    span,
+                    Some(range),
                     format!(
                         "notification {:?} references {:?} which is not an object definition",
                         name, obj_name
@@ -870,7 +876,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
                 );
             } else {
                 let mod_name = ctx.modules[mod_idx].name.clone();
-                ctx.record_unresolved_notification_object(&name, obj_name, &mod_name, ir_id, span);
+                ctx.record_unresolved_notification_object(&name, obj_name, &mod_name, ir_id, range);
             }
         }
 
@@ -926,12 +932,12 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         let ir_id = IrModuleId(mod_idx as u32);
         let resolved_mod = ctx.module_to_resolved[&ir_id];
 
-        let (name, span, members, status, description, reference, oid, is_notif) = {
+        let (name, range, members, status, description, reference, oid, is_notif) = {
             let def = &ctx.modules[mod_idx].definitions[def_idx];
             match def {
                 ir::Definition::ObjectGroup(g) => (
                     g.name.clone(),
-                    g.span,
+                    g.range,
                     g.objects.clone(),
                     g.status,
                     g.description.clone(),
@@ -941,7 +947,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                 ),
                 ir::Definition::NotificationGroup(g) => (
                     g.name.clone(),
-                    g.span,
+                    g.range,
                     g.notifications.clone(),
                     g.status,
                     g.description.clone(),
@@ -963,7 +969,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         };
 
         let mut gd = GroupData::new(name.clone());
-        gd.entity.span = span;
+        gd.entity.range = Some(range);
         gd.entity.node = Some(node_id);
         gd.entity.module = Some(resolved_mod);
         gd.entity.status = status;
@@ -993,7 +999,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupNotificationsObject,
                             Some(ir_id),
-                            span,
+                            Some(range),
                             format!(
                                 "notification group {:?} includes object {:?}",
                                 name, member_name
@@ -1008,7 +1014,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupObjectsNotification,
                             Some(ir_id),
-                            span,
+                            Some(range),
                             format!(
                                 "object group {:?} includes notification {:?}",
                                 name, member_name
@@ -1024,7 +1030,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupNotAccessible,
                             Some(ir_id),
-                            span,
+                            Some(range),
                             format!(
                                 "object {:?} of group {:?} must not be not-accessible",
                                 member_name, name
@@ -1036,7 +1042,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                 check_group_member_status(
                     ctx,
                     ir_id,
-                    span,
+                    range,
                     status,
                     &name,
                     member_node,
@@ -1047,7 +1053,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                 ctx.emit_diagnostic(
                     DiagCode::GroupMemberUnresolved,
                     Some(ir_id),
-                    span,
+                    Some(range),
                     format!(
                         "group {:?} references unresolved member {:?}",
                         name, member_name
@@ -1060,7 +1066,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
             ctx.emit_diagnostic(
                 DiagCode::GroupMemberMixed,
                 Some(ir_id),
-                span,
+                Some(range),
                 format!(
                     "group {:?} contains scalars/columns and notifications",
                     name
@@ -1164,7 +1170,7 @@ fn lookup_notification_object(
 fn check_group_member_status(
     ctx: &mut ResolverContext,
     ir_id: IrModuleId,
-    span: Span,
+    range: SourceRange,
     group_status: Status,
     group_name: &str,
     member_node: NodeId,
@@ -1180,7 +1186,7 @@ fn check_group_member_status(
         ctx.emit_diagnostic(
             DiagCode::GroupObjectStatus,
             Some(ir_id),
-            span,
+            Some(range),
             format!(
                 "{} group {:?} includes {} member {:?}",
                 group_status, group_name, member_status, member_name
@@ -1207,19 +1213,19 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
             write_syntax: Option<ir::TypeSyntax>,
             min_access: Option<Access>,
             description: String,
-            span: Span,
+            range: SourceRange,
         }
         struct CompModData {
             module_name: String,
             mandatory_groups: Vec<String>,
             groups: Vec<ComplianceGroup>,
             objects: Vec<CompObjData>,
-            span: Span,
+            range: SourceRange,
         }
 
-        let (name, span, status, description, reference, oid, ir_mod_name, comp_mod_data): (
+        let (name, range, status, description, reference, oid, ir_mod_name, comp_mod_data): (
             String,
-            Span,
+            SourceRange,
             crate::types::Status,
             String,
             String,
@@ -1234,7 +1240,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
 
             (
                 mc.name.clone(),
-                mc.span,
+                mc.range,
                 mc.status,
                 mc.description.clone(),
                 mc.reference.clone(),
@@ -1254,7 +1260,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                             .map(|g| ComplianceGroup {
                                 group: g.group.clone(),
                                 description: g.description.clone(),
-                                span: g.span,
+                                range: g.range,
                             })
                             .collect();
                         let objects = cm
@@ -1266,7 +1272,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                                 write_syntax: o.write_syntax.clone(),
                                 min_access: o.min_access,
                                 description: o.description.clone(),
-                                span: o.span,
+                                range: o.range,
                             })
                             .collect();
                         CompModData {
@@ -1274,7 +1280,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                             mandatory_groups: cm.mandatory_groups.clone(),
                             groups,
                             objects,
-                            span: cm.span,
+                            range: cm.range,
                         }
                     })
                     .collect(),
@@ -1315,18 +1321,18 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                     let resolved_syntax = o
                         .syntax
                         .as_ref()
-                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.span));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.range));
                     let resolved_write_syntax = o
                         .write_syntax
                         .as_ref()
-                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.span));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &o.object, o.range));
                     ComplianceObject {
                         object: o.object.clone(),
                         syntax: resolved_syntax,
                         write_syntax: resolved_write_syntax,
                         min_access: o.min_access,
                         description: o.description.clone(),
-                        span: o.span,
+                        range: o.range,
                     }
                 })
                 .collect();
@@ -1336,7 +1342,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
                 mandatory_groups: cmd.mandatory_groups.clone(),
                 groups: cmd.groups.clone(),
                 objects,
-                span: cmd.span,
+                range: cmd.range,
             });
         }
 
@@ -1350,7 +1356,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         };
 
         let mut cd = ComplianceData::new(name.clone());
-        cd.entity.span = span;
+        cd.entity.range = Some(range);
         cd.entity.node = Some(node_id);
         cd.entity.module = Some(resolved_mod);
         cd.entity.status = status;
@@ -1389,7 +1395,7 @@ struct VariationData {
     write_syntax: Option<ir::TypeSyntax>,
     access: Option<Access>,
     description: String,
-    span: Span,
+    range: SourceRange,
     creation_requires: Vec<String>,
     defval: Option<ir::syntax::DefVal>,
 }
@@ -1410,12 +1416,12 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
             module_name: String,
             includes: Vec<String>,
             variations: Vec<VariationData>,
-            span: Span,
+            range: SourceRange,
         }
 
-        let (name, span, status, description, reference, product_release, oid, supports_data): (
+        let (name, range, status, description, reference, product_release, oid, supports_data): (
             String,
-            Span,
+            SourceRange,
             crate::types::Status,
             String,
             String,
@@ -1430,7 +1436,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
 
             (
                 ac.name.clone(),
-                ac.span,
+                ac.range,
                 ac.status,
                 ac.description.clone(),
                 ac.reference.clone(),
@@ -1450,12 +1456,12 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                                 write_syntax: v.write_syntax.clone(),
                                 access: v.access,
                                 description: v.description.clone(),
-                                span: v.span,
+                                range: v.range,
                                 creation_requires: v.creation_requires.clone(),
                                 defval: v.defval.clone(),
                             })
                             .collect(),
-                        span: sm.span,
+                        range: sm.range,
                     })
                     .collect(),
             )
@@ -1471,7 +1477,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         };
 
         let mut cap = CapabilityData::new(name.clone());
-        cap.entity.span = span;
+        cap.entity.range = Some(range);
         cap.entity.node = Some(node_id);
         cap.entity.module = Some(resolved_mod);
         cap.entity.status = status;
@@ -1494,7 +1500,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             crate::types::DiagCode::VariationAccessNotifOnly,
                             Some(ir_id),
-                            var.span,
+                            Some(var.range),
                             format!(
                                 "notification variation {:?} ACCESS should be not-implemented per RFC 2580",
                                 var.name
@@ -1505,24 +1511,24 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         notification: var.name.clone(),
                         access: var.access,
                         description: var.description.clone(),
-                        span: var.span,
+                        range: var.range,
                     });
                 } else {
                     let syntax = var
                         .syntax
                         .as_ref()
-                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.span));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.range));
                     let write_syntax = var
                         .write_syntax
                         .as_ref()
-                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.span));
+                        .map(|s| resolve_type_syntax(ctx, ir_id, s, &var.name, var.range));
                     // For defval, derive the type from the resolved syntax if
                     // present, otherwise fall back to None.
                     let defval_typ = syntax.as_ref().and_then(|sc| sc.type_id);
                     let def_val = var
                         .defval
                         .as_ref()
-                        .map(|dv| convert_defval(ctx, ir_id, dv, defval_typ, var.span));
+                        .map(|dv| convert_defval(ctx, ir_id, dv, defval_typ, var.range));
                     obj_vars.push(ObjectVariation {
                         object: var.name.clone(),
                         syntax,
@@ -1531,7 +1537,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         creation_requires: var.creation_requires.clone(),
                         def_val,
                         description: var.description.clone(),
-                        span: var.span,
+                        range: var.range,
                     });
                 }
             }
@@ -1541,7 +1547,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                 includes: sd.includes.clone(),
                 object_variations: obj_vars,
                 notification_variations: notif_vars,
-                span: sd.span,
+                range: sd.range,
             });
         }
 
@@ -1575,7 +1581,7 @@ fn convert_defval(
     ir_mod: IrModuleId,
     dv: &ir::syntax::DefVal,
     typ: Option<TypeId>,
-    defval_span: Span,
+    defval_range: SourceRange,
 ) -> DefVal {
     match dv {
         ir::syntax::DefVal::Integer(v) => DefVal::int(*v, v.to_string()),
@@ -1589,7 +1595,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedHexDefval,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("malformed hex DEFVAL {raw:?}"),
                 );
                 return DefVal::unset();
@@ -1605,7 +1611,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::MalformedBinDefval,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("binary DEFVAL contains non-binary digits: {raw:?}"),
                 );
             }
@@ -1642,7 +1648,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("DEFVAL OID reference {:?} could not be resolved", label),
                 );
             }
@@ -1667,7 +1673,7 @@ fn convert_defval(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("DEFVAL OID reference {:?} could not be resolved", name),
                 );
                 DefVal::unset()
@@ -1676,7 +1682,7 @@ fn convert_defval(
         ir::syntax::DefVal::OidValue { components } => {
             // Try to resolve the OID from components.
             let raw = format_oid_components(components);
-            if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, defval_span) {
+            if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, defval_range) {
                 DefVal::oid(oid, raw)
             } else {
                 DefVal::unset()
@@ -1690,13 +1696,13 @@ fn resolve_defval_oid(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
     components: &[ir::OidComponent],
-    defval_span: Span,
+    defval_range: SourceRange,
 ) -> Option<Oid> {
     if components.is_empty() {
         ctx.emit_diagnostic(
             crate::types::DiagCode::DefvalUnresolved,
             Some(ir_mod),
-            defval_span,
+            Some(defval_range),
             "DEFVAL OID value has no components".to_string(),
         );
         return None;
@@ -1713,7 +1719,7 @@ fn resolve_defval_oid(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("DEFVAL OID root {:?} could not be resolved", name),
                 );
                 return None;
@@ -1727,7 +1733,7 @@ fn resolve_defval_oid(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("DEFVAL OID root {:?} could not be resolved", name),
                 );
                 return None;
@@ -1737,7 +1743,7 @@ fn resolve_defval_oid(
             ctx.emit_diagnostic(
                 crate::types::DiagCode::DefvalUnresolved,
                 Some(ir_mod),
-                defval_span,
+                Some(defval_range),
                 "DEFVAL OID value has no named root component".to_string(),
             );
             return None;
@@ -1753,7 +1759,7 @@ fn resolve_defval_oid(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!("DEFVAL OID component {:?} has no numeric value", name),
                 );
                 return None;
@@ -1762,7 +1768,7 @@ fn resolve_defval_oid(
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
                     Some(ir_mod),
-                    defval_span,
+                    Some(defval_range),
                     format!(
                         "DEFVAL OID component {:?} has no numeric value",
                         format!("{module}.{name}")
@@ -1918,13 +1924,13 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
     let mut refs = Vec::new();
     for comp in &oid.components {
         match comp {
-            ir::OidComponent::Name { name, span }
-            | ir::OidComponent::NamedNumber { name, span, .. }
-            | ir::OidComponent::QualifiedName { name, span, .. }
-            | ir::OidComponent::QualifiedNamedNumber { name, span, .. } => {
+            ir::OidComponent::Name { name, range }
+            | ir::OidComponent::NamedNumber { name, range, .. }
+            | ir::OidComponent::QualifiedName { name, range, .. }
+            | ir::OidComponent::QualifiedNamedNumber { name, range, .. } => {
                 refs.push(OidRef {
                     name: name.clone(),
-                    span: *span,
+                    range: *range,
                 });
             }
             _ => {}
@@ -1935,54 +1941,63 @@ fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{hex_decode, resolve_defval_oid, resolve_type_syntax};
     use crate::ir::{self, Module};
     use crate::mib::resolver::context::{IrModuleId, ResolverContext};
     use crate::mib::typedef::TypeData;
-    use crate::types::{DiagCode, DiagnosticConfig, ResolverStrictness, Span};
+    use crate::source::{SourceOrigin, SourceRange, SourceSet};
+    use crate::types::{DiagCode, DiagnosticConfig, ResolverStrictness};
 
-    fn primitive_syntaxes() -> Vec<(&'static str, ir::TypeSyntax)> {
+    fn test_context(
+        strictness: ResolverStrictness,
+        config: DiagnosticConfig,
+    ) -> (ResolverContext, SourceRange) {
+        let mut sources = SourceSet::new();
+        let id = sources
+            .insert(
+                SourceOrigin::memory("resolver-test"),
+                "resolver-test",
+                Arc::from(&b"test"[..]),
+            )
+            .unwrap();
+        let range = sources.get(id).unwrap().range(0..4).unwrap();
+        (ResolverContext::new(strictness, config, sources), range)
+    }
+
+    fn primitive_syntaxes(range: SourceRange) -> Vec<(&'static str, ir::TypeSyntax)> {
         vec![
             (
                 "INTEGER",
                 ir::TypeSyntax::IntegerEnum {
                     base: String::new(),
                     named_numbers: Vec::new(),
-                    span: Span::default(),
+                    range,
                 },
             ),
             (
                 "BITS",
                 ir::TypeSyntax::Bits {
                     named_bits: Vec::new(),
-                    span: Span::default(),
+                    range,
                 },
             ),
-            (
-                "OCTET STRING",
-                ir::TypeSyntax::OctetString {
-                    span: Span::default(),
-                },
-            ),
+            ("OCTET STRING", ir::TypeSyntax::OctetString { range }),
             (
                 "OBJECT IDENTIFIER",
-                ir::TypeSyntax::ObjectIdentifier {
-                    span: Span::default(),
-                },
+                ir::TypeSyntax::ObjectIdentifier { range },
             ),
         ]
     }
 
     #[test]
     fn compound_oid_defval_marks_only_unqualified_imports_used() {
-        let mut ctx = ResolverContext::new(
-            ResolverStrictness::Permissive,
-            DiagnosticConfig::silent(),
-            crate::source::SourceSet::new(),
-        );
+        let (mut ctx, range) =
+            test_context(ResolverStrictness::Permissive, DiagnosticConfig::silent());
         ctx.modules = vec![
-            Module::new("IMPORTER-MIB".to_string(), Span::default()),
-            Module::new("SOURCE-MIB".to_string(), Span::default()),
+            Module::new("IMPORTER-MIB".to_string(), Some(range)),
+            Module::new("SOURCE-MIB".to_string(), Some(range)),
         ];
         let importer = IrModuleId(0);
         let source = IrModuleId(1);
@@ -2005,14 +2020,11 @@ mod tests {
         let unqualified = [
             ir::OidComponent::Name {
                 name: "importedRoot".to_string(),
-                span: Span::default(),
+                range,
             },
-            ir::OidComponent::Number {
-                value: 42,
-                span: Span::default(),
-            },
+            ir::OidComponent::Number { value: 42, range },
         ];
-        let oid = resolve_defval_oid(&mut ctx, importer, &unqualified, Span::default())
+        let oid = resolve_defval_oid(&mut ctx, importer, &unqualified, range)
             .expect("unqualified imported root should resolve");
         assert_eq!(oid.to_string(), "1.42");
         assert!(
@@ -2026,14 +2038,11 @@ mod tests {
             ir::OidComponent::QualifiedName {
                 module: "SOURCE-MIB".to_string(),
                 name: "importedRoot".to_string(),
-                span: Span::default(),
+                range,
             },
-            ir::OidComponent::Number {
-                value: 7,
-                span: Span::default(),
-            },
+            ir::OidComponent::Number { value: 7, range },
         ];
-        let oid = resolve_defval_oid(&mut ctx, importer, &qualified, Span::default())
+        let oid = resolve_defval_oid(&mut ctx, importer, &qualified, range)
             .expect("qualified root should resolve");
         assert_eq!(oid.to_string(), "1.7");
         assert!(!ctx.used_imports.contains_key(&importer));
@@ -2051,21 +2060,14 @@ mod tests {
 
     #[test]
     fn missing_primitive_types_emit_diagnostics() {
-        for (name, syntax) in primitive_syntaxes() {
-            let mut ctx = ResolverContext::new(
-                ResolverStrictness::Normal,
-                DiagnosticConfig::verbose(),
-                crate::source::SourceSet::new(),
-            );
-            ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
+        let (_, range) = test_context(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+        for (name, syntax) in primitive_syntaxes(range) {
+            let (mut ctx, range) =
+                test_context(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+            ctx.modules = vec![Module::new("TEST-MIB".to_string(), Some(range))];
 
-            let constraints = resolve_type_syntax(
-                &mut ctx,
-                IrModuleId(0),
-                &syntax,
-                "testObject",
-                Span::default(),
-            );
+            let constraints =
+                resolve_type_syntax(&mut ctx, IrModuleId(0), &syntax, "testObject", range);
 
             assert!(constraints.type_id.is_none(), "primitive {name}");
             let diagnostics = ctx.mib.diagnostics();
@@ -2082,14 +2084,11 @@ mod tests {
     #[test]
     fn primitive_type_lookup_preserves_resolved_type() {
         let ir_mod = IrModuleId(0);
-        let mut ctx = ResolverContext::new(
-            ResolverStrictness::Normal,
-            DiagnosticConfig::verbose(),
-            crate::source::SourceSet::new(),
-        );
-        ctx.modules = vec![Module::new("TEST-MIB".to_string(), Span::default())];
+        let (mut ctx, range) =
+            test_context(ResolverStrictness::Normal, DiagnosticConfig::verbose());
+        ctx.modules = vec![Module::new("TEST-MIB".to_string(), Some(range))];
 
-        for (name, _) in primitive_syntaxes() {
+        for (name, _) in primitive_syntaxes(range) {
             let type_id = ctx.mib.add_type(TypeData::new(name.to_string()));
             ctx.module_symbol_to_type
                 .entry(ir_mod)
@@ -2097,10 +2096,9 @@ mod tests {
                 .insert(name.to_string(), type_id);
         }
 
-        for (name, syntax) in primitive_syntaxes() {
+        for (name, syntax) in primitive_syntaxes(range) {
             let expected = ctx.module_symbol_to_type[&ir_mod][name];
-            let constraints =
-                resolve_type_syntax(&mut ctx, ir_mod, &syntax, "testObject", Span::default());
+            let constraints = resolve_type_syntax(&mut ctx, ir_mod, &syntax, "testObject", range);
 
             assert_eq!(constraints.type_id, Some(expected), "primitive {name}");
         }

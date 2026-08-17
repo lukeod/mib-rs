@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::mib::Oid;
-use crate::types::{Kind, Span, Status};
+use crate::source::SourceRange;
+use crate::types::{Kind, Status};
 
 use super::types::*;
 
@@ -31,7 +32,7 @@ pub struct NodeData {
     pub(crate) reference: String,
     pub(crate) status: Option<Status>,
     pub(crate) kind: Kind,
-    pub(crate) span: Span,
+    pub(crate) range: Option<SourceRange>,
     pub(crate) parent: Option<NodeId>,
     pub(crate) children: BTreeMap<u32, NodeId>,
     pub(crate) module: Option<ModuleId>,
@@ -52,7 +53,7 @@ impl NodeData {
             reference: String::new(),
             status: None,
             kind: Kind::Internal,
-            span: Span::SYNTHETIC,
+            range: None,
             parent,
             children: BTreeMap::new(),
             module: None,
@@ -101,9 +102,9 @@ impl NodeData {
         self.kind
     }
 
-    /// Return the source span of this node's definition.
-    pub fn span(&self) -> Span {
-        self.span
+    /// Return the source range of this node's definition, if present.
+    pub fn range(&self) -> Option<SourceRange> {
+        self.range
     }
 
     /// Return the parent node id, or `None` for the root.
@@ -232,8 +233,8 @@ impl OidTree {
         self.nodes[id.0 as usize].reference = reference;
     }
 
-    pub(crate) fn set_span(&mut self, id: NodeId, span: Span) {
-        self.nodes[id.0 as usize].span = span;
+    pub(crate) fn set_range(&mut self, id: NodeId, range: Option<SourceRange>) {
+        self.nodes[id.0 as usize].range = range;
     }
 
     pub(crate) fn set_module(&mut self, id: NodeId, module: ModuleId) {

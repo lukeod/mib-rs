@@ -3,18 +3,32 @@
 mod common;
 
 use mib_rs::types::{DiagCode, DiagnosticConfig, Severity};
+use mib_rs::{SourceOrigin, SourceSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use common::{collect_mib_files, corpus_dir};
+
+fn lower_source(source: &[u8], config: &DiagnosticConfig) -> Vec<mib_rs::ir::Module> {
+    let mut sources = SourceSet::new();
+    let id = sources
+        .insert(
+            SourceOrigin::memory("lower-corpus"),
+            "lower-corpus",
+            Arc::from(source),
+        )
+        .unwrap();
+    let document = sources.get(id).unwrap();
+    mib_rs::parser::parse(document, config)
+        .into_iter()
+        .map(|module| mib_rs::lower::lower(module, document, config))
+        .collect()
+}
 
 fn parse_and_lower(path: &Path) -> Vec<mib_rs::ir::Module> {
     let content = std::fs::read(path).unwrap();
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(&content, &config);
-    ast_modules
-        .into_iter()
-        .map(|m| mib_rs::lower::lower(m, &content, &config))
-        .collect()
+    lower_source(&content, &config)
 }
 
 #[test]
@@ -109,12 +123,14 @@ fn base_modules_have_definitions() {
     assert!(rfc1155.node("internet").is_some(), "missing internet OID");
 
     // Embedded foundations are parsed source, so their definitions retain
-    // source offsets instead of using synthetic spans.
-    assert_ne!(
-        smi.r#type("Counter32").expect("missing Counter32").span(),
-        mib_rs::types::Span::SYNTHETIC
+    // checked source ranges and their typed embedded origin.
+    assert!(
+        smi.r#type("Counter32")
+            .expect("missing Counter32")
+            .range()
+            .is_some()
     );
-    assert_eq!(smi.source_path(), "embedded:SNMPv2-SMI");
+    assert_eq!(smi.source_label(), Some("embedded:SNMPv2-SMI"));
 
     // RFC-1212 contains ordinary type assignments around its macro body;
     // RFC-1215 contains only its macro definition.
@@ -156,9 +172,9 @@ testMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
     assert_eq!(module.language, mib_rs::types::Language::SMIv2);
     assert_eq!(module.name, "TEST-MIB");
     // Should have flattened imports
@@ -182,9 +198,9 @@ brokenMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::SMIv2);
     assert_eq!(
@@ -222,9 +238,9 @@ hybridMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::Unknown);
     assert!(
@@ -277,9 +293,9 @@ secondIdentity MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::Unknown);
     assert_eq!(
@@ -320,9 +336,9 @@ root OBJECT-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::Unknown);
 }
@@ -335,13 +351,9 @@ fn lower_parsed_base_modules_use_explicit_language() {
     ] {
         let source = format!("{name} DEFINITIONS ::= BEGIN\nEND\n");
         let config = DiagnosticConfig::default();
-        let ast_modules = mib_rs::parser::parse(source.as_bytes(), &config);
-        assert_eq!(ast_modules.len(), 1);
-        let module = mib_rs::lower::lower(
-            ast_modules.into_iter().next().unwrap(),
-            source.as_bytes(),
-            &config,
-        );
+        let modules = lower_source(source.as_bytes(), &config);
+        assert_eq!(modules.len(), 1);
+        let module = modules.into_iter().next().unwrap();
 
         assert_eq!(module.language, expected, "base module {name}");
     }
@@ -366,9 +378,9 @@ testObject OBJECT-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
 }
 
@@ -388,8 +400,7 @@ Boundary ::= INTEGER {
 END
 "#;
     let config = DiagnosticConfig::verbose();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let module = lower_source(source, &config).into_iter().next().unwrap();
 
     let syntax = match &module.definitions[0] {
         mib_rs::ir::Definition::TypeDef(def) => &def.syntax,
@@ -443,12 +454,10 @@ END
 "#;
 
     let default_config = DiagnosticConfig::default();
-    let default_ast = mib_rs::parser::parse(source, &default_config);
-    let default_module = mib_rs::lower::lower(
-        default_ast.into_iter().next().unwrap(),
-        source,
-        &default_config,
-    );
+    let default_module = lower_source(source, &default_config)
+        .into_iter()
+        .next()
+        .unwrap();
     assert!(
         default_module
             .diagnostics
@@ -461,12 +470,10 @@ END
     overridden_config
         .overrides
         .insert(DiagCode::EnumValueOutOfRange, Severity::Minor);
-    let overridden_ast = mib_rs::parser::parse(source, &overridden_config);
-    let overridden_module = mib_rs::lower::lower(
-        overridden_ast.into_iter().next().unwrap(),
-        source,
-        &overridden_config,
-    );
+    let overridden_module = lower_source(source, &overridden_config)
+        .into_iter()
+        .next()
+        .unwrap();
     let diagnostic = overridden_module
         .diagnostics
         .iter()
@@ -478,12 +485,10 @@ END
     ignored_config
         .ignore
         .push("enum-value-out-of-range".to_string());
-    let ignored_ast = mib_rs::parser::parse(source, &ignored_config);
-    let ignored_module = mib_rs::lower::lower(
-        ignored_ast.into_iter().next().unwrap(),
-        source,
-        &ignored_config,
-    );
+    let ignored_module = lower_source(source, &ignored_config)
+        .into_iter()
+        .next()
+        .unwrap();
     assert!(
         ignored_module
             .diagnostics
@@ -505,8 +510,7 @@ testTrap TRAP-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let module = lower_source(source, &config).into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
     assert_eq!(module.definitions.len(), 1);

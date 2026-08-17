@@ -16,8 +16,8 @@ pub use definition::*;
 pub use oid::{OidAssignment, OidComponent};
 pub use syntax::*;
 
-use crate::source::SourceId;
-use crate::types::{Diagnostic, Language, Span};
+use crate::source::{SourceId, SourceRange};
+use crate::types::{Diagnostic, Language};
 
 /// A normalized, language-independent MIB module.
 ///
@@ -34,33 +34,27 @@ pub struct Module {
     pub imports: Vec<Import>,
     /// All definitions in source order.
     pub definitions: Vec<Definition>,
-    /// Span covering the entire module.
-    pub span: Span,
+    /// Range covering the entire module, or `None` for a generated module.
+    pub range: Option<SourceRange>,
     /// Diagnostics collected during lowering.
     pub diagnostics: Vec<Diagnostic>,
-    /// File path or synthetic source label this module was loaded from.
-    pub source_path: String,
-    /// Maps line numbers to byte offsets of line starts.
-    /// Entry i holds the byte offset where line i+1 begins (0-indexed).
-    pub line_table: Vec<usize>,
     /// Compilation-local source document containing this module.
     pub(crate) source_id: Option<SourceId>,
 }
 
 impl Module {
-    /// Creates a new module with the given name and span. All other fields
+    /// Creates a new module with the given name and source range. All other fields
     /// are initialized to empty/default values.
-    pub fn new(name: String, span: Span) -> Self {
+    pub fn new(name: String, range: Option<SourceRange>) -> Self {
+        let source_id = range.map(SourceRange::source);
         Module {
             name,
             language: Language::Unknown,
             imports: Vec::new(),
             definitions: Vec::new(),
-            span,
+            range,
             diagnostics: Vec::new(),
-            source_path: String::new(),
-            line_table: Vec::new(),
-            source_id: None,
+            source_id,
         }
     }
 
@@ -77,6 +71,6 @@ pub struct Import {
     pub module: String,
     /// Imported symbol name.
     pub symbol: String,
-    /// Source span of the symbol in the `IMPORTS` section.
-    pub span: Span,
+    /// Source range of the symbol in the `IMPORTS` section.
+    pub range: SourceRange,
 }

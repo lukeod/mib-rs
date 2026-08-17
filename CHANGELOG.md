@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
 - Include all collected diagnostics in deterministic order in `LoadError::DiagnosticThreshold`
 - Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, include deliberate adaptations, and allow configured sources to override them
+- Replace unqualified source spans, synthetic sentinels, copied module paths, and line tables with checked `SourceRange` values, retained `SourceDocument`s, and typed source origins
 
 ### Added
 

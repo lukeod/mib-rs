@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::mib::{Oid, ParseOidError};
-use crate::source::SourceSet;
+use crate::source::{SourceDocument, SourceId, SourceSet};
 use crate::types::{BaseType, Diagnostic, Kind, Severity};
 
 use super::capability::CapabilityData;
@@ -108,6 +108,11 @@ impl Mib {
     /// prefer the high-level borrowed handles instead.
     pub fn raw(&self) -> RawMib<'_> {
         RawMib::new(self)
+    }
+
+    /// Look up a retained source document by its compilation-local identity.
+    pub fn source(&self, id: SourceId) -> Option<&SourceDocument> {
+        self.sources.get(id)
     }
 
     pub(crate) fn node_data(&self, id: NodeId) -> &NodeData {
@@ -1292,10 +1297,25 @@ impl Oid {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::mib::module::ModuleData;
     use crate::mib::object::ObjectData;
     use crate::mib::typedef::TypeData;
+    use crate::source::SourceOrigin;
+
+    fn test_range(mib: &mut Mib) -> crate::source::SourceRange {
+        let id = mib
+            .sources
+            .insert(
+                SourceOrigin::memory("mib-test"),
+                "mib-test",
+                Arc::from(&b"test"[..]),
+            )
+            .unwrap();
+        mib.sources.get(id).unwrap().range(0..4).unwrap()
+    }
 
     fn make_mib_with_two_modules() -> Mib {
         let mut mib = Mib::new();
@@ -1349,6 +1369,7 @@ mod tests {
     #[test]
     fn available_symbols_with_imports() {
         let mut mib = Mib::new();
+        let range = test_range(&mut mib);
 
         // Source module with an object.
         let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
@@ -1366,7 +1387,7 @@ mod tests {
             module: "SOURCE-MIB".to_string(),
             symbols: vec![crate::mib::types::ImportSymbol {
                 name: "srcObj".to_string(),
-                span: crate::types::Span::SYNTHETIC,
+                range,
             }],
         });
         consumer
@@ -1383,6 +1404,7 @@ mod tests {
     #[test]
     fn available_symbols_dedup_own_over_import() {
         let mut mib = Mib::new();
+        let range = test_range(&mut mib);
 
         // Source module defines "shared".
         let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
@@ -1400,7 +1422,7 @@ mod tests {
             module: "SOURCE-MIB".to_string(),
             symbols: vec![crate::mib::types::ImportSymbol {
                 name: "shared".to_string(),
-                span: crate::types::Span::SYNTHETIC,
+                range,
             }],
         });
         consumer

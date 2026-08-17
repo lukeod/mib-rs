@@ -43,9 +43,9 @@
 //! exposes the arena-backed data records directly. This is useful
 //! when you need things the handle API doesn't surface:
 //!
-//! - Per-clause source spans on [`ObjectData`](raw::ObjectData)
-//!   and [`TypeData`](raw::TypeData) (e.g. `syntax_span`,
-//!   `access_span`) for pointing diagnostics at specific clauses.
+//! - Per-clause source ranges on [`ObjectData`](raw::ObjectData)
+//!   and [`TypeData`](raw::TypeData) (e.g. `syntax_range`,
+//!   `access_range`) for pointing diagnostics at specific clauses.
 //! - Import metadata ([`ModuleData::is_import_used`](raw::ModuleData::is_import_used),
 //!   [`ModuleData::import_source`](raw::ModuleData::import_source)).
 //! - Symbolic OID references via `oid_refs()` on entity records.
@@ -62,6 +62,10 @@
 //! editor integration where the user is mid-edit. Token types
 //! carry classification predicates for syntax highlighting.
 //! See the [`compile`] module and the `tokens` example.
+//!
+//! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
+//! parse-only and tooling consumers. Checked [`ByteOffset`] and [`SourceRange`]
+//! values identify byte coordinates without sentinel values.
 //!
 //! # Loading MIBs
 //!
@@ -326,7 +330,7 @@
 //! - **Always present:** Base modules are included in every loaded [`Mib`],
 //!   even if nothing imports them. Use [`Module::is_base`] to distinguish
 //!   them from user-supplied modules (e.g. when iterating modules).
-//! - **Source locations:** Definitions have ordinary source spans. Embedded
+//! - **Source locations:** Parsed definitions have source-qualified ranges. Embedded
 //!   modules use source labels such as `embedded:SNMPv2-SMI`; configured copies
 //!   retain the label reported by their source.
 //! - **Included in iteration:** [`Mib::modules`], [`Mib::objects`],
@@ -782,7 +786,10 @@ pub use mib::{
         OctetIndexKind, PartialRange, ReportedIndexViolation, VariableFraming,
     },
 };
-pub use source::{CandidateId, Source, SourceCandidate, SourceOrigin};
+pub use source::{
+    ByteOffset, CandidateId, Source, SourceCandidate, SourceDocument, SourceId, SourceOrigin,
+    SourceRange, SourceRangeError, SourceSet,
+};
 pub use token::{Token, TokenKind};
 pub use types::{
     Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,

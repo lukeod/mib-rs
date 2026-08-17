@@ -8,7 +8,8 @@
 use std::fmt;
 
 use crate::mib::Oid;
-use crate::types::{Access, BaseType, IndexEncoding, Span};
+use crate::source::SourceRange;
+use crate::types::{Access, BaseType, IndexEncoding};
 
 /// A single imported symbol with its source location.
 ///
@@ -19,7 +20,7 @@ pub struct ImportSymbol {
     /// The symbol name as it appears in the IMPORTS clause.
     pub name: String,
     /// Source location of this symbol reference.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A group of symbols imported from a single source module.
@@ -126,7 +127,7 @@ pub struct Range {
     /// Upper bound (inclusive). Equal to `min` for single-value ranges.
     pub max: RangeBound,
     /// Source location of this constraint.
-    pub span: Span,
+    pub range: Option<SourceRange>,
 }
 
 impl Range {
@@ -179,7 +180,7 @@ pub struct NamedValue {
     /// The integer value associated with this label.
     pub value: i64,
     /// Source location of this named value.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Finds a named value by label in a slice.
@@ -198,7 +199,7 @@ pub struct Revision {
     /// Free-text description of what changed.
     pub description: String,
     /// Source location of this revision clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An index component from a table row's INDEX clause.
@@ -220,7 +221,7 @@ pub struct IndexEntry {
     /// Wire encoding inferred from the index object's type.
     pub encoding: IndexEncoding,
     /// Source location of this index entry.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Classify the index encoding from the object's resolved base type and size constraints.
@@ -478,7 +479,7 @@ pub struct ComplianceModule {
     /// Optional OBJECT refinements.
     pub objects: Vec<ComplianceObject>,
     /// Source location of this MODULE clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A GROUP clause within a [`ComplianceModule`].
@@ -492,7 +493,7 @@ pub struct ComplianceGroup {
     /// Description of when this group is required.
     pub description: String,
     /// Source location of this GROUP clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An OBJECT refinement within a [`ComplianceModule`].
@@ -512,7 +513,7 @@ pub struct ComplianceObject {
     /// Description of the refinement.
     pub description: String,
     /// Source location of this OBJECT clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A SUPPORTS clause within a [`CapabilityData`](super::capability::CapabilityData) definition.
@@ -530,7 +531,7 @@ pub struct CapabilitiesModule {
     /// Notification VARIATION clauses.
     pub notification_variations: Vec<NotificationVariation>,
     /// Source location of this SUPPORTS clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An object VARIATION within a [`CapabilitiesModule`].
@@ -554,7 +555,7 @@ pub struct ObjectVariation {
     /// Description of this variation.
     pub description: String,
     /// Source location of this VARIATION clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A notification VARIATION within a [`CapabilitiesModule`].
@@ -569,7 +570,7 @@ pub struct NotificationVariation {
     /// Description of this variation.
     pub description: String,
     /// Source location of this VARIATION clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Inline syntax constraints from a VARIATION SYNTAX/WRITE-SYNTAX clause
@@ -667,7 +668,7 @@ pub struct OidRef {
     /// The symbolic name referenced in the OID assignment.
     pub name: String,
     /// Source location of this reference.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 // Arena index types for the resolved model.

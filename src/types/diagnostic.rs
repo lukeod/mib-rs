@@ -10,6 +10,19 @@ use std::fmt;
 
 use super::{DiagCode, ReportingLevel, Severity};
 
+/// Diagnostic emitted while parsing source, before module-aware rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpanDiagnostic {
+    /// Effective severity after applying diagnostic configuration overrides.
+    pub severity: Severity,
+    /// Diagnostic code identifying the issue category.
+    pub code: DiagCode,
+    /// Checked, source-qualified location of the issue.
+    pub span: crate::source::SourceRange,
+    /// Human-readable description of the issue.
+    pub message: String,
+}
+
 /// An issue found during parsing or resolution.
 ///
 /// Created from [`SpanDiagnostic`](super::SpanDiagnostic) during lowering, or
