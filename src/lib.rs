@@ -65,7 +65,9 @@
 //!
 //! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
 //! parse-only and tooling consumers. Checked [`ByteOffset`] and [`SourceRange`]
-//! values identify byte coordinates without sentinel values.
+//! values identify byte coordinates without sentinel values. [`BytePosition`]
+//! round-trips arbitrary source bytes, while [`Position`] requires an explicit
+//! [`PositionEncoding`] for UTF-8, UTF-16, or UTF-32 editor coordinates.
 //!
 //! # Loading MIBs
 //!
@@ -787,8 +789,9 @@ pub use mib::{
     },
 };
 pub use source::{
-    ByteOffset, CandidateId, Source, SourceCandidate, SourceDocument, SourceId, SourceOrigin,
-    SourceRange, SourceRangeError, SourceSet,
+    ByteOffset, BytePosition, CandidateId, Position, PositionEncoding, PositionError, Source,
+    SourceCandidate, SourceDocument, SourceId, SourceOrigin, SourceRange, SourceRangeError,
+    SourceSet,
 };
 pub use token::{Token, TokenKind};
 pub use types::{

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add checked bidirectional byte positions and explicit UTF-8, UTF-16, and UTF-32 editor-position conversion on retained source documents
 - Preserve precise integer and octet value kinds, normalized effective constraints, component raw arcs, and typed codec failures
 - Add object-specific index codec bindings for enforcing the 128-arc complete instance-OID limit
 - Report zero-width index components and schemas without rejecting representable definitions

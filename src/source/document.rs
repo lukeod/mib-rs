@@ -79,6 +79,83 @@ impl fmt::Display for ByteOffset {
     }
 }
 
+/// A zero-based byte position within a source document.
+///
+/// Lines are separated by LF, CRLF, or lone CR. Unlike editor positions, byte
+/// positions can identify every source byte, including both bytes of CRLF and
+/// bytes in invalid UTF-8.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BytePosition {
+    line: u32,
+    column: u32,
+}
+
+impl BytePosition {
+    /// Create a zero-based line and byte-column position.
+    pub const fn new(line: u32, column: u32) -> Self {
+        Self { line, column }
+    }
+
+    /// Return the zero-based line.
+    pub const fn line(self) -> u32 {
+        self.line
+    }
+
+    /// Return the zero-based byte column.
+    pub const fn column(self) -> u32 {
+        self.column
+    }
+}
+
+/// A zero-based editor position.
+///
+/// The character field is measured in the explicitly selected
+/// position encoding. Line terminators are excluded, matching LSP position
+/// semantics.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Position {
+    line: u32,
+    character: u32,
+}
+
+impl Position {
+    /// Create a zero-based line and encoded-character position.
+    pub const fn new(line: u32, character: u32) -> Self {
+        Self { line, character }
+    }
+
+    /// Return the zero-based line.
+    pub const fn line(self) -> u32 {
+        self.line
+    }
+
+    /// Return the zero-based encoded-character offset.
+    pub const fn character(self) -> u32 {
+        self.character
+    }
+}
+
+/// Encoding used for the character field of an editor position.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PositionEncoding {
+    /// UTF-8 code units (bytes), restricted to Unicode scalar boundaries.
+    Utf8,
+    /// UTF-16 code units, as used by the original LSP position model.
+    Utf16,
+    /// UTF-32 code units (Unicode scalar values).
+    Utf32,
+}
+
+impl fmt::Display for PositionEncoding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Utf8 => "UTF-8",
+            Self::Utf16 => "UTF-16",
+            Self::Utf32 => "UTF-32",
+        })
+    }
+}
+
 /// A half-open byte range within one source document.
 ///
 /// Ranges are created by [`SourceDocument::range`] and
@@ -206,15 +283,22 @@ pub(crate) struct LineIndex {
 
 impl LineIndex {
     fn new(bytes: &[u8]) -> Self {
-        let mut starts =
-            Vec::with_capacity(1 + bytes.iter().filter(|&&byte| byte == b'\n').count());
+        let mut starts = Vec::new();
         starts.push(0);
-        starts.extend(
-            bytes
-                .iter()
-                .enumerate()
-                .filter_map(|(index, &byte)| (byte == b'\n').then_some(index + 1)),
-        );
+        let mut index = 0;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\r' if bytes.get(index + 1) == Some(&b'\n') => {
+                    index += 2;
+                    starts.push(index);
+                }
+                b'\r' | b'\n' => {
+                    index += 1;
+                    starts.push(index);
+                }
+                _ => index += 1,
+            }
+        }
         Self {
             starts: starts.into_boxed_slice(),
         }
@@ -272,6 +356,14 @@ impl SourceDocument {
     /// Return whether this document contains no bytes.
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
+    }
+
+    /// Return the number of logical lines.
+    ///
+    /// Every document has at least one line. A trailing LF, CRLF, or lone CR
+    /// creates a final empty line.
+    pub fn line_count(&self) -> usize {
+        self.line_index.starts.len()
     }
 
     /// Validate and convert a byte index into a compiler byte offset.
@@ -362,6 +454,246 @@ impl SourceDocument {
             offset - self.line_index.line_starts()[line_index] + 1,
         ))
     }
+
+    /// Convert a byte offset to a zero-based byte position.
+    ///
+    /// Every offset from zero through EOF is representable, including offsets
+    /// on either byte of CRLF and offsets inside invalid UTF-8.
+    pub fn byte_position(&self, offset: ByteOffset) -> Result<BytePosition, PositionError> {
+        if offset > self.len() {
+            return Err(PositionError::OffsetOutOfBounds {
+                offset,
+                len: self.len(),
+            });
+        }
+        let offset = offset.as_usize();
+        let line = self
+            .line_index
+            .starts
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        let column = offset - self.line_index.starts[line];
+        Ok(BytePosition::new(
+            u32::try_from(line).expect("source line index fits in u32"),
+            u32::try_from(column).expect("source byte column fits in u32"),
+        ))
+    }
+
+    /// Convert a zero-based byte position to its byte offset.
+    ///
+    /// On non-final lines, positions identify every terminator byte. The offset
+    /// immediately after an LF, CRLF, or lone CR is column zero of the next
+    /// line. On the final line, its end position identifies EOF.
+    pub fn byte_offset(&self, position: BytePosition) -> Result<ByteOffset, PositionError> {
+        let line = position.line as usize;
+        let Some(&start) = self.line_index.starts.get(line) else {
+            return Err(PositionError::LineOutOfBounds {
+                line: position.line,
+                line_count: self.line_count(),
+            });
+        };
+        let is_final = line + 1 == self.line_count();
+        let full_end = self
+            .line_index
+            .starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or_else(|| self.bytes.len());
+        let max_column = full_end - start - usize::from(!is_final);
+        if position.column as usize > max_column {
+            return Err(PositionError::ByteColumnOutOfBounds {
+                line: position.line,
+                column: position.column,
+                max_column: u32::try_from(max_column).expect("source byte column fits in u32"),
+            });
+        }
+        Ok(ByteOffset::new(
+            u32::try_from(start + position.column as usize)
+                .expect("validated source offset fits in u32"),
+        ))
+    }
+
+    /// Convert a byte offset to an editor position in an explicit encoding.
+    ///
+    /// The source must be valid UTF-8, and the offset must lie on a Unicode
+    /// scalar boundary. Line terminators are excluded from editor columns. The
+    /// start of LF, CRLF, or lone CR maps to the line's end position; the
+    /// offset between CR and LF has no editor-position representation.
+    pub fn position(
+        &self,
+        offset: ByteOffset,
+        encoding: PositionEncoding,
+    ) -> Result<Position, PositionError> {
+        let byte_position = self.byte_position(offset)?;
+        let text = self.valid_utf8()?;
+        let extent = self
+            .line_extent(byte_position.line)
+            .expect("validated byte position identifies a line");
+        let offset = offset.as_usize();
+        if offset > extent.content_end {
+            return Err(PositionError::OffsetInsideLineTerminator {
+                offset: ByteOffset::new(
+                    u32::try_from(offset).expect("validated source offset fits in u32"),
+                ),
+                line: byte_position.line,
+            });
+        }
+        if !text.is_char_boundary(offset) {
+            return Err(PositionError::MidCodePoint {
+                offset: ByteOffset::new(
+                    u32::try_from(offset).expect("validated source offset fits in u32"),
+                ),
+            });
+        }
+        let prefix = &text[extent.start..offset];
+        let character = match encoding {
+            PositionEncoding::Utf8 => prefix.len(),
+            PositionEncoding::Utf16 => prefix.encode_utf16().count(),
+            PositionEncoding::Utf32 => prefix.chars().count(),
+        };
+        Ok(Position::new(
+            byte_position.line,
+            u32::try_from(character).expect("encoded source column fits in u32"),
+        ))
+    }
+
+    /// Convert an editor position in an explicit encoding to a byte offset.
+    ///
+    /// Lines and characters are zero-based. End-of-line positions map to the
+    /// first byte of LF, CRLF, or lone CR; a trailing terminator creates a final
+    /// empty line whose zero position maps to EOF.
+    pub fn position_offset(
+        &self,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<ByteOffset, PositionError> {
+        let Some(extent) = self.line_extent(position.line) else {
+            return Err(PositionError::LineOutOfBounds {
+                line: position.line,
+                line_count: self.line_count(),
+            });
+        };
+        let text = self.valid_utf8()?;
+        let line_text = &text[extent.start..extent.content_end];
+        let character = position.character as usize;
+        let relative_offset = match encoding {
+            PositionEncoding::Utf8 => {
+                if character > line_text.len() {
+                    return Err(PositionError::CharacterOutOfBounds {
+                        line: position.line,
+                        character: position.character,
+                        max_character: u32::try_from(line_text.len())
+                            .expect("encoded source column fits in u32"),
+                        encoding,
+                    });
+                }
+                if !line_text.is_char_boundary(character) {
+                    return Err(PositionError::MidCodePoint {
+                        offset: ByteOffset::new(
+                            u32::try_from(extent.start + character)
+                                .expect("validated source offset fits in u32"),
+                        ),
+                    });
+                }
+                character
+            }
+            PositionEncoding::Utf16 => {
+                let mut units = 0usize;
+                let mut result = None;
+                for (byte_index, value) in line_text.char_indices() {
+                    if units == character {
+                        result = Some(byte_index);
+                        break;
+                    }
+                    let next = units + value.len_utf16();
+                    if character < next {
+                        return Err(PositionError::MidUtf16Surrogate {
+                            line: position.line,
+                            character: position.character,
+                        });
+                    }
+                    units = next;
+                }
+                if result.is_none() && units == character {
+                    result = Some(line_text.len());
+                }
+                match result {
+                    Some(offset) => offset,
+                    None => {
+                        return Err(PositionError::CharacterOutOfBounds {
+                            line: position.line,
+                            character: position.character,
+                            max_character: u32::try_from(units)
+                                .expect("encoded source column fits in u32"),
+                            encoding,
+                        });
+                    }
+                }
+            }
+            PositionEncoding::Utf32 => {
+                let count = line_text.chars().count();
+                if character > count {
+                    return Err(PositionError::CharacterOutOfBounds {
+                        line: position.line,
+                        character: position.character,
+                        max_character: u32::try_from(count)
+                            .expect("encoded source column fits in u32"),
+                        encoding,
+                    });
+                }
+                line_text
+                    .char_indices()
+                    .map(|(byte_index, _)| byte_index)
+                    .chain(std::iter::once(line_text.len()))
+                    .nth(character)
+                    .expect("validated UTF-32 column has a byte boundary")
+            }
+        };
+        Ok(ByteOffset::new(
+            u32::try_from(extent.start + relative_offset)
+                .expect("validated source offset fits in u32"),
+        ))
+    }
+
+    fn valid_utf8(&self) -> Result<&str, PositionError> {
+        std::str::from_utf8(&self.bytes).map_err(|error| PositionError::InvalidUtf8 {
+            valid_up_to: ByteOffset::new(
+                u32::try_from(error.valid_up_to()).expect("source offset fits in u32"),
+            ),
+            error_len: error.error_len(),
+        })
+    }
+
+    fn line_extent(&self, line: u32) -> Option<LineExtent> {
+        let line = line as usize;
+        let &start = self.line_index.starts.get(line)?;
+        let full_end = self
+            .line_index
+            .starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or_else(|| self.bytes.len());
+        let mut content_end = full_end;
+        if line + 1 < self.line_count() {
+            match self.bytes[full_end - 1] {
+                b'\n' => {
+                    content_end -= 1;
+                    if content_end > start && self.bytes[content_end - 1] == b'\r' {
+                        content_end -= 1;
+                    }
+                }
+                b'\r' => content_end -= 1,
+                _ => unreachable!("line index ends non-final lines after terminators"),
+            }
+        }
+        Some(LineExtent { start, content_end })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LineExtent {
+    start: usize,
+    content_end: usize,
 }
 
 /// Failure to create or use a source coordinate or retain another source.
@@ -388,6 +720,47 @@ pub enum SourceRangeError {
     /// All representable compilation-local IDs have been allocated.
     #[error("too many sources in one compilation")]
     TooManySources,
+}
+
+/// Failure to convert between byte offsets, byte positions, and editor positions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum PositionError {
+    /// A byte offset lies beyond EOF.
+    #[error("byte offset {offset} is outside a source of length {len}")]
+    OffsetOutOfBounds { offset: ByteOffset, len: ByteOffset },
+    /// A zero-based line does not exist.
+    #[error("line {line} is outside a source with {line_count} lines")]
+    LineOutOfBounds { line: u32, line_count: usize },
+    /// A byte column does not identify a byte or the final EOF position.
+    #[error("byte column {column} on line {line} exceeds maximum {max_column}")]
+    ByteColumnOutOfBounds {
+        line: u32,
+        column: u32,
+        max_column: u32,
+    },
+    /// An editor character lies beyond the logical end of its line.
+    #[error("{encoding} character {character} on line {line} exceeds maximum {max_character}")]
+    CharacterOutOfBounds {
+        line: u32,
+        character: u32,
+        max_character: u32,
+        encoding: PositionEncoding,
+    },
+    /// A byte offset falls between the CR and LF bytes of a CRLF terminator.
+    #[error("byte offset {offset} falls inside the line {line} terminator")]
+    OffsetInsideLineTerminator { offset: ByteOffset, line: u32 },
+    /// A UTF-8 position falls within a multi-byte code point.
+    #[error("byte offset {offset} falls inside a UTF-8 code point")]
+    MidCodePoint { offset: ByteOffset },
+    /// A UTF-16 position falls between the surrogate code units of an astral character.
+    #[error("UTF-16 character {character} on line {line} falls inside a surrogate pair")]
+    MidUtf16Surrogate { line: u32, character: u32 },
+    /// Editor conversion requires a valid UTF-8 source document.
+    #[error("source is not valid UTF-8 after byte {valid_up_to} (invalid length {error_len:?})")]
+    InvalidUtf8 {
+        valid_up_to: ByteOffset,
+        error_len: Option<usize>,
+    },
 }
 
 /// Owns the source documents retained for one compilation.
@@ -469,6 +842,17 @@ mod tests {
         SourceOrigin::Memory {
             identity: Arc::from(identity),
         }
+    }
+
+    fn test_document(bytes: &[u8]) -> Arc<SourceDocument> {
+        let mut sources = SourceSet::new();
+        sources
+            .insert_shared(
+                memory_origin("position-test"),
+                "position-test",
+                Arc::from(bytes),
+            )
+            .unwrap()
     }
 
     #[test]
@@ -754,6 +1138,397 @@ mod tests {
         assert_eq!(
             SourceRange::cover(nested, left).unwrap(),
             document.range(1..8).unwrap()
+        );
+    }
+
+    #[test]
+    fn byte_positions_round_trip_every_offset_for_arbitrary_bytes() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"a\n",
+            b"\n",
+            b"a\r\nb",
+            b"a\rb\n",
+            &[0x00, 0xff, b'\r', b'\n', 0x80],
+        ];
+
+        for &bytes in cases {
+            let document = test_document(bytes);
+            for raw_offset in 0..=bytes.len() {
+                let offset = document.offset(raw_offset).unwrap();
+                let position = document.byte_position(offset).unwrap();
+                assert_eq!(
+                    document.byte_offset(position).unwrap(),
+                    offset,
+                    "bytes={bytes:?}, offset={raw_offset}, position={position:?}"
+                );
+                assert_eq!(
+                    document
+                        .byte_position(document.byte_offset(position).unwrap())
+                        .unwrap(),
+                    position
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn byte_positions_cover_empty_eof_trailing_newline_and_crlf_bytes() {
+        let empty = test_document(b"");
+        assert_eq!(empty.line_count(), 1);
+        assert_eq!(
+            empty.byte_position(ByteOffset::new(0)).unwrap(),
+            BytePosition::new(0, 0)
+        );
+        assert_eq!(
+            empty.byte_offset(BytePosition::new(0, 0)).unwrap(),
+            ByteOffset::new(0)
+        );
+
+        let document = test_document(b"a\r\nb\rc\n");
+        assert_eq!(document.line_count(), 4);
+        let expected = [
+            BytePosition::new(0, 0),
+            BytePosition::new(0, 1),
+            BytePosition::new(0, 2),
+            BytePosition::new(1, 0),
+            BytePosition::new(1, 1),
+            BytePosition::new(2, 0),
+            BytePosition::new(2, 1),
+            BytePosition::new(3, 0),
+        ];
+        for (offset, expected) in expected.into_iter().enumerate() {
+            assert_eq!(
+                document.byte_position(ByteOffset::new(offset as u32)),
+                Ok(expected)
+            );
+            assert_eq!(
+                document.byte_offset(expected),
+                Ok(ByteOffset::new(offset as u32))
+            );
+        }
+        assert_eq!(expected[2].line(), 0);
+        assert_eq!(expected[2].column(), 2);
+    }
+
+    #[test]
+    fn byte_position_rejects_invalid_offset_line_and_column() {
+        let document = test_document(b"a\nb");
+
+        assert_eq!(
+            document.byte_position(ByteOffset::new(4)),
+            Err(PositionError::OffsetOutOfBounds {
+                offset: ByteOffset::new(4),
+                len: ByteOffset::new(3),
+            })
+        );
+        assert_eq!(
+            document.byte_offset(BytePosition::new(2, 0)),
+            Err(PositionError::LineOutOfBounds {
+                line: 2,
+                line_count: 2,
+            })
+        );
+        assert_eq!(
+            document.byte_offset(BytePosition::new(0, 2)),
+            Err(PositionError::ByteColumnOutOfBounds {
+                line: 0,
+                column: 2,
+                max_column: 1,
+            })
+        );
+        assert_eq!(
+            document.byte_offset(BytePosition::new(1, 2)),
+            Err(PositionError::ByteColumnOutOfBounds {
+                line: 1,
+                column: 2,
+                max_column: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn editor_positions_use_explicit_utf_code_units() {
+        let document = test_document("Aé𝄞".as_bytes());
+        let cases = [
+            (
+                0,
+                Position::new(0, 0),
+                Position::new(0, 0),
+                Position::new(0, 0),
+            ),
+            (
+                1,
+                Position::new(0, 1),
+                Position::new(0, 1),
+                Position::new(0, 1),
+            ),
+            (
+                3,
+                Position::new(0, 3),
+                Position::new(0, 2),
+                Position::new(0, 2),
+            ),
+            (
+                7,
+                Position::new(0, 7),
+                Position::new(0, 4),
+                Position::new(0, 3),
+            ),
+        ];
+
+        for (offset, utf8, utf16, utf32) in cases {
+            let offset = ByteOffset::new(offset);
+            assert_eq!(document.position(offset, PositionEncoding::Utf8), Ok(utf8));
+            assert_eq!(
+                document.position(offset, PositionEncoding::Utf16),
+                Ok(utf16)
+            );
+            assert_eq!(
+                document.position(offset, PositionEncoding::Utf32),
+                Ok(utf32)
+            );
+            assert_eq!(
+                document.position_offset(utf8, PositionEncoding::Utf8),
+                Ok(offset)
+            );
+            assert_eq!(
+                document.position_offset(utf16, PositionEncoding::Utf16),
+                Ok(offset)
+            );
+            assert_eq!(
+                document.position_offset(utf32, PositionEncoding::Utf32),
+                Ok(offset)
+            );
+        }
+
+        assert_eq!(Position::new(2, 3).line(), 2);
+        assert_eq!(Position::new(2, 3).character(), 3);
+        assert_eq!(PositionEncoding::Utf8.to_string(), "UTF-8");
+        assert_eq!(PositionEncoding::Utf16.to_string(), "UTF-16");
+        assert_eq!(PositionEncoding::Utf32.to_string(), "UTF-32");
+    }
+
+    #[test]
+    fn editor_positions_follow_lsp_line_terminator_and_eof_semantics() {
+        let document = test_document(b"a\r\nb\rc\n");
+
+        for encoding in [
+            PositionEncoding::Utf8,
+            PositionEncoding::Utf16,
+            PositionEncoding::Utf32,
+        ] {
+            assert_eq!(
+                document.position(ByteOffset::new(1), encoding),
+                Ok(Position::new(0, 1))
+            );
+            assert_eq!(
+                document.position(ByteOffset::new(2), encoding),
+                Err(PositionError::OffsetInsideLineTerminator {
+                    offset: ByteOffset::new(2),
+                    line: 0,
+                })
+            );
+            assert_eq!(
+                document.position_offset(Position::new(0, 1), encoding),
+                Ok(ByteOffset::new(1))
+            );
+            assert_eq!(
+                document.position(ByteOffset::new(3), encoding),
+                Ok(Position::new(1, 0))
+            );
+            assert_eq!(
+                document.position(ByteOffset::new(4), encoding),
+                Ok(Position::new(1, 1))
+            );
+            assert_eq!(
+                document.position(ByteOffset::new(6), encoding),
+                Ok(Position::new(2, 1))
+            );
+            assert_eq!(
+                document.position(ByteOffset::new(7), encoding),
+                Ok(Position::new(3, 0))
+            );
+            assert_eq!(
+                document.position_offset(Position::new(3, 0), encoding),
+                Ok(ByteOffset::new(7))
+            );
+        }
+    }
+
+    #[test]
+    fn editor_positions_round_trip_all_representable_offsets_and_positions() {
+        let cases = ["", "plain", "trailing\n", "\r\n", "é\r\n𝄞\n", "a\rb"];
+        for text in cases {
+            let document = test_document(text.as_bytes());
+            for encoding in [
+                PositionEncoding::Utf8,
+                PositionEncoding::Utf16,
+                PositionEncoding::Utf32,
+            ] {
+                for raw_offset in 0..=text.len() {
+                    let offset = ByteOffset::new(raw_offset as u32);
+                    match document.position(offset, encoding) {
+                        Ok(position) => {
+                            assert_eq!(
+                                document.position_offset(position, encoding),
+                                Ok(offset),
+                                "text={text:?}, encoding={encoding}, offset={raw_offset}"
+                            );
+                        }
+                        Err(
+                            PositionError::MidCodePoint { .. }
+                            | PositionError::OffsetInsideLineTerminator { .. },
+                        ) => {}
+                        Err(error) => panic!(
+                            "unexpected conversion error for text={text:?}, encoding={encoding}, offset={raw_offset}: {error}"
+                        ),
+                    }
+                }
+
+                for line in 0..document.line_count() {
+                    let extent = document.line_extent(line as u32).unwrap();
+                    let end = document
+                        .position(ByteOffset::new(extent.content_end as u32), encoding)
+                        .unwrap();
+                    for character in 0..=end.character() {
+                        let position = Position::new(line as u32, character);
+                        match document.position_offset(position, encoding) {
+                            Ok(offset) => assert_eq!(
+                                document.position(offset, encoding),
+                                Ok(position),
+                                "text={text:?}, encoding={encoding}, position={position:?}"
+                            ),
+                            Err(
+                                PositionError::MidCodePoint { .. }
+                                | PositionError::MidUtf16Surrogate { .. },
+                            ) => {}
+                            Err(error) => panic!(
+                                "unexpected inverse error for text={text:?}, encoding={encoding}, position={position:?}: {error}"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn editor_positions_reject_mid_codepoint_mid_surrogate_and_bad_coordinates() {
+        let document = test_document("Aé𝄞".as_bytes());
+
+        for encoding in [
+            PositionEncoding::Utf8,
+            PositionEncoding::Utf16,
+            PositionEncoding::Utf32,
+        ] {
+            assert_eq!(
+                document.position(ByteOffset::new(2), encoding),
+                Err(PositionError::MidCodePoint {
+                    offset: ByteOffset::new(2),
+                })
+            );
+        }
+        assert_eq!(
+            document.position_offset(Position::new(0, 2), PositionEncoding::Utf8),
+            Err(PositionError::MidCodePoint {
+                offset: ByteOffset::new(2),
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(0, 3), PositionEncoding::Utf16),
+            Err(PositionError::MidUtf16Surrogate {
+                line: 0,
+                character: 3,
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(1, 0), PositionEncoding::Utf32),
+            Err(PositionError::LineOutOfBounds {
+                line: 1,
+                line_count: 1,
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(0, 8), PositionEncoding::Utf8),
+            Err(PositionError::CharacterOutOfBounds {
+                line: 0,
+                character: 8,
+                max_character: 7,
+                encoding: PositionEncoding::Utf8,
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(0, 5), PositionEncoding::Utf16),
+            Err(PositionError::CharacterOutOfBounds {
+                line: 0,
+                character: 5,
+                max_character: 4,
+                encoding: PositionEncoding::Utf16,
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(0, 4), PositionEncoding::Utf32),
+            Err(PositionError::CharacterOutOfBounds {
+                line: 0,
+                character: 4,
+                max_character: 3,
+                encoding: PositionEncoding::Utf32,
+            })
+        );
+        assert_eq!(
+            document.position(ByteOffset::new(8), PositionEncoding::Utf16),
+            Err(PositionError::OffsetOutOfBounds {
+                offset: ByteOffset::new(8),
+                len: ByteOffset::new(7),
+            })
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_retains_byte_positions_but_rejects_editor_positions() {
+        let bytes = [b'a', 0xff, b'\n', 0x80];
+        let document = test_document(&bytes);
+
+        for raw_offset in 0..=bytes.len() {
+            let offset = ByteOffset::new(raw_offset as u32);
+            let position = document.byte_position(offset).unwrap();
+            assert_eq!(document.byte_offset(position), Ok(offset));
+        }
+        for encoding in [
+            PositionEncoding::Utf8,
+            PositionEncoding::Utf16,
+            PositionEncoding::Utf32,
+        ] {
+            assert_eq!(
+                document.position(ByteOffset::new(0), encoding),
+                Err(PositionError::InvalidUtf8 {
+                    valid_up_to: ByteOffset::new(1),
+                    error_len: Some(1),
+                })
+            );
+            assert_eq!(
+                document.position_offset(Position::new(0, 0), encoding),
+                Err(PositionError::InvalidUtf8 {
+                    valid_up_to: ByteOffset::new(1),
+                    error_len: Some(1),
+                })
+            );
+        }
+        assert_eq!(
+            document.position(ByteOffset::new(5), PositionEncoding::Utf8),
+            Err(PositionError::OffsetOutOfBounds {
+                offset: ByteOffset::new(5),
+                len: ByteOffset::new(4),
+            })
+        );
+        assert_eq!(
+            document.position_offset(Position::new(3, 0), PositionEncoding::Utf8),
+            Err(PositionError::LineOutOfBounds {
+                line: 3,
+                line_count: 2,
+            })
         );
     }
 

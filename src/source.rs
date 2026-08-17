@@ -19,7 +19,8 @@ use crate::scan;
 mod document;
 
 pub use document::{
-    ByteOffset, SourceDocument, SourceId, SourceOrigin, SourceRange, SourceRangeError, SourceSet,
+    ByteOffset, BytePosition, Position, PositionEncoding, PositionError, SourceDocument, SourceId,
+    SourceOrigin, SourceRange, SourceRangeError, SourceSet,
 };
 
 /// Default file extensions recognized as MIB files.
