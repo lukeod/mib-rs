@@ -192,12 +192,14 @@ END
 }
 
 #[test]
-fn lower_conflicting_language_evidence_stays_unknown() {
+fn lower_mixed_language_module_runs_identity_date_checks_only() {
     let source = br#"
-HYBRID-MIB DEFINITIONS ::= BEGIN
+RAPID-CITY-LIKE DEFINITIONS ::= BEGIN
 
 IMPORTS
     enterprises FROM RFC1155-SMI;
+
+earlyNode OBJECT IDENTIFIER ::= { enterprises 99998 }
 
 hybridMIB MODULE-IDENTITY
     LAST-UPDATED "200901080000Z"
@@ -218,8 +220,79 @@ END
         module
             .diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code != mib_rs::types::DiagCode::MacroNotImported),
-        "conflicting language evidence should not run version-specific checks"
+            .any(|diagnostic| diagnostic.code == DiagCode::RevisionLastUpdated),
+        "MODULE-IDENTITY date checks should run despite mixed language evidence: {:?}",
+        module.diagnostics
+    );
+
+    for smiv2_only in [
+        DiagCode::MacroNotImported,
+        DiagCode::ModuleNameSuffix,
+        DiagCode::ModuleIdentityNotFirst,
+    ] {
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != smiv2_only),
+            "mixed language evidence should not run {smiv2_only}: {:?}",
+            module.diagnostics
+        );
+    }
+}
+
+#[test]
+fn lower_unknown_module_validates_each_module_identity_date() {
+    let source = br#"
+UNKNOWN-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    enterprises FROM RFC1155-SMI;
+
+firstIdentity MODULE-IDENTITY
+    LAST-UPDATED "invalid"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "first identity"
+    ::= { enterprises 99998 }
+
+secondIdentity MODULE-IDENTITY
+    LAST-UPDATED "200901080000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "second identity"
+    ::= { enterprises 99999 }
+
+END
+"#;
+    let config = DiagnosticConfig::default();
+    let ast_modules = mib_rs::parser::parse(source, &config);
+    assert_eq!(ast_modules.len(), 1);
+    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+
+    assert_eq!(module.language, mib_rs::types::Language::Unknown);
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::RevisionLastUpdated)
+            .count(),
+        2,
+        "each MODULE-IDENTITY should be checked for a matching revision"
+    );
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::DateLength),
+        "each MODULE-IDENTITY should receive date-format validation"
+    );
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::ModuleIdentityMultiple),
+        "multiple identity validation remains SMIv2-specific"
     );
 }
 

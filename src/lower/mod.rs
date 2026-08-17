@@ -128,9 +128,10 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
 
     run_phase("checks", || {
         check_module_name_suffix(&mut ctx, &module);
+        check_module_identity_dates(&mut ctx, &ast_module);
 
         if module.language == Language::SMIv2 && !base_modules::is_base_module(&module.name) {
-            check_module_identity(&mut ctx, &ast_module, &module);
+            check_module_identity_structure(&mut ctx, &module);
             check_macro_imports(&mut ctx, &ast_module, &module);
         }
         debug!(
@@ -491,11 +492,7 @@ fn check_module_name_suffix(ctx: &mut LoweringContext<'_>, module: &ir::Module) 
     }
 }
 
-fn check_module_identity(
-    ctx: &mut LoweringContext<'_>,
-    ast_module: &ast::Module,
-    module: &ir::Module,
-) {
+fn check_module_identity_structure(ctx: &mut LoweringContext<'_>, module: &ir::Module) {
     let mut module_identities: Vec<(usize, &ir::ModuleIdentity)> = Vec::new();
     for (i, def) in module.definitions.iter().enumerate() {
         if let ir::Definition::ModuleIdentity(mi) = def {
@@ -513,31 +510,6 @@ fn check_module_identity(
     }
 
     let (first_index, first_mi) = module_identities[0];
-
-    // Check LAST-UPDATED has matching REVISION.
-    check_revision_last_updated(ctx, first_mi);
-
-    // Validate dates from AST (has per-date spans).
-    let ast_mi = ast_module.body.iter().find_map(|def| {
-        if let ast::Definition::ModuleIdentity(mi) = def {
-            Some(mi)
-        } else {
-            None
-        }
-    });
-    if let Some(ast_mi) = ast_mi {
-        let revision_dates: Vec<(String, Span)> = ast_mi
-            .revisions
-            .iter()
-            .map(|r| (r.date.value.clone(), r.date.span))
-            .collect();
-        dates::check_module_identity_dates(
-            ctx,
-            &ast_mi.last_updated.value,
-            ast_mi.last_updated.span,
-            &revision_dates,
-        );
-    }
 
     if first_index > 0 {
         ctx.emit_diagnostic(
@@ -559,19 +531,43 @@ fn check_module_identity(
     }
 }
 
-fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ir::ModuleIdentity) {
-    if mi.last_updated.is_empty() {
+fn check_module_identity_dates(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module) {
+    for def in &ast_module.body {
+        let ast::Definition::ModuleIdentity(mi) = def else {
+            continue;
+        };
+
+        let revision_dates: Vec<(String, Span)> = mi
+            .revisions
+            .iter()
+            .map(|r| (r.date.value.clone(), r.date.span))
+            .collect();
+        dates::check_module_identity_dates(
+            ctx,
+            &mi.last_updated.value,
+            mi.last_updated.span,
+            &revision_dates,
+        );
+        check_revision_last_updated(ctx, mi);
+    }
+}
+
+fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ast::ModuleIdentityDef) {
+    if mi.last_updated.value.is_empty() {
         return;
     }
     for r in &mi.revisions {
-        if r.date == mi.last_updated {
+        if r.date.value == mi.last_updated.value {
             return;
         }
     }
     ctx.emit_diagnostic(
         DiagCode::RevisionLastUpdated,
         mi.span,
-        format!("revision for LAST-UPDATED {} is missing", mi.last_updated),
+        format!(
+            "revision for LAST-UPDATED {} is missing",
+            mi.last_updated.value
+        ),
     );
 }
 
