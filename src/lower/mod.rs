@@ -743,13 +743,14 @@ fn lower_module_identity(
         .revisions
         .iter()
         .map(|r| {
-            if r.description.value.is_empty() {
-                ctx.emit_diagnostic(
-                    DiagCode::EmptyRevisionDescription,
-                    r.span,
-                    format!("{:?}: empty REVISION DESCRIPTION clause", name),
-                );
-            }
+            check_empty_required(
+                ctx,
+                &r.description.value,
+                r.span,
+                name,
+                "REVISION DESCRIPTION",
+                DiagCode::EmptyDescription,
+            );
             ir::Revision {
                 date: r.date.value.clone(),
                 description: r.description.value.clone(),
@@ -1482,7 +1483,7 @@ mod tests {
     }
 
     #[test]
-    fn revision_empty_description_emits_diagnostic() {
+    fn revision_empty_description_uses_empty_description_diagnostic() {
         let source = b"";
         let mut module = ast::Module::new(
             ast::Ident {
@@ -1538,17 +1539,11 @@ mod tests {
         let cfg = DiagnosticConfig::verbose();
         let lowered = lower(module, source, &cfg);
 
-        assert!(
-            lowered
-                .diagnostics
-                .iter()
-                .any(|d| d.code == DiagCode::EmptyRevisionDescription),
-            "expected EmptyRevisionDescription diagnostic, got: {:?}",
-            lowered
-                .diagnostics
-                .iter()
-                .map(|d| d.code)
-                .collect::<Vec<_>>()
-        );
+        let diagnostic = lowered
+            .diagnostics
+            .iter()
+            .find(|d| d.message == "\"testMIB\": empty REVISION DESCRIPTION clause")
+            .expect("expected empty REVISION DESCRIPTION diagnostic");
+        assert_eq!(diagnostic.code, DiagCode::EmptyDescription);
     }
 }
