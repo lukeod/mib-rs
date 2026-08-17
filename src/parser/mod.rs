@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 use crate::ast::*;
-use crate::lexer::{Lexer, Token, TokenKind};
+use crate::lexer::{Lexer, SyntaxKind, Token};
 use crate::source::{ByteOffset, SourceDocument, SourceRange};
 use crate::types::{Access, AccessKeyword, DiagCode, Diagnostic, DiagnosticConfig, Status};
 use tracing::{debug, debug_span, info_span, trace};
@@ -46,7 +46,7 @@ pub struct Parser<'src, 'cfg> {
 fn next_non_comment(lexer: &mut Lexer<'_, '_>) -> Token {
     loop {
         let tok = lexer.next_token();
-        if tok.kind != TokenKind::Comment {
+        if tok.kind != SyntaxKind::Comment {
             return tok;
         }
     }
@@ -62,7 +62,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             .empty_range(document.bytes().len())
             .expect("the document EOF is a valid source position");
         let eof_token = Token {
-            kind: TokenKind::Eof,
+            kind: SyntaxKind::EofToken,
             span: eof_span,
         };
 
@@ -115,11 +115,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         tok
     }
 
-    fn check(&self, kind: TokenKind) -> bool {
+    fn check(&self, kind: SyntaxKind) -> bool {
         self.peek().kind == kind
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token, Diagnostic> {
+    fn expect(&mut self, kind: SyntaxKind) -> Result<Token, Diagnostic> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
@@ -141,7 +141,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn is_eof(&self) -> bool {
-        self.peek().kind == TokenKind::Eof
+        self.peek().kind == SyntaxKind::EofToken
     }
 
     fn text(&self, span: SourceRange) -> Cow<'src, str> {
@@ -261,7 +261,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         if self.peek().kind.is_identifier() {
             return Ok(self.advance());
         }
-        if self.check(TokenKind::ForbiddenKeyword) {
+        if self.check(SyntaxKind::ForbiddenKeyword) {
             let token = self.advance();
             let name = self.text(token.span).to_string();
             self.emit_diagnostic_with(DiagCode::KeywordReserved, token.span, || {
@@ -292,7 +292,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_quoted_string(&mut self) -> Result<QuotedString, Diagnostic> {
-        if !self.check(TokenKind::QuotedString) {
+        if !self.check(SyntaxKind::QuotedString) {
             return Err(self.make_error("expected quoted string".to_string()));
         }
         let token = self.advance();
@@ -311,7 +311,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_optional_reference(&mut self) -> Result<Option<QuotedString>, Diagnostic> {
-        if !self.check(TokenKind::KwReference) {
+        if !self.check(SyntaxKind::KwReference) {
             return Ok(None);
         }
         self.advance();
@@ -352,11 +352,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut depth: u32 = 1;
         while depth > 0 && !self.is_eof() {
             match self.peek().kind {
-                TokenKind::LBrace => {
+                SyntaxKind::LBrace => {
                     depth += 1;
                     self.advance();
                 }
-                TokenKind::RBrace => {
+                SyntaxKind::RBrace => {
                     depth -= 1;
                     if depth > 0 || consume_close {
                         self.advance();
@@ -401,12 +401,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
         let mut idents = Vec::new();
         loop {
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
             let token = self.expect_identifier()?;
             idents.push(self.make_ident(token));
-            if !self.check(TokenKind::Comma) {
+            if !self.check(SyntaxKind::Comma) {
                 break;
             }
             self.advance(); // consume comma
@@ -415,26 +415,27 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     }
 
     fn parse_braced_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
-        self.expect(TokenKind::LBrace)?;
+        self.expect(SyntaxKind::LBrace)?;
         let idents = self.parse_identifier_list()?;
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
         Ok(idents)
     }
 
     // ---- Error recovery ----
 
     fn recover_to_definition(&mut self) {
-        while !self.is_eof() && !self.check(TokenKind::KwEnd) {
+        while !self.is_eof() && !self.check(SyntaxKind::KwEnd) {
             let current = self.peek().kind;
             let next = self.peek_nth(1).kind;
 
             if (current.is_identifier() && next.is_macro_keyword())
-                || (current.is_identifier() && next == TokenKind::ColonColonEqual)
-                || (current == TokenKind::UppercaseIdent && next == TokenKind::KwTextualConvention)
-                || (current == TokenKind::UppercaseIdent && next == TokenKind::KwMacro)
+                || (current.is_identifier() && next == SyntaxKind::ColonColonEqual)
+                || (current == SyntaxKind::UppercaseIdent
+                    && next == SyntaxKind::KwTextualConvention)
+                || (current == SyntaxKind::UppercaseIdent && next == SyntaxKind::KwMacro)
                 || (current.is_identifier()
-                    && next == TokenKind::KwObject
-                    && self.peek_nth(2).kind == TokenKind::KwIdentifier)
+                    && next == SyntaxKind::KwObject
+                    && self.peek_nth(2).kind == SyntaxKind::KwIdentifier)
             {
                 break;
             }
@@ -513,7 +514,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         );
 
         let mut imports = Vec::new();
-        if self.check(TokenKind::KwImports) {
+        if self.check(SyntaxKind::KwImports) {
             match self.parse_imports() {
                 Ok(imp) => {
                     debug!(
@@ -539,18 +540,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         let mut body: Vec<Definition> = Vec::new();
-        while !self.check(TokenKind::KwEnd) && !self.is_eof() {
+        while !self.check(SyntaxKind::KwEnd) && !self.is_eof() {
             // The lexer consumes each EXPORTS body, leaving the keyword and
             // optional semicolon. Skip consecutive clauses here so their count
             // does not add recursion depth to definition parsing.
-            while self.check(TokenKind::KwExports) {
+            while self.check(SyntaxKind::KwExports) {
                 self.advance();
-                if self.check(TokenKind::Semicolon) {
+                if self.check(SyntaxKind::Semicolon) {
                     self.advance();
                 }
             }
 
-            if self.check(TokenKind::KwEnd) || self.is_eof() {
+            if self.check(SyntaxKind::KwEnd) || self.is_eof() {
                 break;
             }
 
@@ -576,7 +577,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
         }
 
-        if self.check(TokenKind::KwEnd) {
+        if self.check(SyntaxKind::KwEnd) {
             self.advance();
         } else {
             self.record_parse_error(self.make_error("expected END".to_string()));
@@ -613,14 +614,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
 
         // Skip obsolete module OID before DEFINITIONS
-        if self.check(TokenKind::LBrace) {
+        if self.check(SyntaxKind::LBrace) {
             self.advance();
             self.skip_braced_content(true);
         }
 
-        self.expect(TokenKind::KwDefinitions)?;
-        self.expect(TokenKind::ColonColonEqual)?;
-        self.expect(TokenKind::KwBegin)?;
+        self.expect(SyntaxKind::KwDefinitions)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwBegin)?;
 
         Ok(name)
     }
@@ -628,21 +629,22 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Import parsing ----
 
     fn parse_imports(&mut self) -> Result<Vec<ImportClause>, Diagnostic> {
-        self.expect(TokenKind::KwImports)?;
+        self.expect(SyntaxKind::KwImports)?;
 
         let mut clauses = Vec::new();
 
-        while !self.check(TokenKind::Semicolon) && !self.check(TokenKind::KwEnd) && !self.is_eof() {
+        while !self.check(SyntaxKind::Semicolon) && !self.check(SyntaxKind::KwEnd) && !self.is_eof()
+        {
             let start = self.current_span();
             let mut symbols = Vec::new();
 
             // Collect symbols until FROM
             loop {
                 let kind = self.peek().kind;
-                if kind == TokenKind::KwFrom
-                    || kind == TokenKind::Semicolon
-                    || kind == TokenKind::KwEnd
-                    || kind == TokenKind::Eof
+                if kind == SyntaxKind::KwFrom
+                    || kind == SyntaxKind::Semicolon
+                    || kind == SyntaxKind::KwEnd
+                    || kind == SyntaxKind::EofToken
                 {
                     break;
                 }
@@ -654,14 +656,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     return Err(self.make_error("expected symbol or FROM".to_string()));
                 }
 
-                if self.check(TokenKind::Comma) {
+                if self.check(SyntaxKind::Comma) {
                     self.advance();
                 }
             }
 
-            self.expect(TokenKind::KwFrom)?;
+            self.expect(SyntaxKind::KwFrom)?;
 
-            let module_token = self.expect(TokenKind::UppercaseIdent)?;
+            let module_token = self.expect(SyntaxKind::UppercaseIdent)?;
             let from_module = self.make_ident(module_token);
 
             let span = cover(start, self.last_span);
@@ -672,7 +674,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             });
         }
 
-        if self.check(TokenKind::Semicolon) {
+        if self.check(SyntaxKind::Semicolon) {
             self.advance();
         } else {
             self.record_parse_error(self.make_error("unexpected end of imports".to_string()));
@@ -689,46 +691,46 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         match second {
             // Value assignment: name OBJECT IDENTIFIER ::=
-            TokenKind::KwObject
-                if first.is_identifier() && self.peek_nth(2).kind == TokenKind::KwIdentifier =>
+            SyntaxKind::KwObject
+                if first.is_identifier() && self.peek_nth(2).kind == SyntaxKind::KwIdentifier =>
             {
                 self.parse_value_assignment()
             }
 
             // SMI macro definitions dispatched by keyword
-            TokenKind::KwObjectType if first.is_identifier() => self.parse_object_type(),
-            TokenKind::KwModuleIdentity if first.is_identifier() => self.parse_module_identity(),
-            TokenKind::KwObjectIdentity if first.is_identifier() => self.parse_object_identity(),
-            TokenKind::KwNotificationType if first.is_identifier() => {
+            SyntaxKind::KwObjectType if first.is_identifier() => self.parse_object_type(),
+            SyntaxKind::KwModuleIdentity if first.is_identifier() => self.parse_module_identity(),
+            SyntaxKind::KwObjectIdentity if first.is_identifier() => self.parse_object_identity(),
+            SyntaxKind::KwNotificationType if first.is_identifier() => {
                 self.parse_notification_type()
             }
-            TokenKind::KwTrapType if first.is_identifier() => self.parse_trap_type(),
-            TokenKind::KwTextualConvention if first == TokenKind::UppercaseIdent => {
+            SyntaxKind::KwTrapType if first.is_identifier() => self.parse_trap_type(),
+            SyntaxKind::KwTextualConvention if first == SyntaxKind::UppercaseIdent => {
                 self.parse_textual_convention()
             }
-            TokenKind::KwObjectGroup if first.is_identifier() => self.parse_object_group(),
-            TokenKind::KwNotificationGroup if first.is_identifier() => {
+            SyntaxKind::KwObjectGroup if first.is_identifier() => self.parse_object_group(),
+            SyntaxKind::KwNotificationGroup if first.is_identifier() => {
                 self.parse_notification_group()
             }
-            TokenKind::KwModuleCompliance if first.is_identifier() => {
+            SyntaxKind::KwModuleCompliance if first.is_identifier() => {
                 self.parse_module_compliance()
             }
-            TokenKind::KwAgentCapabilities if first.is_identifier() => {
+            SyntaxKind::KwAgentCapabilities if first.is_identifier() => {
                 self.parse_agent_capabilities()
             }
 
             // Type assignment or assignment-style TC: TypeName ::= ...
             // Type keywords (IpAddress, Counter32, etc.) can appear on LHS in base
             // module definitions like SNMPv2-SMI.
-            TokenKind::ColonColonEqual
-                if first == TokenKind::UppercaseIdent
-                    || first == TokenKind::LowercaseIdent
+            SyntaxKind::ColonColonEqual
+                if first == SyntaxKind::UppercaseIdent
+                    || first == SyntaxKind::LowercaseIdent
                     || first.is_type_keyword() =>
             {
-                if self.peek_nth(2).kind == TokenKind::KwTextualConvention {
+                if self.peek_nth(2).kind == SyntaxKind::KwTextualConvention {
                     return self.parse_textual_convention_with_assignment();
                 }
-                if first == TokenKind::LowercaseIdent {
+                if first == SyntaxKind::LowercaseIdent {
                     let name = self.text(self.peek().span).to_string();
                     self.emit_diagnostic_with(
                         DiagCode::BadIdentifierCase,
@@ -745,8 +747,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             // MACRO definition (name can be a macro keyword like OBJECT-TYPE)
-            TokenKind::KwMacro
-                if first == TokenKind::UppercaseIdent || first.is_macro_keyword() =>
+            SyntaxKind::KwMacro
+                if first == SyntaxKind::UppercaseIdent || first.is_macro_keyword() =>
             {
                 self.parse_macro_definition()
             }
@@ -767,14 +769,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObjectType)?;
+        self.expect(SyntaxKind::KwObjectType)?;
 
         // SYNTAX (required)
-        self.expect(TokenKind::KwSyntax)?;
+        self.expect(SyntaxKind::KwSyntax)?;
         let syntax = self.parse_syntax_clause()?;
 
         // UNITS (optional)
-        let units = if self.check(TokenKind::KwUnits) {
+        let units = if self.check(SyntaxKind::KwUnits) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -785,14 +787,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let access = self.parse_access_clause()?;
 
         // STATUS
-        let status = if self.check(TokenKind::KwStatus) {
+        let status = if self.check(SyntaxKind::KwStatus) {
             Some(self.parse_status_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION (optional)
-        let description = if self.check(TokenKind::KwDescription) {
+        let description = if self.check(SyntaxKind::KwDescription) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -806,14 +808,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (index, augments) = self.parse_index_or_augments()?;
 
         // DEFVAL (optional)
-        let defval = if self.check(TokenKind::KwDefval) {
+        let defval = if self.check(SyntaxKind::KwDefval) {
             Some(self.parse_defval_clause()?)
         } else {
             None
         };
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -840,31 +842,31 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwModuleIdentity)?;
+        self.expect(SyntaxKind::KwModuleIdentity)?;
 
         // LAST-UPDATED
-        self.expect(TokenKind::KwLastUpdated)?;
+        self.expect(SyntaxKind::KwLastUpdated)?;
         let last_updated = self.parse_quoted_string()?;
 
         // ORGANIZATION
-        self.expect(TokenKind::KwOrganization)?;
+        self.expect(SyntaxKind::KwOrganization)?;
         let organization = self.parse_quoted_string()?;
 
         // CONTACT-INFO
-        self.expect(TokenKind::KwContactInfo)?;
+        self.expect(SyntaxKind::KwContactInfo)?;
         let contact_info = self.parse_quoted_string()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REVISION clauses (0+)
         let mut revisions = Vec::new();
-        while self.check(TokenKind::KwRevision) {
+        while self.check(SyntaxKind::KwRevision) {
             let rev_start = self.current_span();
             self.advance();
             let date = self.parse_quoted_string()?;
-            self.expect(TokenKind::KwDescription)?;
+            self.expect(SyntaxKind::KwDescription)?;
             let rev_desc = self.parse_quoted_string()?;
             let rev_span = cover(rev_start, rev_desc.span);
             revisions.push(RevisionClause {
@@ -875,7 +877,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -898,20 +900,20 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObjectIdentity)?;
+        self.expect(SyntaxKind::KwObjectIdentity)?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -932,10 +934,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwNotificationType)?;
+        self.expect(SyntaxKind::KwNotificationType)?;
 
         // OBJECTS (optional)
-        let objects = if self.check(TokenKind::KwObjects) {
+        let objects = if self.check(SyntaxKind::KwObjects) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -946,14 +948,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -974,15 +976,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::KwTrapType)?;
+        self.expect(SyntaxKind::KwTrapType)?;
 
         // ENTERPRISE
-        self.expect(TokenKind::KwEnterprise)?;
+        self.expect(SyntaxKind::KwEnterprise)?;
         let enterprise_token = self.expect_identifier()?;
         let enterprise = self.make_ident(enterprise_token);
 
         // VARIABLES (optional)
-        let variables = if self.check(TokenKind::KwVariables) {
+        let variables = if self.check(SyntaxKind::KwVariables) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -990,7 +992,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // DESCRIPTION (optional)
-        let description = if self.check(TokenKind::KwDescription) {
+        let description = if self.check(SyntaxKind::KwDescription) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -1001,8 +1003,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let reference = self.parse_optional_reference()?;
 
         // ::= number
-        self.expect(TokenKind::ColonColonEqual)?;
-        let num_token = self.expect(TokenKind::Number)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        let num_token = self.expect(SyntaxKind::Number)?;
         let trap_number = self.parse_u32(num_token.span, "trap number")?;
 
         let span = cover(start, self.last_span);
@@ -1023,7 +1025,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::KwTextualConvention)?;
+        self.expect(SyntaxKind::KwTextualConvention)?;
 
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
@@ -1046,8 +1048,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::ColonColonEqual)?;
-        self.expect(TokenKind::KwTextualConvention)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwTextualConvention)?;
 
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
@@ -1066,7 +1068,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_textual_convention_body(&mut self) -> Result<TcBody, Diagnostic> {
         // DISPLAY-HINT (optional)
-        let display_hint = if self.check(TokenKind::KwDisplayHint) {
+        let display_hint = if self.check(SyntaxKind::KwDisplayHint) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -1077,14 +1079,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // SYNTAX
-        self.expect(TokenKind::KwSyntax)?;
+        self.expect(SyntaxKind::KwSyntax)?;
         let syntax = self.parse_syntax_clause()?;
 
         Ok((display_hint, status, description, reference, syntax))
@@ -1096,7 +1098,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let syntax = self.parse_type_syntax()?;
 
         let span = cover(start, syntax.span());
@@ -1114,9 +1116,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObject)?;
-        self.expect(TokenKind::KwIdentifier)?;
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwObject)?;
+        self.expect(SyntaxKind::KwIdentifier)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -1129,8 +1131,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_object_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
-            TokenKind::KwObjectGroup,
-            TokenKind::KwObjects,
+            SyntaxKind::KwObjectGroup,
+            SyntaxKind::KwObjects,
             |name, objects, status, description, reference, oid, span| {
                 Definition::ObjectGroup(ObjectGroupDef {
                     name,
@@ -1147,8 +1149,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_notification_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
-            TokenKind::KwNotificationGroup,
-            TokenKind::KwNotifications,
+            SyntaxKind::KwNotificationGroup,
+            SyntaxKind::KwNotifications,
             |name, notifications, status, description, reference, oid, span| {
                 Definition::NotificationGroup(NotificationGroupDef {
                     name,
@@ -1165,8 +1167,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_group_def<F>(
         &mut self,
-        macro_kw: TokenKind,
-        members_kw: TokenKind,
+        macro_kw: SyntaxKind,
+        members_kw: SyntaxKind,
         build: F,
     ) -> Result<Definition, Diagnostic>
     where
@@ -1196,14 +1198,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -1225,13 +1227,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwModuleCompliance)?;
+        self.expect(SyntaxKind::KwModuleCompliance)?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
@@ -1239,12 +1241,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // MODULE clauses (0+)
         let mut modules = Vec::new();
-        while self.check(TokenKind::KwModule) {
+        while self.check(SyntaxKind::KwModule) {
             modules.push(self.parse_compliance_module()?);
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -1261,10 +1263,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_compliance_module(&mut self) -> Result<ComplianceModule, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwModule)?;
+        self.expect(SyntaxKind::KwModule)?;
 
         // Optional module name
-        let module_name = if self.check(TokenKind::UppercaseIdent) {
+        let module_name = if self.check(SyntaxKind::UppercaseIdent) {
             let token = self.advance();
             Some(self.make_ident(token))
         } else {
@@ -1272,14 +1274,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Optional module OID
-        let module_oid = if self.check(TokenKind::LBrace) {
+        let module_oid = if self.check(SyntaxKind::LBrace) {
             Some(self.parse_oid_assignment()?)
         } else {
             None
         };
 
         // Optional MANDATORY-GROUPS
-        let mandatory_groups = if self.check(TokenKind::KwMandatoryGroups) {
+        let mandatory_groups = if self.check(SyntaxKind::KwMandatoryGroups) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -1288,8 +1290,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // GROUP and OBJECT refinements
         let mut compliances = Vec::new();
-        while self.check(TokenKind::KwGroup) || self.check(TokenKind::KwObject) {
-            if self.check(TokenKind::KwGroup) {
+        while self.check(SyntaxKind::KwGroup) || self.check(SyntaxKind::KwObject) {
+            if self.check(SyntaxKind::KwGroup) {
                 compliances.push(Compliance::Group(self.parse_compliance_group()?));
             } else {
                 compliances.push(Compliance::Object(Box::new(
@@ -1310,11 +1312,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwGroup)?;
+        self.expect(SyntaxKind::KwGroup)?;
 
         let group = self.parse_identifier_as_ident()?;
 
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         let span = cover(start, description.span);
@@ -1327,7 +1329,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_compliance_object(&mut self) -> Result<ComplianceObject, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwObject)?;
+        self.expect(SyntaxKind::KwObject)?;
 
         let object = self.parse_identifier_as_ident()?;
 
@@ -1335,14 +1337,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (syntax, write_syntax) = self.parse_optional_syntax_clauses()?;
 
         // Optional MIN-ACCESS
-        let min_access = if self.check(TokenKind::KwMinAccess) {
+        let min_access = if self.check(SyntaxKind::KwMinAccess) {
             Some(self.parse_access_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         let span = cover(start, description.span);
@@ -1359,14 +1361,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_optional_syntax_clauses(
         &mut self,
     ) -> Result<(Option<SyntaxClause>, Option<SyntaxClause>), Diagnostic> {
-        let syntax = if self.check(TokenKind::KwSyntax) {
+        let syntax = if self.check(SyntaxKind::KwSyntax) {
             self.advance();
             Some(self.parse_syntax_clause()?)
         } else {
             None
         };
 
-        let write_syntax = if self.check(TokenKind::KwWriteSyntax) {
+        let write_syntax = if self.check(SyntaxKind::KwWriteSyntax) {
             self.advance();
             Some(self.parse_syntax_clause()?)
         } else {
@@ -1383,17 +1385,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwAgentCapabilities)?;
+        self.expect(SyntaxKind::KwAgentCapabilities)?;
 
         // PRODUCT-RELEASE
-        self.expect(TokenKind::KwProductRelease)?;
+        self.expect(SyntaxKind::KwProductRelease)?;
         let product_release = self.parse_quoted_string()?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
@@ -1401,12 +1403,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // SUPPORTS clauses (0+)
         let mut supports = Vec::new();
-        while self.check(TokenKind::KwSupports) {
+        while self.check(SyntaxKind::KwSupports) {
             supports.push(self.parse_supports_module()?);
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
         let span = cover(start, oid.span);
@@ -1424,24 +1426,24 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_supports_module(&mut self) -> Result<SupportsModule, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwSupports)?;
+        self.expect(SyntaxKind::KwSupports)?;
 
         let module_name = self.parse_identifier_as_ident()?;
 
         // Optional module OID
-        let module_oid = if self.check(TokenKind::LBrace) {
+        let module_oid = if self.check(SyntaxKind::LBrace) {
             Some(self.parse_oid_assignment()?)
         } else {
             None
         };
 
         // INCLUDES
-        self.expect(TokenKind::KwIncludes)?;
+        self.expect(SyntaxKind::KwIncludes)?;
         let includes = self.parse_braced_identifier_list()?;
 
         // VARIATION clauses (0+)
         let mut variations = Vec::new();
-        while self.check(TokenKind::KwVariation) {
+        while self.check(SyntaxKind::KwVariation) {
             variations.push(self.parse_variation_clause()?);
         }
 
@@ -1457,7 +1459,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_variation_clause(&mut self) -> Result<Variation, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwVariation)?;
+        self.expect(SyntaxKind::KwVariation)?;
 
         let name = self.parse_identifier_as_ident()?;
 
@@ -1465,14 +1467,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (syntax, write_syntax) = self.parse_optional_syntax_clauses()?;
 
         // Optional ACCESS
-        let access = if self.check(TokenKind::KwAccess) {
+        let access = if self.check(SyntaxKind::KwAccess) {
             Some(self.parse_access_clause()?)
         } else {
             None
         };
 
         // Optional CREATION-REQUIRES
-        let creation_requires = if self.check(TokenKind::KwCreationRequires) {
+        let creation_requires = if self.check(SyntaxKind::KwCreationRequires) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -1480,14 +1482,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Optional DEFVAL
-        let defval = if self.check(TokenKind::KwDefval) {
+        let defval = if self.check(SyntaxKind::KwDefval) {
             Some(self.parse_defval_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         let span = cover(start, description.span);
@@ -1518,10 +1520,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // Actually the lexer transitions to InMacro when it sees the MACRO keyword.
         // So after our advance() of the name, the MACRO keyword is in buf[0].
         // We consume it, then the lexer has entered InMacro and will emit KwEnd.
-        self.expect(TokenKind::KwMacro)?;
+        self.expect(SyntaxKind::KwMacro)?;
         // Now the lexer is in InMacro mode. The next non-comment token from
         // the buffer will be KwEnd (or Eof if malformed).
-        if self.check(TokenKind::KwEnd) {
+        if self.check(SyntaxKind::KwEnd) {
             self.advance();
         }
 
@@ -1537,13 +1539,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_access_clause(&mut self) -> Result<AccessClause, Diagnostic> {
         let start = self.current_span();
 
-        let keyword = if self.check(TokenKind::KwMaxAccess) {
+        let keyword = if self.check(SyntaxKind::KwMaxAccess) {
             self.advance();
             AccessKeyword::MaxAccess
-        } else if self.check(TokenKind::KwAccess) {
+        } else if self.check(SyntaxKind::KwAccess) {
             self.advance();
             AccessKeyword::Access
-        } else if self.check(TokenKind::KwMinAccess) {
+        } else if self.check(SyntaxKind::KwMinAccess) {
             self.advance();
             AccessKeyword::MinAccess
         } else {
@@ -1551,31 +1553,31 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         let value = match self.peek().kind {
-            TokenKind::KwReadOnly => {
+            SyntaxKind::KwReadOnly => {
                 self.advance();
                 Access::ReadOnly
             }
-            TokenKind::KwReadWrite => {
+            SyntaxKind::KwReadWrite => {
                 self.advance();
                 Access::ReadWrite
             }
-            TokenKind::KwReadCreate => {
+            SyntaxKind::KwReadCreate => {
                 self.advance();
                 Access::ReadCreate
             }
-            TokenKind::KwNotAccessible => {
+            SyntaxKind::KwNotAccessible => {
                 self.advance();
                 Access::NotAccessible
             }
-            TokenKind::KwAccessibleForNotify => {
+            SyntaxKind::KwAccessibleForNotify => {
                 self.advance();
                 Access::AccessibleForNotify
             }
-            TokenKind::KwWriteOnly => {
+            SyntaxKind::KwWriteOnly => {
                 self.advance();
                 Access::WriteOnly
             }
-            TokenKind::KwNotImplemented => {
+            SyntaxKind::KwNotImplemented => {
                 self.advance();
                 Access::NotImplemented
             }
@@ -1592,26 +1594,26 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_status_clause(&mut self) -> Result<StatusClause, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwStatus)?;
+        self.expect(SyntaxKind::KwStatus)?;
 
         let value = match self.peek().kind {
-            TokenKind::KwCurrent => {
+            SyntaxKind::KwCurrent => {
                 self.advance();
                 Status::Current
             }
-            TokenKind::KwDeprecated => {
+            SyntaxKind::KwDeprecated => {
                 self.advance();
                 Status::Deprecated
             }
-            TokenKind::KwObsolete => {
+            SyntaxKind::KwObsolete => {
                 self.advance();
                 Status::Obsolete
             }
-            TokenKind::KwMandatory => {
+            SyntaxKind::KwMandatory => {
                 self.advance();
                 Status::Mandatory
             }
-            TokenKind::KwOptional => {
+            SyntaxKind::KwOptional => {
                 self.advance();
                 Status::Optional
             }
@@ -1625,19 +1627,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_index_or_augments(
         &mut self,
     ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), Diagnostic> {
-        if self.check(TokenKind::KwIndex) {
+        if self.check(SyntaxKind::KwIndex) {
             let start = self.current_span();
             self.advance();
-            self.expect(TokenKind::LBrace)?;
+            self.expect(SyntaxKind::LBrace)?;
 
             let mut items = Vec::new();
             loop {
-                if self.check(TokenKind::RBrace) || self.is_eof() {
+                if self.check(SyntaxKind::RBrace) || self.is_eof() {
                     break;
                 }
 
                 let item_start = self.current_span();
-                let implied = if self.check(TokenKind::KwImplied) {
+                let implied = if self.check(SyntaxKind::KwImplied) {
                     self.advance();
                     true
                 } else {
@@ -1648,7 +1650,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
                 // Special case: merge OCTET STRING into single identifier
                 let object =
-                    if obj_token.kind == TokenKind::KwOctet && self.check(TokenKind::KwString) {
+                    if obj_token.kind == SyntaxKind::KwOctet && self.check(SyntaxKind::KwString) {
                         let string_token = self.advance();
                         Ident {
                             name: "OCTET STRING".to_string(),
@@ -1665,25 +1667,25 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: item_span,
                 });
 
-                if self.check(TokenKind::Comma) {
+                if self.check(SyntaxKind::Comma) {
                     self.advance();
                 } else {
                     break;
                 }
             }
 
-            self.expect(TokenKind::RBrace)?;
+            self.expect(SyntaxKind::RBrace)?;
             let span = cover(start, self.last_span);
             return Ok((Some(IndexClause { items, span }), None));
         }
 
-        if self.check(TokenKind::KwAugments) {
+        if self.check(SyntaxKind::KwAugments) {
             let start = self.current_span();
             self.advance();
-            self.expect(TokenKind::LBrace)?;
+            self.expect(SyntaxKind::LBrace)?;
             let target_token = self.expect_identifier()?;
             let target = self.make_ident(target_token);
-            self.expect(TokenKind::RBrace)?;
+            self.expect(SyntaxKind::RBrace)?;
             let span = cover(start, self.last_span);
             return Ok((None, Some(AugmentsClause { target, span })));
         }
@@ -1693,19 +1695,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_defval_clause(&mut self) -> Result<DefValClause, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::KwDefval)?;
-        self.expect(TokenKind::LBrace)?;
+        self.expect(SyntaxKind::KwDefval)?;
+        self.expect(SyntaxKind::LBrace)?;
 
         let value = self.parse_defval()?;
 
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
         let span = cover(start, self.last_span);
         Ok(DefValClause { value, span })
     }
 
     fn parse_defval(&mut self) -> Result<DefVal, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
                 let text = self.text(token.span);
                 // Try i64 first, then u64
@@ -1718,16 +1720,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     Ok(DefVal::Integer(0))
                 }
             }
-            TokenKind::NegativeNumber => {
+            SyntaxKind::NegativeNumber => {
                 let token = self.advance();
                 let v = self.parse_i64(token.span, "DEFVAL number")?;
                 Ok(DefVal::Integer(v))
             }
-            TokenKind::QuotedString => {
+            SyntaxKind::QuotedString => {
                 let qs = self.parse_quoted_string()?;
                 Ok(DefVal::String(qs))
             }
-            TokenKind::HexString => {
+            SyntaxKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let content = strip_string_literal(&full_text);
@@ -1736,7 +1738,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: token.span,
                 })
             }
-            TokenKind::BinString => {
+            SyntaxKind::BinString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let content = strip_string_literal(&full_text);
@@ -1745,11 +1747,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: token.span,
                 })
             }
-            TokenKind::LowercaseIdent | TokenKind::UppercaseIdent => {
+            SyntaxKind::LowercaseIdent | SyntaxKind::UppercaseIdent => {
                 let token = self.advance();
                 Ok(DefVal::Identifier(self.make_ident(token)))
             }
-            TokenKind::LBrace => {
+            SyntaxKind::LBrace => {
                 self.advance(); // consume opening brace
                 self.parse_defval_braced_content()
             }
@@ -1773,7 +1775,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let start = self.current_span();
 
         // Empty braces: BITS {}
-        if self.check(TokenKind::RBrace) {
+        if self.check(SyntaxKind::RBrace) {
             let span = cover(start, self.current_span());
             self.advance(); // consume inner closing brace
             return Ok(DefVal::Bits {
@@ -1785,10 +1787,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // First token determines interpretation
         let kind = self.peek().kind;
 
-        if kind == TokenKind::Number {
+        if kind == SyntaxKind::Number {
             // OID numeric: { 1 3 6 1 }
             let result = self.parse_defval_oid_components(start)?;
-            self.expect(TokenKind::RBrace)?; // consume inner closing brace
+            self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
             return Ok(result);
         }
 
@@ -1797,15 +1799,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let first_ident = self.make_ident(first_token);
 
             // If next is comma or RBrace, this is BITS labels
-            if self.check(TokenKind::Comma) || self.check(TokenKind::RBrace) {
+            if self.check(SyntaxKind::Comma) || self.check(SyntaxKind::RBrace) {
                 let result = self.parse_defval_bits_labels(start, first_ident)?;
-                self.expect(TokenKind::RBrace)?; // consume inner closing brace
+                self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
                 return Ok(result);
             }
 
             // Otherwise this is OID starting with a name
             let result = self.parse_defval_oid_with_first_ident(start, first_ident)?;
-            self.expect(TokenKind::RBrace)?; // consume inner closing brace
+            self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
             return Ok(result);
         }
 
@@ -1823,9 +1825,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     ) -> Result<DefVal, Diagnostic> {
         let mut labels = vec![first];
 
-        while self.check(TokenKind::Comma) {
+        while self.check(SyntaxKind::Comma) {
             self.advance(); // consume comma
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
             let token = self.expect_enum_label()?;
@@ -1844,11 +1846,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         first: Ident,
     ) -> Result<DefVal, Diagnostic> {
         // First component might be name(number)
-        let first_component = if self.check(TokenKind::LParen) {
+        let first_component = if self.check(SyntaxKind::LParen) {
             self.advance();
-            let num_token = self.expect(TokenKind::Number)?;
+            let num_token = self.expect(SyntaxKind::Number)?;
             let num = self.parse_u32(num_token.span, "OID component")?;
-            self.expect(TokenKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
             OidComponent::NamedNumber {
                 span: cover(first.span, self.last_span),
                 name: first,
@@ -1881,11 +1883,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         &mut self,
         components: &mut Vec<OidComponent>,
     ) -> Result<(), Diagnostic> {
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
             let kind = self.peek().kind;
-            if kind == TokenKind::Number
-                || kind == TokenKind::LowercaseIdent
-                || kind == TokenKind::UppercaseIdent
+            if kind == SyntaxKind::Number
+                || kind == SyntaxKind::LowercaseIdent
+                || kind == SyntaxKind::UppercaseIdent
             {
                 let comp = self.parse_oid_component()?;
                 components.push(comp);
@@ -1909,9 +1911,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let start = self.current_span();
 
         let base = match self.peek().kind {
-            TokenKind::KwInteger => {
+            SyntaxKind::KwInteger => {
                 self.advance();
-                if self.check(TokenKind::LBrace) {
+                if self.check(SyntaxKind::LBrace) {
                     // INTEGER { enum-values }
                     let named_numbers = self.parse_named_numbers()?;
                     let span = cover(start, self.last_span);
@@ -1928,12 +1930,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
             }
 
-            TokenKind::KwBits => {
+            SyntaxKind::KwBits => {
                 self.advance();
-                if self.check(TokenKind::LBrace) {
-                    self.expect(TokenKind::LBrace)?;
+                if self.check(SyntaxKind::LBrace) {
+                    self.expect(SyntaxKind::LBrace)?;
                     let named_bits = self.parse_named_number_list()?;
-                    self.expect(TokenKind::RBrace)?;
+                    self.expect(SyntaxKind::RBrace)?;
                     let span = cover(start, self.last_span);
                     TypeSyntax::Bits { named_bits, span }
                 } else {
@@ -1944,10 +1946,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
             }
 
-            TokenKind::KwOctet => {
+            SyntaxKind::KwOctet => {
                 self.advance();
-                self.expect(TokenKind::KwString)?;
-                if self.check(TokenKind::LParen) {
+                self.expect(SyntaxKind::KwString)?;
+                if self.check(SyntaxKind::LParen) {
                     let constraint = self.parse_constraint()?;
                     let span = cover(start, constraint.span());
                     TypeSyntax::Constrained {
@@ -1964,17 +1966,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
             }
 
-            TokenKind::KwObject => {
+            SyntaxKind::KwObject => {
                 self.advance();
-                self.expect(TokenKind::KwIdentifier)?;
+                self.expect(SyntaxKind::KwIdentifier)?;
                 TypeSyntax::ObjectIdentifier {
                     span: cover(start, self.last_span),
                 }
             }
 
-            TokenKind::KwSequence => {
+            SyntaxKind::KwSequence => {
                 self.advance();
-                if self.check(TokenKind::KwOf) {
+                if self.check(SyntaxKind::KwOf) {
                     // SEQUENCE OF EntryType
                     self.advance();
                     let entry_token = self.expect_identifier()?;
@@ -1985,9 +1987,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     }
                 } else {
                     // SEQUENCE { fields }
-                    self.expect(TokenKind::LBrace)?;
+                    self.expect(SyntaxKind::LBrace)?;
                     let fields = self.parse_sequence_fields()?;
-                    self.expect(TokenKind::RBrace)?;
+                    self.expect(SyntaxKind::RBrace)?;
                     TypeSyntax::Sequence {
                         fields,
                         span: cover(start, self.last_span),
@@ -1995,11 +1997,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
             }
 
-            TokenKind::KwChoice => {
+            SyntaxKind::KwChoice => {
                 self.advance();
-                self.expect(TokenKind::LBrace)?;
+                self.expect(SyntaxKind::LBrace)?;
                 let alternatives = self.parse_sequence_fields()?;
-                self.expect(TokenKind::RBrace)?;
+                self.expect(SyntaxKind::RBrace)?;
                 TypeSyntax::Choice {
                     alternatives,
                     span: cover(start, self.last_span),
@@ -2007,16 +2009,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             // Application type keywords
-            TokenKind::KwCounter32
-            | TokenKind::KwCounter64
-            | TokenKind::KwGauge32
-            | TokenKind::KwUnsigned32
-            | TokenKind::KwTimeTicks
-            | TokenKind::KwIpAddress
-            | TokenKind::KwOpaque
-            | TokenKind::KwCounter
-            | TokenKind::KwGauge
-            | TokenKind::KwNetworkAddress => {
+            SyntaxKind::KwCounter32
+            | SyntaxKind::KwCounter64
+            | SyntaxKind::KwGauge32
+            | SyntaxKind::KwUnsigned32
+            | SyntaxKind::KwTimeTicks
+            | SyntaxKind::KwIpAddress
+            | SyntaxKind::KwOpaque
+            | SyntaxKind::KwCounter
+            | SyntaxKind::KwGauge
+            | SyntaxKind::KwNetworkAddress => {
                 let token = self.advance();
                 let name = self.text(token.span).to_string();
                 TypeSyntax::TypeRef(Ident {
@@ -2030,17 +2032,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             // an opaque type reference so those foundation modules can pass
             // through the ordinary parser without admitting other reserved
             // ASN.1 keywords as type names.
-            TokenKind::ForbiddenKeyword if self.text(self.peek().span) == "NULL" => {
+            SyntaxKind::ForbiddenKeyword if self.text(self.peek().span) == "NULL" => {
                 let token = self.advance();
                 TypeSyntax::TypeRef(self.make_ident(token))
             }
 
             // Named type reference (identifier)
-            TokenKind::UppercaseIdent | TokenKind::LowercaseIdent => {
+            SyntaxKind::UppercaseIdent | SyntaxKind::LowercaseIdent => {
                 let token = self.advance();
                 let ident = self.make_ident(token);
 
-                if token.kind == TokenKind::LowercaseIdent {
+                if token.kind == SyntaxKind::LowercaseIdent {
                     self.emit_diagnostic_with(DiagCode::BadIdentifierCase, token.span, || {
                         format!(
                             "type reference {:?} should start with an uppercase letter",
@@ -2049,7 +2051,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     });
                 }
 
-                if self.check(TokenKind::LParen) {
+                if self.check(SyntaxKind::LParen) {
                     // Type with constraint
                     let constraint = self.parse_constraint()?;
                     let span = cover(start, constraint.span());
@@ -2058,7 +2060,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                         constraint,
                         span,
                     }
-                } else if self.check(TokenKind::LBrace) {
+                } else if self.check(SyntaxKind::LBrace) {
                     // Restricted integer enum: TypeName { val1(1), val2(2) }
                     let named_numbers = self.parse_named_numbers()?;
                     let span = cover(start, self.last_span);
@@ -2073,19 +2075,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             // Tagged type: [APPLICATION n] IMPLICIT Type
-            TokenKind::LBracket => {
+            SyntaxKind::LBracket => {
                 self.advance();
                 // Skip tag class keyword if present
-                if self.check(TokenKind::KwApplication) || self.check(TokenKind::KwUniversal) {
+                if self.check(SyntaxKind::KwApplication) || self.check(SyntaxKind::KwUniversal) {
                     self.advance();
                 }
                 // Skip tag number
-                if self.check(TokenKind::Number) {
+                if self.check(SyntaxKind::Number) {
                     self.advance();
                 }
-                self.expect(TokenKind::RBracket)?;
+                self.expect(SyntaxKind::RBracket)?;
                 // Skip IMPLICIT if present
-                if self.check(TokenKind::KwImplicit) {
+                if self.check(SyntaxKind::KwImplicit) {
                     self.advance();
                 }
                 let underlying = self.parse_type_syntax()?;
@@ -2102,7 +2104,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Post-processing: check for trailing constraint on non-constrained base
-        if self.check(TokenKind::LParen) && !matches!(base, TypeSyntax::Constrained { .. }) {
+        if self.check(SyntaxKind::LParen) && !matches!(base, TypeSyntax::Constrained { .. }) {
             let constraint = self.parse_constraint()?;
             let span = cover(start, constraint.span());
             return Ok(TypeSyntax::Constrained {
@@ -2119,21 +2121,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_constraint(&mut self) -> Result<Constraint, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::LParen)?;
+        self.expect(SyntaxKind::LParen)?;
 
-        if self.check(TokenKind::KwSize) {
+        if self.check(SyntaxKind::KwSize) {
             // SIZE constraint
             self.advance();
-            self.expect(TokenKind::LParen)?;
+            self.expect(SyntaxKind::LParen)?;
             let ranges = self.parse_range_list()?;
-            self.expect(TokenKind::RParen)?;
-            self.expect(TokenKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
             let span = cover(start, self.last_span);
             Ok(Constraint::Size { ranges, span })
         } else {
             // Value range constraint
             let ranges = self.parse_range_list()?;
-            self.expect(TokenKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
             let span = cover(start, self.last_span);
             Ok(Constraint::Range { ranges, span })
         }
@@ -2146,7 +2148,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let range_start = self.current_span();
             let min = self.parse_range_value()?;
 
-            let max = if self.check(TokenKind::DotDot) {
+            let max = if self.check(SyntaxKind::DotDot) {
                 self.advance();
                 Some(self.parse_range_value()?)
             } else {
@@ -2160,7 +2162,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 span: range_span,
             });
 
-            if self.check(TokenKind::Pipe) {
+            if self.check(SyntaxKind::Pipe) {
                 self.advance();
             } else {
                 break;
@@ -2172,7 +2174,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_range_value(&mut self) -> Result<RangeValue, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
                 let text = self.text(token.span);
                 if let Ok(v) = text.parse::<u64>() {
@@ -2186,7 +2188,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     Ok(RangeValue::Raw(text.into_owned()))
                 }
             }
-            TokenKind::NegativeNumber => {
+            SyntaxKind::NegativeNumber => {
                 let token = self.advance();
                 let text = self.text(token.span);
                 if let Ok(v) = text.parse::<i64>() {
@@ -2200,7 +2202,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     Ok(RangeValue::Raw(text.into_owned()))
                 }
             }
-            TokenKind::HexString => {
+            SyntaxKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let hex_part = strip_string_literal(&full_text);
@@ -2220,7 +2222,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     }
                 }
             }
-            TokenKind::UppercaseIdent | TokenKind::ForbiddenKeyword => {
+            SyntaxKind::UppercaseIdent | SyntaxKind::ForbiddenKeyword => {
                 let token = self.advance();
                 Ok(RangeValue::Named(self.make_ident(token)))
             }
@@ -2231,9 +2233,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     // ---- Named numbers and sequence fields ----
 
     fn parse_named_numbers(&mut self) -> Result<Vec<NamedNumber>, Diagnostic> {
-        self.expect(TokenKind::LBrace)?;
+        self.expect(SyntaxKind::LBrace)?;
         let list = self.parse_named_number_list()?;
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
         Ok(list)
     }
 
@@ -2241,7 +2243,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut items = Vec::new();
 
         loop {
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
 
@@ -2249,17 +2251,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let label_token = self.expect_enum_label()?;
             let label = self.make_ident(label_token);
 
-            self.expect(TokenKind::LParen)?;
+            self.expect(SyntaxKind::LParen)?;
 
-            let value = if self.check(TokenKind::NegativeNumber) {
+            let value = if self.check(SyntaxKind::NegativeNumber) {
                 let num_token = self.advance();
                 self.parse_i64(num_token.span, "named number")?
             } else {
-                let num_token = self.expect(TokenKind::Number)?;
+                let num_token = self.expect(SyntaxKind::Number)?;
                 self.parse_i64(num_token.span, "named number")?
             };
 
-            self.expect(TokenKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
 
             let nn_span = cover(nn_start, self.last_span);
             items.push(NamedNumber {
@@ -2268,9 +2270,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 span: nn_span,
             });
 
-            if self.check(TokenKind::Comma) {
+            if self.check(SyntaxKind::Comma) {
                 self.advance();
-            } else if !self.check(TokenKind::RBrace) && !self.is_eof() {
+            } else if !self.check(SyntaxKind::RBrace) && !self.is_eof() {
                 // Recovery: missing comma before another named number.
                 self.emit_diagnostic(
                     DiagCode::MissingComma,
@@ -2286,7 +2288,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_sequence_fields(&mut self) -> Result<Vec<SequenceField>, Diagnostic> {
         let mut fields = Vec::new();
 
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
             let field_start = self.current_span();
             let name_token = self.expect_identifier()?;
             let name = self.make_ident(name_token);
@@ -2301,7 +2303,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             });
 
             // Consume comma if present, but tolerate missing commas
-            if self.check(TokenKind::Comma) {
+            if self.check(SyntaxKind::Comma) {
                 self.advance();
             }
         }
@@ -2313,15 +2315,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_oid_assignment(&mut self) -> Result<OidAssignment, Diagnostic> {
         let start = self.current_span();
-        self.expect(TokenKind::LBrace)?;
+        self.expect(SyntaxKind::LBrace)?;
 
         let mut components = Vec::new();
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
             let comp = self.parse_oid_component()?;
             components.push(comp);
         }
 
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
 
         let span = cover(start, self.last_span);
         Ok(OidAssignment { components, span })
@@ -2329,7 +2331,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_oid_component(&mut self) -> Result<OidComponent, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
                 let value = self.parse_u32(token.span, "OID component")?;
                 Ok(OidComponent::Number {
@@ -2337,24 +2339,24 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: token.span,
                 })
             }
-            TokenKind::LowercaseIdent | TokenKind::UppercaseIdent => {
+            SyntaxKind::LowercaseIdent | SyntaxKind::UppercaseIdent => {
                 let token = self.advance();
                 let ident = self.make_ident(token);
 
                 // Check for qualified name: Module.name
-                if self.check(TokenKind::Dot) && token.kind == TokenKind::UppercaseIdent {
+                if self.check(SyntaxKind::Dot) && token.kind == SyntaxKind::UppercaseIdent {
                     let next = self.peek_nth(1).kind;
-                    if next == TokenKind::LowercaseIdent || next == TokenKind::UppercaseIdent {
+                    if next == SyntaxKind::LowercaseIdent || next == SyntaxKind::UppercaseIdent {
                         self.advance(); // consume dot
                         let name_token = self.advance();
                         let name_ident = self.make_ident(name_token);
 
                         // Check for qualified named number: Module.name(number)
-                        if self.check(TokenKind::LParen) {
+                        if self.check(SyntaxKind::LParen) {
                             self.advance();
-                            let num_token = self.expect(TokenKind::Number)?;
+                            let num_token = self.expect(SyntaxKind::Number)?;
                             let num = self.parse_u32(num_token.span, "OID component number")?;
-                            self.expect(TokenKind::RParen)?;
+                            self.expect(SyntaxKind::RParen)?;
                             let span = cover(ident.span, self.last_span);
                             return Ok(OidComponent::QualifiedNamedNumber {
                                 module_name: ident,
@@ -2374,11 +2376,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
 
                 // Check for named number: name(number)
-                if self.check(TokenKind::LParen) {
+                if self.check(SyntaxKind::LParen) {
                     self.advance();
-                    let num_token = self.expect(TokenKind::Number)?;
+                    let num_token = self.expect(SyntaxKind::Number)?;
                     let num = self.parse_u32(num_token.span, "OID component number")?;
-                    self.expect(TokenKind::RParen)?;
+                    self.expect(SyntaxKind::RParen)?;
                     let span = cover(ident.span, self.last_span);
                     return Ok(OidComponent::NamedNumber {
                         name: ident,

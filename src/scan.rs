@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::lexer::{Lexer, Token, TokenKind};
+use crate::lexer::{Lexer, SyntaxKind, Token};
 use crate::source::{SourceOrigin, SourceSet};
 use crate::types::DiagnosticConfig;
 
@@ -42,15 +42,15 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
     let mut macro_end_pending = false;
 
     while let Some(token) = tokens.get(i) {
-        if token.kind == TokenKind::Eof {
+        if token.kind == SyntaxKind::EofToken {
             break;
         }
 
         if in_module {
             match token.kind {
-                TokenKind::KwMacro => macro_end_pending = true,
-                TokenKind::KwEnd if macro_end_pending => macro_end_pending = false,
-                TokenKind::KwEnd => in_module = false,
+                SyntaxKind::KwMacro => macro_end_pending = true,
+                SyntaxKind::KwEnd if macro_end_pending => macro_end_pending = false,
+                SyntaxKind::KwEnd => in_module = false,
                 _ => {}
             }
             i = next_scan_token(&tokens, i + 1);
@@ -63,7 +63,7 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
         // loadable either.
         if !matches!(
             token.kind,
-            TokenKind::UppercaseIdent | TokenKind::ForbiddenKeyword
+            SyntaxKind::UppercaseIdent | SyntaxKind::ForbiddenKeyword
         ) {
             break;
         }
@@ -72,19 +72,19 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
 
         // Some old ASN.1 modules include an obsolete module OID between
         // the module name and DEFINITIONS.
-        if tokens.get(j).is_some_and(|t| t.kind == TokenKind::LBrace) {
+        if tokens.get(j).is_some_and(|t| t.kind == SyntaxKind::LBrace) {
             let mut depth = 0usize;
             while let Some(token) = tokens.get(j) {
                 match token.kind {
-                    TokenKind::LBrace => depth += 1,
-                    TokenKind::RBrace => {
+                    SyntaxKind::LBrace => depth += 1,
+                    SyntaxKind::RBrace => {
                         depth -= 1;
                         if depth == 0 {
                             j += 1;
                             break;
                         }
                     }
-                    TokenKind::Eof => break,
+                    SyntaxKind::EofToken => break,
                     _ => {}
                 }
                 j += 1;
@@ -97,7 +97,7 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
 
         if tokens
             .get(j)
-            .is_none_or(|t| t.kind != TokenKind::KwDefinitions)
+            .is_none_or(|t| t.kind != SyntaxKind::KwDefinitions)
         {
             break;
         }
@@ -105,13 +105,13 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
 
         if tokens
             .get(j)
-            .is_none_or(|t| t.kind != TokenKind::ColonColonEqual)
+            .is_none_or(|t| t.kind != SyntaxKind::ColonColonEqual)
         {
             break;
         }
         j = next_scan_token(&tokens, j + 1);
 
-        if tokens.get(j).is_none_or(|t| t.kind != TokenKind::KwBegin) {
+        if tokens.get(j).is_none_or(|t| t.kind != SyntaxKind::KwBegin) {
             break;
         }
 
@@ -130,7 +130,7 @@ pub fn scan_module_names(content: &[u8]) -> Vec<String> {
 }
 
 fn next_scan_token(tokens: &[Token], mut i: usize) -> usize {
-    while tokens.get(i).is_some_and(|t| t.kind == TokenKind::Comment) {
+    while tokens.get(i).is_some_and(|t| t.kind == SyntaxKind::Comment) {
         i += 1;
     }
     i

@@ -59,8 +59,9 @@
 //! modules expose pre-resolution stages for callers that need
 //! syntax-aware analysis before full resolution. The parser
 //! produces partial ASTs from broken input, which matters for
-//! editor integration where the user is mid-edit. Token types
-//! carry classification predicates for syntax highlighting.
+//! editor integration where the user is mid-edit. [`SyntaxKind`] is the single
+//! token/node inventory and carries fixed spellings, keyword aliases, and
+//! classification predicates for syntax highlighting and parser dispatch.
 //! See the [`compile`] module and the `tokens` example.
 //!
 //! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
@@ -779,6 +780,7 @@ pub mod parser;
 pub(crate) mod scan;
 pub mod searchpath;
 pub mod source;
+pub mod syntax;
 pub mod token;
 pub mod types;
 
@@ -803,7 +805,11 @@ pub use source::{
     SourceCandidate, SourceDocument, SourceId, SourceOrigin, SourceRange, SourceRangeError,
     SourceSet,
 };
-pub use token::{Token, TokenKind};
+pub use syntax::{
+    FORBIDDEN_KEYWORDS, KeywordCategory, SyntaxCategory, SyntaxKind, is_forbidden_keyword,
+    lookup_keyword,
+};
+pub use token::Token;
 pub use types::{
     Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, DiagnosticEntry,
     DiagnosticReport, DiagnosticReportError, IndexEncoding, Kind, Language, ReportingLevel,
@@ -828,5 +834,5 @@ pub mod raw {
 /// that need direct access to tokens, parsed AST, lowered IR, or the parser
 /// entry points themselves.
 pub mod compile {
-    pub use crate::{ast, ir, lower, parser, token};
+    pub use crate::{ast, ir, lower, parser, syntax, token};
 }

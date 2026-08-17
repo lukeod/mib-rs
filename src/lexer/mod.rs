@@ -4,11 +4,10 @@
 //! SMIv1/SMIv2 syntax including `--` comments, hex/binary string literals,
 //! MACRO body skipping, and EXPORTS body skipping.
 
-mod keyword;
 pub mod token;
 
-pub use keyword::{is_forbidden_keyword, lookup_keyword};
-pub use token::{Token, TokenKind};
+pub use crate::syntax::{SyntaxKind, is_forbidden_keyword, lookup_keyword};
+pub use token::Token;
 
 use crate::source::{SourceDocument, SourceRange};
 use crate::types::{DiagCode, Diagnostic, DiagnosticConfig};
@@ -54,14 +53,14 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     }
 
     /// Consume all source text and return the token stream and diagnostics.
-    /// The token stream always ends with `TokenKind::Eof`.
+    /// The token stream always ends with `SyntaxKind::EofToken`.
     pub fn tokenize(mut self) -> (Vec<Token>, Vec<Diagnostic>) {
         let estimated = (self.source.len() / 6).max(64);
         let mut tokens: Vec<Token> = Vec::with_capacity(estimated);
         tokens.extend(&mut self);
         // Always terminate with EOF
         tokens.push(Token {
-            kind: TokenKind::Eof,
+            kind: SyntaxKind::EofToken,
             span: self.span_from(self.pos),
         });
         (tokens, self.diagnostics)
@@ -69,7 +68,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
     /// Advance the lexer and return the next token.
     ///
-    /// Returns [`TokenKind::Eof`] when the input is exhausted. Unlike the
+    /// Returns [`SyntaxKind::EofToken`] when the input is exhausted. Unlike the
     /// [`Iterator`] impl, this always returns a token (never `None`).
     pub fn next_token(&mut self) -> Token {
         loop {
@@ -140,7 +139,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             .expect("lexer positions remain within the source document")
     }
 
-    fn token(&self, kind: TokenKind, start: usize) -> Token {
+    fn token(&self, kind: SyntaxKind, start: usize) -> Token {
         Token {
             kind,
             span: self.span_from(start),
@@ -178,7 +177,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         let start = self.pos;
 
         let b = match self.peek() {
-            None => return Some(self.token(TokenKind::Eof, start)),
+            None => return Some(self.token(SyntaxKind::EofToken, start)),
             Some(b) => b,
         };
 
@@ -190,20 +189,14 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             return None;
         }
 
-        // Single-character punctuation
-        if let Some(kind) = punctuation_kind(b) {
-            self.advance();
-            return Some(self.token(kind, start));
-        }
-
         // Dot or DotDot
         if b == b'.' {
             self.advance();
             if self.peek() == Some(b'.') {
                 self.advance();
-                return Some(self.token(TokenKind::DotDot, start));
+                return Some(self.token(SyntaxKind::DotDot, start));
             }
-            return Some(self.token(TokenKind::Dot, start));
+            return Some(self.token(SyntaxKind::Dot, start));
         }
 
         // Colon or ColonColonEqual
@@ -211,9 +204,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             self.pos += 1;
             if self.remaining().starts_with(b":=") {
                 self.pos += 2;
-                return Some(self.token(TokenKind::ColonColonEqual, start));
+                return Some(self.token(SyntaxKind::ColonColonEqual, start));
             }
-            return Some(self.token(TokenKind::Colon, start));
+            return Some(self.token(SyntaxKind::Colon, start));
         }
 
         // Minus or NegativeNumber
@@ -224,7 +217,13 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 return Some(self.scan_negative_number());
             }
             self.advance();
-            return Some(self.token(TokenKind::Minus, start));
+            return Some(self.token(SyntaxKind::Minus, start));
+        }
+
+        // Remaining single-character punctuation
+        if let Some(kind) = SyntaxKind::from_punctuation_byte(b) {
+            self.advance();
+            return Some(self.token(kind, start));
         }
 
         // Number
@@ -286,10 +285,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
         if let Some(kind) = lookup_keyword(text) {
             match kind {
-                TokenKind::KwMacro => {
+                SyntaxKind::KwMacro => {
                     self.state = LexerState::InMacro;
                 }
-                TokenKind::KwExports => {
+                SyntaxKind::KwExports => {
                     self.state = LexerState::InExports;
                 }
                 _ => {}
@@ -298,13 +297,13 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         }
 
         if is_forbidden_keyword(text) {
-            return self.token(TokenKind::ForbiddenKeyword, start);
+            return self.token(SyntaxKind::ForbiddenKeyword, start);
         }
 
         let kind = if is_uppercase {
-            TokenKind::UppercaseIdent
+            SyntaxKind::UppercaseIdent
         } else {
-            TokenKind::LowercaseIdent
+            SyntaxKind::LowercaseIdent
         };
         self.token(kind, start)
     }
@@ -333,9 +332,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         let digit_start = self.pos;
         self.scan_digits();
         let kind = if negative {
-            TokenKind::NegativeNumber
+            SyntaxKind::NegativeNumber
         } else {
-            TokenKind::Number
+            SyntaxKind::Number
         };
         let tok = self.token(kind, start);
         if self.pos - digit_start > 1 && self.source[digit_start] == b'0' {
@@ -363,11 +362,11 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                         span,
                         "unterminated string literal",
                     );
-                    return self.token(TokenKind::QuotedString, start);
+                    return self.token(SyntaxKind::QuotedString, start);
                 }
                 Some(b'"') => {
                     self.advance();
-                    return self.token(TokenKind::QuotedString, start);
+                    return self.token(SyntaxKind::QuotedString, start);
                 }
                 _ => {
                     self.advance();
@@ -403,7 +402,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 span,
                 "unterminated hex/binary string",
             );
-            return self.token(TokenKind::Error, start);
+            return self.token(SyntaxKind::ErrorToken, start);
         }
         self.advance(); // consume closing quote
 
@@ -432,7 +431,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                         format!("hex string length {} is not a multiple of 2", content_len),
                     );
                 }
-                self.token(TokenKind::HexString, start)
+                self.token(SyntaxKind::HexString, start)
             }
             Some(b'B' | b'b') => {
                 self.advance();
@@ -460,7 +459,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                         ),
                     );
                 }
-                self.token(TokenKind::BinString, start)
+                self.token(SyntaxKind::BinString, start)
             }
             _ => {
                 let span = self.span_from(start);
@@ -469,7 +468,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                     span,
                     "expected 'H' or 'B' suffix for hex/binary string",
                 );
-                self.token(TokenKind::Error, start)
+                self.token(SyntaxKind::ErrorToken, start)
             }
         }
     }
@@ -495,7 +494,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     /// The range covers from '--' through comment text, excluding the trailing newline.
     fn emit_comment(&mut self) -> Token {
         self.skip_comment_body(true);
-        let tok = self.token(TokenKind::Comment, self.comment_start);
+        let tok = self.token(SyntaxKind::Comment, self.comment_start);
         // Consume trailing newline if present (not part of comment span).
         if let Some(b) = self.peek()
             && (b == b'\n' || b == b'\r')
@@ -546,7 +545,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             if self.is_eof() {
                 let start = self.pos;
                 self.state = LexerState::Normal;
-                return self.token(TokenKind::Eof, start);
+                return self.token(SyntaxKind::EofToken, start);
             }
 
             if self.peek() == Some(b'"') {
@@ -575,7 +574,7 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                     };
                     if is_delimiter {
                         self.state = LexerState::Normal;
-                        return self.token(TokenKind::KwEnd, saved);
+                        return self.token(SyntaxKind::KwEnd, saved);
                     }
                     self.pos = saved;
                 }
@@ -598,13 +597,13 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 None => {
                     let start = self.pos;
                     self.state = LexerState::Normal;
-                    return self.token(TokenKind::Eof, start);
+                    return self.token(SyntaxKind::EofToken, start);
                 }
                 Some(b';') => {
                     let start = self.pos;
                     self.advance();
                     self.state = LexerState::Normal;
-                    return self.token(TokenKind::Semicolon, start);
+                    return self.token(SyntaxKind::Semicolon, start);
                 }
                 _ if self.is_comment_start() => {
                     self.skip_comment_inline();
@@ -630,26 +629,11 @@ impl<'src, 'cfg> Iterator for Lexer<'src, 'cfg> {
 
     fn next(&mut self) -> Option<Token> {
         let tok = self.next_token();
-        if tok.kind == TokenKind::Eof {
+        if tok.kind == SyntaxKind::EofToken {
             None
         } else {
             Some(tok)
         }
-    }
-}
-
-fn punctuation_kind(b: u8) -> Option<TokenKind> {
-    match b {
-        b'[' => Some(TokenKind::LBracket),
-        b']' => Some(TokenKind::RBracket),
-        b'{' => Some(TokenKind::LBrace),
-        b'}' => Some(TokenKind::RBrace),
-        b'(' => Some(TokenKind::LParen),
-        b')' => Some(TokenKind::RParen),
-        b';' => Some(TokenKind::Semicolon),
-        b',' => Some(TokenKind::Comma),
-        b'|' => Some(TokenKind::Pipe),
-        _ => None,
     }
 }
 
@@ -685,7 +669,7 @@ mod tests {
         with_document(input, |document| Lexer::new(document, &cfg).tokenize())
     }
 
-    fn kinds(tokens: &[Token]) -> Vec<TokenKind> {
+    fn kinds(tokens: &[Token]) -> Vec<SyntaxKind> {
         tokens.iter().map(|t| t.kind).collect()
     }
 
@@ -696,7 +680,7 @@ mod tests {
     #[test]
     fn empty_input() {
         let tokens = tokenize("");
-        assert_eq!(kinds(&tokens), vec![TokenKind::Eof]);
+        assert_eq!(kinds(&tokens), vec![SyntaxKind::EofToken]);
         assert_eq!(tokens[0].span.byte_range(), 0..0);
     }
 
@@ -728,7 +712,7 @@ mod tests {
     #[test]
     fn whitespace_only() {
         let tokens = tokenize("   \t\n\r\n  ");
-        assert_eq!(kinds(&tokens), vec![TokenKind::Eof]);
+        assert_eq!(kinds(&tokens), vec![SyntaxKind::EofToken]);
     }
 
     #[test]
@@ -737,16 +721,16 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LBracket,
-                TokenKind::RBracket,
-                TokenKind::LBrace,
-                TokenKind::RBrace,
-                TokenKind::LParen,
-                TokenKind::RParen,
-                TokenKind::Semicolon,
-                TokenKind::Comma,
-                TokenKind::Pipe,
-                TokenKind::Eof,
+                SyntaxKind::LBracket,
+                SyntaxKind::RBracket,
+                SyntaxKind::LBrace,
+                SyntaxKind::RBrace,
+                SyntaxKind::LParen,
+                SyntaxKind::RParen,
+                SyntaxKind::Semicolon,
+                SyntaxKind::Comma,
+                SyntaxKind::Pipe,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -757,11 +741,11 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::Dot,
-                TokenKind::DotDot,
-                TokenKind::Colon,
-                TokenKind::ColonColonEqual,
-                TokenKind::Eof,
+                SyntaxKind::Dot,
+                SyntaxKind::DotDot,
+                SyntaxKind::Colon,
+                SyntaxKind::ColonColonEqual,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -773,10 +757,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::Number,
-                TokenKind::Number,
-                TokenKind::Number,
-                TokenKind::Eof,
+                SyntaxKind::Number,
+                SyntaxKind::Number,
+                SyntaxKind::Number,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[0]), "0");
@@ -791,9 +775,9 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::NegativeNumber,
-                TokenKind::NegativeNumber,
-                TokenKind::Eof,
+                SyntaxKind::NegativeNumber,
+                SyntaxKind::NegativeNumber,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[0]), "-1");
@@ -805,7 +789,11 @@ mod tests {
         let tokens = tokenize("- x");
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::Minus, TokenKind::LowercaseIdent, TokenKind::Eof]
+            vec![
+                SyntaxKind::Minus,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken
+            ]
         );
     }
 
@@ -814,7 +802,11 @@ mod tests {
         let (tokens, diags) = tokenize_with_diags("007 -042");
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::Number, TokenKind::NegativeNumber, TokenKind::Eof,]
+            vec![
+                SyntaxKind::Number,
+                SyntaxKind::NegativeNumber,
+                SyntaxKind::EofToken,
+            ]
         );
         assert_eq!(diags.len(), 2);
         assert_eq!(diags[0].code, DiagCode::NumberLeadingZero);
@@ -834,7 +826,7 @@ mod tests {
         let tokens = tokenize(input);
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::QuotedString, TokenKind::Eof]
+            vec![SyntaxKind::QuotedString, SyntaxKind::EofToken]
         );
         assert_eq!(text_of(input, &tokens[0]), r#""hello world""#);
     }
@@ -845,7 +837,7 @@ mod tests {
         let tokens = tokenize(input);
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::QuotedString, TokenKind::Eof]
+            vec![SyntaxKind::QuotedString, SyntaxKind::EofToken]
         );
     }
 
@@ -854,7 +846,7 @@ mod tests {
         let (tokens, diags) = tokenize_with_diags("\"hello");
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::QuotedString, TokenKind::Eof]
+            vec![SyntaxKind::QuotedString, SyntaxKind::EofToken]
         );
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::UnterminatedString);
@@ -864,20 +856,29 @@ mod tests {
     fn hex_string() {
         let input = "'0A1B'H";
         let tokens = tokenize(input);
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
     }
 
     #[test]
     fn bin_string() {
         let input = "'01010101'B";
         let tokens = tokenize(input);
-        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::BinString, SyntaxKind::EofToken]
+        );
     }
 
     #[test]
     fn hex_string_odd_length() {
         let (tokens, diags) = tokenize_with_diags("'0A1'H");
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::HexStringMul2);
     }
@@ -885,7 +886,10 @@ mod tests {
     #[test]
     fn bin_string_bad_length() {
         let (tokens, diags) = tokenize_with_diags("'0101'B");
-        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::BinString, SyntaxKind::EofToken]
+        );
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::BinStringMul8);
     }
@@ -893,7 +897,10 @@ mod tests {
     #[test]
     fn hex_string_missing_suffix() {
         let (tokens, diags) = tokenize_with_diags("'0A1B'");
-        assert_eq!(kinds(&tokens), vec![TokenKind::Error, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::ErrorToken, SyntaxKind::EofToken]
+        );
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::MissingHexBinSuffix);
     }
@@ -901,7 +908,10 @@ mod tests {
     #[test]
     fn unterminated_hex_string() {
         let (tokens, diags) = tokenize_with_diags("'0A1B");
-        assert_eq!(kinds(&tokens), vec![TokenKind::Error, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::ErrorToken, SyntaxKind::EofToken]
+        );
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::UnterminatedHexBinStr);
     }
@@ -910,7 +920,10 @@ mod tests {
     fn hex_string_invalid_chars() {
         // 0A is valid, GZ are not valid hex digits
         let (tokens, diags) = tokenize_with_diags("'0AGZ'H");
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
         let invalid_diags: Vec<_> = diags
             .iter()
             .filter(|d| d.code == DiagCode::HexStringInvalidChar)
@@ -923,7 +936,10 @@ mod tests {
     #[test]
     fn bin_string_invalid_chars() {
         let (tokens, diags) = tokenize_with_diags("'0102'B");
-        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::BinString, SyntaxKind::EofToken]
+        );
         let invalid_diags: Vec<_> = diags
             .iter()
             .filter(|d| d.code == DiagCode::BinStringInvalidChar)
@@ -935,7 +951,10 @@ mod tests {
     #[test]
     fn hex_string_valid_no_invalid_char_diag() {
         let (tokens, diags) = tokenize_with_diags("'0A1B'H");
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
         assert!(
             !diags
                 .iter()
@@ -946,7 +965,10 @@ mod tests {
     #[test]
     fn bin_string_valid_no_invalid_char_diag() {
         let (tokens, diags) = tokenize_with_diags("'01010101'B");
-        assert_eq!(kinds(&tokens), vec![TokenKind::BinString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::BinString, SyntaxKind::EofToken]
+        );
         assert!(
             !diags
                 .iter()
@@ -961,10 +983,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LowercaseIdent,
-                TokenKind::UppercaseIdent,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::UppercaseIdent,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[0]), "ifIndex");
@@ -978,7 +1000,7 @@ mod tests {
         let tokens = tokenize(input);
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::LowercaseIdent, TokenKind::Eof]
+            vec![SyntaxKind::LowercaseIdent, SyntaxKind::EofToken]
         );
         assert_eq!(text_of(input, &tokens[0]), "some-name");
     }
@@ -989,7 +1011,7 @@ mod tests {
         let tokens = tokenize(input);
         assert_eq!(
             kinds(&tokens),
-            vec![TokenKind::LowercaseIdent, TokenKind::Eof]
+            vec![SyntaxKind::LowercaseIdent, SyntaxKind::EofToken]
         );
         assert_eq!(text_of(input, &tokens[0]), "some_name");
     }
@@ -1001,9 +1023,9 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LowercaseIdent,
-                TokenKind::Comment,
-                TokenKind::Eof,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Comment,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[0]), "name");
@@ -1016,11 +1038,11 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwObjectType,
-                TokenKind::KwSyntax,
-                TokenKind::KwStatus,
-                TokenKind::KwDescription,
-                TokenKind::Eof,
+                SyntaxKind::KwObjectType,
+                SyntaxKind::KwSyntax,
+                SyntaxKind::KwStatus,
+                SyntaxKind::KwDescription,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1032,11 +1054,11 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwCurrent,
-                TokenKind::KwDeprecated,
-                TokenKind::KwReadOnly,
-                TokenKind::KwNotAccessible,
-                TokenKind::Eof,
+                SyntaxKind::KwCurrent,
+                SyntaxKind::KwDeprecated,
+                SyntaxKind::KwReadOnly,
+                SyntaxKind::KwNotAccessible,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1048,11 +1070,11 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::ForbiddenKeyword,
-                TokenKind::ForbiddenKeyword,
-                TokenKind::ForbiddenKeyword,
-                TokenKind::ForbiddenKeyword,
-                TokenKind::Eof,
+                SyntaxKind::ForbiddenKeyword,
+                SyntaxKind::ForbiddenKeyword,
+                SyntaxKind::ForbiddenKeyword,
+                SyntaxKind::ForbiddenKeyword,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1064,10 +1086,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LowercaseIdent,
-                TokenKind::Comment,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Comment,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1079,10 +1101,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LowercaseIdent,
-                TokenKind::Comment,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Comment,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[1]), "-- comment --");
@@ -1095,9 +1117,9 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::LowercaseIdent,
-                TokenKind::Comment,
-                TokenKind::Eof,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Comment,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1109,9 +1131,9 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::Comment,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::Comment,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1125,10 +1147,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwMacro,
-                TokenKind::KwEnd,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::KwMacro,
+                SyntaxKind::KwEnd,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1140,12 +1162,12 @@ mod tests {
         let tokens = tokenize(input);
         let end_idx = tokens
             .iter()
-            .position(|t| t.kind == TokenKind::KwEnd)
+            .position(|t| t.kind == SyntaxKind::KwEnd)
             .unwrap();
         // The END that terminates should be after PRETEND.
         let next_idx = tokens
             .iter()
-            .position(|t| t.kind == TokenKind::LowercaseIdent)
+            .position(|t| t.kind == SyntaxKind::LowercaseIdent)
             .unwrap();
         assert!(end_idx < next_idx);
     }
@@ -1158,10 +1180,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwMacro,
-                TokenKind::KwEnd,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::KwMacro,
+                SyntaxKind::KwEnd,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
         assert_eq!(text_of(input, &tokens[1]), "END");
@@ -1179,10 +1201,10 @@ mod tests {
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwExports,
-                TokenKind::Semicolon,
-                TokenKind::LowercaseIdent,
-                TokenKind::Eof,
+                SyntaxKind::KwExports,
+                SyntaxKind::Semicolon,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1197,10 +1219,10 @@ mod tests {
             assert_eq!(
                 kinds(&tokens),
                 vec![
-                    TokenKind::KwExports,
-                    TokenKind::Semicolon,
-                    TokenKind::LowercaseIdent,
-                    TokenKind::Eof,
+                    SyntaxKind::KwExports,
+                    SyntaxKind::Semicolon,
+                    SyntaxKind::LowercaseIdent,
+                    SyntaxKind::EofToken,
                 ]
             );
             assert_eq!(tokens[1].span.start().as_usize(), input.rfind(';').unwrap());
@@ -1214,7 +1236,7 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::UnexpectedCharacter);
         // x should still be tokenized
-        assert_eq!(tokens[0].kind, TokenKind::LowercaseIdent);
+        assert_eq!(tokens[0].kind, SyntaxKind::LowercaseIdent);
     }
 
     #[test]
@@ -1237,29 +1259,35 @@ END
 "#;
         let tokens = tokenize(input);
         // Should not panic and should end with Eof
-        assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
+        assert_eq!(tokens.last().unwrap().kind, SyntaxKind::EofToken);
         // Should contain expected keywords
         let k = kinds(&tokens);
-        assert!(k.contains(&TokenKind::KwDefinitions));
-        assert!(k.contains(&TokenKind::ColonColonEqual));
-        assert!(k.contains(&TokenKind::KwBegin));
-        assert!(k.contains(&TokenKind::KwImports));
-        assert!(k.contains(&TokenKind::KwModuleIdentity));
-        assert!(k.contains(&TokenKind::KwEnd));
+        assert!(k.contains(&SyntaxKind::KwDefinitions));
+        assert!(k.contains(&SyntaxKind::ColonColonEqual));
+        assert!(k.contains(&SyntaxKind::KwBegin));
+        assert!(k.contains(&SyntaxKind::KwImports));
+        assert!(k.contains(&SyntaxKind::KwModuleIdentity));
+        assert!(k.contains(&SyntaxKind::KwEnd));
     }
 
     #[test]
     fn hex_string_with_whitespace() {
         let input = "'0A 1B\n2C'H";
         let tokens = tokenize(input);
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
     }
 
     #[test]
     fn empty_hex_string() {
         let input = "''H";
         let tokens = tokenize(input);
-        assert_eq!(kinds(&tokens), vec![TokenKind::HexString, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![SyntaxKind::HexString, SyntaxKind::EofToken]
+        );
     }
 
     #[test]
@@ -1269,13 +1297,13 @@ END
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::KwInteger,
-                TokenKind::KwCounter32,
-                TokenKind::KwIpAddress,
-                TokenKind::KwOctet,
-                TokenKind::KwString,
-                TokenKind::KwBits,
-                TokenKind::Eof,
+                SyntaxKind::KwInteger,
+                SyntaxKind::KwCounter32,
+                SyntaxKind::KwIpAddress,
+                SyntaxKind::KwOctet,
+                SyntaxKind::KwString,
+                SyntaxKind::KwBits,
+                SyntaxKind::EofToken,
             ]
         );
     }
@@ -1287,10 +1315,10 @@ END
         assert_eq!(
             kinds(&tokens),
             vec![
-                TokenKind::Colon,
-                TokenKind::Colon,
-                TokenKind::Colon,
-                TokenKind::Eof,
+                SyntaxKind::Colon,
+                SyntaxKind::Colon,
+                SyntaxKind::Colon,
+                SyntaxKind::EofToken,
             ]
         );
     }

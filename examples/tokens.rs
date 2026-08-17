@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use mib_rs::token::{self, TokenKind};
-use mib_rs::{Diagnostic, SourceDocument, SourceOrigin, SourceSet};
+use mib_rs::token::{self, SyntaxKind};
+use mib_rs::{Diagnostic, SourceDocument, SourceOrigin, SourceSet, SyntaxCategory};
 
 fn render(document: &SourceDocument, diagnostic: &Diagnostic) -> String {
     let Some(range) = diagnostic.range else {
@@ -85,7 +85,7 @@ END
         .unwrap_or("<binary>");
 
         // Skip comments for brevity.
-        if tok.kind == TokenKind::Comment {
+        if tok.kind == SyntaxKind::Comment {
             continue;
         }
 
@@ -98,7 +98,7 @@ END
         );
 
         // Stop at EOF.
-        if tok.kind == TokenKind::Eof {
+        if tok.kind == SyntaxKind::EofToken {
             break;
         }
     }
@@ -116,19 +116,19 @@ END
     // -- Token classification predicates --
     println!("\n=== Token classification ===");
     let interesting = [
-        TokenKind::KwDefinitions,
-        TokenKind::KwObjectType,
-        TokenKind::KwModuleIdentity,
-        TokenKind::KwSyntax,
-        TokenKind::KwInteger,
-        TokenKind::KwReadOnly,
-        TokenKind::KwCurrent,
-        TokenKind::UppercaseIdent,
-        TokenKind::LowercaseIdent,
-        TokenKind::Number,
-        TokenKind::QuotedString,
-        TokenKind::ColonColonEqual,
-        TokenKind::LBrace,
+        SyntaxKind::KwDefinitions,
+        SyntaxKind::KwObjectType,
+        SyntaxKind::KwModuleIdentity,
+        SyntaxKind::KwSyntax,
+        SyntaxKind::KwInteger,
+        SyntaxKind::KwReadOnly,
+        SyntaxKind::KwCurrent,
+        SyntaxKind::UppercaseIdent,
+        SyntaxKind::LowercaseIdent,
+        SyntaxKind::Number,
+        SyntaxKind::QuotedString,
+        SyntaxKind::ColonColonEqual,
+        SyntaxKind::LBrace,
     ];
 
     for kind in interesting {
@@ -147,12 +147,12 @@ END
     // -- Display names (human-readable for error messages) --
     println!("\n=== Display names ===");
     for kind in [
-        TokenKind::LBrace,
-        TokenKind::ColonColonEqual,
-        TokenKind::KwObjectType,
-        TokenKind::UppercaseIdent,
-        TokenKind::Number,
-        TokenKind::Eof,
+        SyntaxKind::LBrace,
+        SyntaxKind::ColonColonEqual,
+        SyntaxKind::KwObjectType,
+        SyntaxKind::UppercaseIdent,
+        SyntaxKind::Number,
+        SyntaxKind::EofToken,
     ] {
         println!(
             "  {:<24} display={:?}  libsmi={:?}",
@@ -171,7 +171,7 @@ END
     let mut other = 0;
 
     for tok in &tokens {
-        if tok.kind == TokenKind::Eof || tok.kind == TokenKind::Comment {
+        if tok.kind == SyntaxKind::EofToken || tok.kind == SyntaxKind::Comment {
             continue;
         }
         match classify(tok.kind) {
@@ -190,39 +190,12 @@ END
     println!("  Other:       {other}");
 }
 
-fn classify(kind: TokenKind) -> &'static str {
-    if kind.is_keyword() {
-        "keyword"
-    } else if kind.is_identifier() {
-        "identifier"
-    } else if matches!(
-        kind,
-        TokenKind::Number
-            | TokenKind::NegativeNumber
-            | TokenKind::QuotedString
-            | TokenKind::HexString
-            | TokenKind::BinString
-    ) {
-        "literal"
-    } else if matches!(
-        kind,
-        TokenKind::LBrace
-            | TokenKind::RBrace
-            | TokenKind::LParen
-            | TokenKind::RParen
-            | TokenKind::LBracket
-            | TokenKind::RBracket
-            | TokenKind::Comma
-            | TokenKind::Semicolon
-            | TokenKind::Colon
-            | TokenKind::Dot
-            | TokenKind::DotDot
-            | TokenKind::Pipe
-            | TokenKind::Minus
-            | TokenKind::ColonColonEqual
-    ) {
-        "punctuation"
-    } else {
-        "other"
+fn classify(kind: SyntaxKind) -> &'static str {
+    match kind.category() {
+        SyntaxCategory::Keyword => "keyword",
+        SyntaxCategory::Identifier => "identifier",
+        SyntaxCategory::Literal => "literal",
+        SyntaxCategory::Punctuation => "punctuation",
+        SyntaxCategory::Special | SyntaxCategory::Trivia | SyntaxCategory::Node => "other",
     }
 }

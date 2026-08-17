@@ -1,15 +1,16 @@
 //! Public token types and tokenization entry point.
 //!
-//! Re-exports [`TokenKind`] and [`Token`] from the lexer, and provides
+//! Re-exports [`SyntaxKind`] and [`Token`] from the lexer, and provides
 //! a convenience [`tokenize`] function for external callers.
 
-pub use crate::lexer::token::{Token, TokenKind};
+pub use crate::lexer::token::Token;
 use crate::source::SourceDocument;
+pub use crate::syntax::SyntaxKind;
 use crate::types::{Diagnostic, DiagnosticConfig};
 
 /// Tokenize MIB source bytes with default [`DiagnosticConfig`] settings.
 ///
-/// Returns all tokens (always ending with [`TokenKind::Eof`]) and any
+/// Returns all tokens (always ending with [`SyntaxKind::EofToken`]) and any
 /// diagnostics produced during lexing. For custom diagnostic settings,
 /// use [`tokenize_with_config`].
 pub fn tokenize(document: &SourceDocument) -> (Vec<Token>, Vec<Diagnostic>) {
