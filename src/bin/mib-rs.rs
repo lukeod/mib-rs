@@ -1223,7 +1223,9 @@ fn inspect_object(mib: &Mib, obj: mib_rs::mib::Object<'_>) {
     print_provenance(obj.name(), obj.module(), obj.ty());
 
     // Group membership.
-    print_group_membership(mib, obj.node());
+    if let Some(node) = obj.node() {
+        print_group_membership(mib, node);
+    }
 
     // Diagnostics.
     print_scoped_diagnostics(mib, obj.module(), obj.span());
@@ -1249,7 +1251,11 @@ fn inspect_notification(mib: &Mib, notif: mib_rs::mib::Notification<'_>) {
                 .module()
                 .map(|m| format!("{}::", m.name()))
                 .unwrap_or_default();
-            println!("  {mod_prefix}{}  {}", obj.name(), obj.node().oid());
+            let oid = obj
+                .node()
+                .map(|node| node.oid().to_string())
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            println!("  {mod_prefix}{}  {oid}", obj.name());
         }
     }
 
@@ -2346,7 +2352,9 @@ fn cmd_find(
         if !glob_match(pattern, obj.name()) {
             continue;
         }
-        let node = obj.node();
+        let Some(node) = obj.node() else {
+            continue;
+        };
         let node_id = node.id();
         if !seen.insert(node_id) {
             continue;

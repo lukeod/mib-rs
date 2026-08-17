@@ -247,11 +247,10 @@
 //! keyword omits the length prefix, relying on the index being the
 //! last component. [`Index::encoding`] returns the derived encoding.
 //!
-//! Use [`mib::index::decode_suffix_exact`] to decode a complete raw OID suffix
-//! into typed [`IndexValue`]s with bounded allocation, or call
-//! [`OidLookup::decode_indexes_exact`] for the common varbind case. The
-//! explicitly lenient [`mib::index::decode_suffix_prefix`] and
-//! [`OidLookup::decode_indexes_prefix`] helpers return only a readable prefix.
+//! Compile an owned [`IndexSchema`] from a row or column, then use
+//! [`IndexSchema::decode_exact`] and [`IndexSchema::encode_canonical`] after
+//! the MIB is dropped. Exact decoding rejects truncated, malformed, and
+//! trailing input; canonical encoding validates value kinds and constraints.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
@@ -773,7 +772,15 @@ pub use load::{Loader, load};
 pub use mib::{
     Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid, OidLookup,
     ParseOidError, ResolveOidError, Type,
-    index::{DecodedIndex, IndexValue},
+    index::{
+        BoundIndexCodec, ConstraintCheck, ConstraintMode, DecodeOptions, DecodedIndexComponent,
+        DecodedRowIndex, EncodeOptions, InclusiveRange, IncompleteConstraintMode, IndexBindError,
+        IndexComponentSchema, IndexConstraintViolation, IndexDecodeError, IndexDecodeErrorKind,
+        IndexEncodeError, IndexEncodeErrorKind, IndexSchema, IndexSchemaError, IndexSchemaIssue,
+        IndexSuffix, IndexValue, IndexValueKind, IndexValueRef, IndexWireType, IntegerConstraint,
+        IntegerIndexKind, LengthConstraint, MAX_INSTANCE_OID_ARCS, NormalizedConstraint,
+        OctetIndexKind, PartialRange, ReportedIndexViolation, VariableFraming,
+    },
 };
 pub use source::{FindResult, Source};
 pub use token::{Token, TokenKind};

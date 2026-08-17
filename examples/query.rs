@@ -111,7 +111,13 @@ fn main() {
     println!("\nlookup_instance(\"docDescr.7\"):");
     println!("  Node:   {}", lookup.node().name());
     println!("  Suffix: {:?}", lookup.suffix());
-    for idx in lookup.decode_indexes_prefix() {
+    let schema =
+        std::sync::Arc::new(mib_rs::IndexSchema::compile(lookup.node().object().unwrap()).unwrap());
+    let codec = mib_rs::BoundIndexCodec::for_object_oid(schema, lookup.node().oid()).unwrap();
+    let decoded = codec
+        .decode_exact(lookup.suffix(), mib_rs::ConstraintMode::Enforce)
+        .expect("index suffix should decode");
+    for idx in decoded.components() {
         println!("  Index:  {}={}", idx.name(), idx.value());
     }
 

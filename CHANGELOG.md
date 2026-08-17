@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
+- Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
+
+### Added
+
+- Preserve precise integer and octet value kinds, normalized effective constraints, component raw arcs, and typed codec failures
+- Add object-specific index codec bindings for enforcing the 128-arc complete instance-OID limit
+- Report zero-width index components and schemas without rejecting representable definitions
+
 ## [0.9.0] - 2026-08-13
 
 ### Breaking Changes

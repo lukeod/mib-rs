@@ -497,17 +497,9 @@ impl<'a> Object<'a> {
         self.data().module().map(|id| Module::new(self.mib, id))
     }
 
-    /// Return the OID tree node for this object.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the object's OID was not resolved during loading. This should
-    /// not happen for objects obtained from a fully resolved [`Mib`].
-    pub fn node(self) -> Node<'a> {
-        Node::new(
-            self.mib,
-            self.data().node().expect("resolved object missing node"),
-        )
+    /// Return the OID tree node when the object's numeric identity resolved.
+    pub fn node(self) -> Option<Node<'a>> {
+        self.data().node().map(|id| Node::new(self.mib, id))
     }
 
     /// Return the status (current, deprecated, obsolete).

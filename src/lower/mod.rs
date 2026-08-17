@@ -1323,9 +1323,12 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> 
                 ctx.emit_diagnostic(
                     DiagCode::UnknownRangeValue,
                     ident.span,
-                    format!("unknown range identifier {}, defaulting to 0", ident.name),
+                    format!(
+                        "unknown range identifier {}, preserving it as unresolved",
+                        ident.name
+                    ),
                 );
-                ir::RangeValue::Unsigned(0)
+                ir::RangeValue::Raw(ident.name.clone())
             }
         },
         ast::RangeValue::Raw(value) => ir::RangeValue::Raw(value.clone()),

@@ -82,7 +82,10 @@ END
     // -- Iterate all objects in the module --
     println!("\nAll objects in {}:", module.name());
     for obj in module.objects() {
-        let oid = obj.node().oid();
+        let oid = obj
+            .node()
+            .map(|node| node.oid().to_string())
+            .unwrap_or_else(|| "<unresolved>".into());
         let type_name = obj
             .ty()
             .map(|t| t.name().to_string())

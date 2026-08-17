@@ -1,6 +1,7 @@
 //! Phase 5: Semantic resolution.
 //!
-//! Transforms OID tree nodes into fully resolved semantic entities:
+//! Transforms definitions into resolved semantic entities and attaches those
+//! with resolved numeric identities to OID tree nodes:
 //!
 //! - Infers node kinds (table, row, column, scalar) from OBJECT-TYPE syntax.
 //! - Creates [`Object`](super::super::object::ObjectData) entries with resolved
@@ -155,14 +156,11 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
             _ => continue,
         };
 
-        let node_id = match ctx
+        let node_id = ctx
             .module_symbol_to_node
             .get(&ir_id)
             .and_then(|syms| syms.get(&ot.name))
-        {
-            Some(&id) => id,
-            None => continue,
-        };
+            .copied();
 
         // Extract all data from ot before mutable operations.
         let name = ot.name.clone();
@@ -186,7 +184,7 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
 
         let mut obj = ObjectData::new(name.clone());
         obj.entity.span = span;
-        obj.entity.node = Some(node_id);
+        obj.entity.node = node_id;
         obj.entity.module = Some(resolved_mod);
         obj.entity.status = status;
         obj.entity.description = description;
@@ -237,16 +235,21 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         // define the same OID (e.g., TCP-MIB and RFC1213-MIB both define
         // tcpConnTable). Compare the existing object's source module, not
         // the node's module from OID phase.
-        let existing_obj = ctx.mib.tree().get(node_id).object;
-        let existing_obj_mod = existing_obj.and_then(|oid| ctx.mib.raw().object(oid).module());
-        if existing_obj.is_none() || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
-        {
-            ctx.mib.tree.attach_object(node_id, obj_id);
+        if let Some(node_id) = node_id {
+            let existing_obj = ctx.mib.tree().get(node_id).object;
+            let existing_obj_mod = existing_obj.and_then(|oid| ctx.mib.raw().object(oid).module());
+            if existing_obj.is_none()
+                || super::oids::should_prefer_module(ctx, existing_obj_mod, ir_id)
+            {
+                ctx.mib.tree.attach_object(node_id, obj_id);
+            }
         }
 
         // Register in module.
         ctx.mib.module_mut(resolved_mod).add_object(&name, obj_id);
-        ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        if let Some(node_id) = node_id {
+            ctx.mib.module_mut(resolved_mod).add_node(&name, node_id);
+        }
         created_object_count += 1;
     }
 
@@ -524,7 +527,20 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                     if is_bare_type_index(&item.object) {
                         continue;
                     }
-                    if ctx.lookup_node_for_module(ir_id, &item.object).is_none() {
+                    if lookup_object_by_name(ctx, ir_id, &item.object).is_some() {
+                        continue;
+                    }
+                    if ctx.lookup_node_for_module(ir_id, &item.object).is_some() {
+                        ctx.emit_diagnostic(
+                            DiagCode::IndexNotObject,
+                            Some(ir_id),
+                            item.span,
+                            format!(
+                                "INDEX {:?} of {:?} resolves to a node without an object definition",
+                                item.object, name
+                            ),
+                        );
+                    } else {
                         let mod_name = ctx.modules[mod_idx].name.clone();
                         ctx.record_unresolved_index(
                             &name,
@@ -537,16 +553,28 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
                 }
             }
 
-            if !augments.is_empty() && ctx.lookup_node_for_module(ir_id, &augments).is_none() {
-                let mod_name = ctx.modules[mod_idx].name.clone();
-                ctx.record_unresolved_oid(
-                    &name,
-                    &augments,
-                    &mod_name,
-                    UnresolvedReason::AugmentsTargetNotFound,
-                    ir_id,
-                    augments_span,
-                );
+            if !augments.is_empty() && lookup_object_by_name(ctx, ir_id, &augments).is_none() {
+                if ctx.lookup_node_for_module(ir_id, &augments).is_some() {
+                    ctx.emit_diagnostic(
+                        DiagCode::AugmentsNotObject,
+                        Some(ir_id),
+                        augments_span,
+                        format!(
+                            "AUGMENTS target {:?} of {:?} resolves to a node without an object definition",
+                            augments, name
+                        ),
+                    );
+                } else {
+                    let mod_name = ctx.modules[mod_idx].name.clone();
+                    ctx.record_unresolved_oid(
+                        &name,
+                        &augments,
+                        &mod_name,
+                        UnresolvedReason::AugmentsTargetNotFound,
+                        ir_id,
+                        augments_span,
+                    );
+                }
             }
         }
     }
@@ -666,9 +694,16 @@ fn resolve_index_entry(
     }
 
     // Diagnostic for unresolved INDEX is emitted by validate_table_semantics.
-    let obj = lookup_object_by_name(ctx, ir_mod, &item.object);
-
-    let obj_id = obj?;
+    let Some(obj_id) = lookup_object_by_name(ctx, ir_mod, &item.object) else {
+        return Some(IndexEntry {
+            name: item.object.clone(),
+            object: None,
+            type_id: None,
+            implied: item.implied,
+            encoding: crate::types::IndexEncoding::Unknown,
+            span: item.span,
+        });
+    };
     let o = ctx.mib.raw().object(obj_id);
     let type_id = o.typ;
     let base = o.typ.map_or(BaseType::Unknown, |tid| {
@@ -681,7 +716,7 @@ fn resolve_index_entry(
 
     Some(IndexEntry {
         name: item.object.clone(),
-        object: obj,
+        object: Some(obj_id),
         type_id,
         implied: item.implied,
         encoding,
@@ -719,7 +754,7 @@ fn lookup_object_by_name(
         return Some(obj_id);
     }
     if ctx.strictness.allow_global_fallbacks()
-        && let Some(node_id) = ctx.lookup_node_global(name)
+        && let Some(obj_id) = ctx.mib.object_by_name(name)
     {
         trace!(
             target: "mib_rs::resolver",
@@ -730,7 +765,7 @@ fn lookup_object_by_name(
             fallback = "global_object_lookup",
             "resolved object via global fallback",
         );
-        return ctx.mib.tree().get(node_id).object;
+        return Some(obj_id);
     }
     None
 }

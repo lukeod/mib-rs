@@ -1,7 +1,8 @@
 INDEX-TEST-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
-    MODULE-IDENTITY, OBJECT-TYPE, Integer32, IpAddress, enterprises
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Unsigned32, Gauge32,
+    TimeTicks, Counter32, Counter64, IpAddress, enterprises
         FROM SNMPv2-SMI
     DisplayString
         FROM SNMPv2-TC;
@@ -316,5 +317,577 @@ impliedOidValue OBJECT-TYPE
     STATUS current
     DESCRIPTION "Value."
     ::= { impliedOidEntry 2 }
+
+-- Precise unsigned application kinds and the Counter32 compatibility case
+
+typedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF TypedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with precise integer kinds."
+    ::= { indexTestTables 9 }
+
+typedEntry OBJECT-TYPE
+    SYNTAX TypedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { unsignedIndex, gaugeIndex, ticksIndex, counterIndex }
+    ::= { typedTable 1 }
+
+TypedEntry ::= SEQUENCE {
+    unsignedIndex Unsigned32,
+    gaugeIndex Gauge32,
+    ticksIndex TimeTicks,
+    counterIndex Counter32,
+    typedValue Integer32
+}
+
+unsignedIndex OBJECT-TYPE
+    SYNTAX Unsigned32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Unsigned index."
+    ::= { typedEntry 1 }
+
+gaugeIndex OBJECT-TYPE
+    SYNTAX Gauge32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Gauge index."
+    ::= { typedEntry 2 }
+
+ticksIndex OBJECT-TYPE
+    SYNTAX TimeTicks
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "TimeTicks index."
+    ::= { typedEntry 3 }
+
+counterIndex OBJECT-TYPE
+    SYNTAX Counter32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Compatibility Counter32 index."
+    ::= { typedEntry 4 }
+
+typedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { typedEntry 5 }
+
+-- Disjoint length alternatives must not collapse to min/max
+
+disjointTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF DisjointEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with disjoint sizes."
+    ::= { indexTestTables 10 }
+
+disjointEntry OBJECT-TYPE
+    SYNTAX DisjointEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { disjointIndex }
+    ::= { disjointTable 1 }
+
+DisjointEntry ::= SEQUENCE {
+    disjointIndex OCTET STRING,
+    disjointValue Integer32
+}
+
+disjointIndex OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (8 | 11))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Eight or eleven octets."
+    ::= { disjointEntry 1 }
+
+disjointValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { disjointEntry 2 }
+
+-- SIZE (0) is a deterministic fixed-width component
+
+zeroTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF ZeroEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with a zero-width component."
+    ::= { indexTestTables 11 }
+
+zeroEntry OBJECT-TYPE
+    SYNTAX ZeroEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { zeroIndex }
+    ::= { zeroTable 1 }
+
+ZeroEntry ::= SEQUENCE {
+    zeroIndex OCTET STRING,
+    zeroValue Integer32
+}
+
+zeroIndex OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Zero-width index."
+    ::= { zeroEntry 1 }
+
+zeroValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { zeroEntry 2 }
+
+-- Counter64 cannot be represented as one index subidentifier
+
+counter64Table OBJECT-TYPE
+    SYNTAX SEQUENCE OF Counter64Entry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with unsupported Counter64 index."
+    ::= { indexTestTables 12 }
+
+counter64Entry OBJECT-TYPE
+    SYNTAX Counter64Entry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { counter64Index }
+    ::= { counter64Table 1 }
+
+Counter64Entry ::= SEQUENCE {
+    counter64Index Counter64,
+    counter64Value Integer32
+}
+
+counter64Index OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Counter64 index."
+    ::= { counter64Entry 1 }
+
+counter64Value OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { counter64Entry 2 }
+
+-- AUGMENTS inherits the same effective component sequence
+
+augmentTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF AugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Augmenting table."
+    ::= { indexTestTables 13 }
+
+augmentEntry OBJECT-TYPE
+    SYNTAX AugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Augmenting row."
+    AUGMENTS { simpleEntry }
+    ::= { augmentTable 1 }
+
+AugmentEntry ::= SEQUENCE {
+    augmentValue Integer32
+}
+
+augmentValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { augmentEntry 1 }
+
+-- Bare-type index has no referenced object identity
+
+bareTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BareEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with a bare-type index."
+    ::= { indexTestTables 14 }
+
+bareEntry OBJECT-TYPE
+    SYNTAX BareEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { OCTET STRING }
+    ::= { bareTable 1 }
+
+BareEntry ::= SEQUENCE {
+    bareValue Integer32
+}
+
+bareValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { bareEntry 1 }
+
+-- An unresolved endpoint remains explicit in the owned constraint
+
+incompleteTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF IncompleteEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with incomplete SIZE metadata."
+    ::= { indexTestTables 15 }
+
+incompleteEntry OBJECT-TYPE
+    SYNTAX IncompleteEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { incompleteIndex }
+    ::= { incompleteTable 1 }
+
+IncompleteEntry ::= SEQUENCE {
+    incompleteIndex OCTET STRING,
+    incompleteValue Integer32
+}
+
+incompleteIndex OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE ('0G'H..8 | 11))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Incomplete size metadata."
+    ::= { incompleteEntry 1 }
+
+incompleteValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { incompleteEntry 2 }
+
+-- Unresolved object-backed components retain their declared position
+
+unresolvedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF UnresolvedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with unresolved index metadata."
+    ::= { indexTestTables 16 }
+
+unresolvedEntry OBJECT-TYPE
+    SYNTAX UnresolvedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { missingIndex }
+    ::= { unresolvedTable 1 }
+
+UnresolvedEntry ::= SEQUENCE {
+    unresolvedValue Integer32
+}
+
+unresolvedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { unresolvedEntry 1 }
+
+-- Invalid IMPLIED placement remains a typed schema compilation failure
+
+badImpliedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BadImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with non-final IMPLIED."
+    ::= { indexTestTables 17 }
+
+badImpliedEntry OBJECT-TYPE
+    SYNTAX BadImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { IMPLIED badImpliedName, badImpliedTail }
+    ::= { badImpliedTable 1 }
+
+BadImpliedEntry ::= SEQUENCE {
+    badImpliedName OCTET STRING,
+    badImpliedTail Integer32,
+    badImpliedValue Integer32
+}
+
+badImpliedName OBJECT-TYPE
+    SYNTAX OCTET STRING
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Non-final implied index."
+    ::= { badImpliedEntry 1 }
+
+badImpliedTail OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Tail index."
+    ::= { badImpliedEntry 2 }
+
+badImpliedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { badImpliedEntry 3 }
+
+badIntegerImpliedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BadIntegerImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with integer IMPLIED."
+    ::= { indexTestTables 18 }
+
+badIntegerImpliedEntry OBJECT-TYPE
+    SYNTAX BadIntegerImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { IMPLIED badIntegerImpliedIndex }
+    ::= { badIntegerImpliedTable 1 }
+
+BadIntegerImpliedEntry ::= SEQUENCE {
+    badIntegerImpliedIndex Integer32,
+    badIntegerImpliedValue Integer32
+}
+
+badIntegerImpliedIndex OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Integer implied index."
+    ::= { badIntegerImpliedEntry 1 }
+
+badIntegerImpliedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { badIntegerImpliedEntry 2 }
+
+-- Enumeration values form the accepted integer set
+
+enumTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF EnumEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with enumerated index."
+    ::= { indexTestTables 19 }
+
+enumEntry OBJECT-TYPE
+    SYNTAX EnumEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { enumIndex }
+    ::= { enumTable 1 }
+
+EnumEntry ::= SEQUENCE {
+    enumIndex INTEGER,
+    enumValue Integer32
+}
+
+enumIndex OBJECT-TYPE
+    SYNTAX INTEGER { negative(-1), one(1), three(3) }
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Enumerated index."
+    ::= { enumEntry 1 }
+
+enumValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { enumEntry 2 }
+
+badFixedImpliedTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BadFixedImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with fixed-size IMPLIED."
+    ::= { indexTestTables 20 }
+
+badFixedImpliedEntry OBJECT-TYPE
+    SYNTAX BadFixedImpliedEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { IMPLIED badFixedImpliedIndex }
+    ::= { badFixedImpliedTable 1 }
+
+BadFixedImpliedEntry ::= SEQUENCE {
+    badFixedImpliedIndex OCTET STRING,
+    badFixedImpliedValue Integer32
+}
+
+badFixedImpliedIndex OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (6))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Fixed-size implied index."
+    ::= { badFixedImpliedEntry 1 }
+
+badFixedImpliedValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { badFixedImpliedEntry 2 }
+
+-- Object-backed index with a resolved type but unresolved numeric identity
+
+brokenOidTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BrokenOidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table with unresolved index object OID."
+    ::= { indexTestTables 21 }
+
+brokenOidEntry OBJECT-TYPE
+    SYNTAX BrokenOidEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { brokenOidIndex }
+    ::= { brokenOidTable 1 }
+
+BrokenOidEntry ::= SEQUENCE {
+    brokenOidIndex Integer32,
+    brokenOidValue Integer32
+}
+
+brokenOidIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..10)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Index with unresolved OID."
+    ::= { missingOidParent 1 }
+
+brokenOidValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { brokenOidEntry 2 }
+
+-- A resolved OID node without an OBJECT-TYPE is distinct from an unknown INDEX
+
+plainIndexNode OBJECT IDENTIFIER ::= { indexTestTables 22 }
+
+notObjectTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF NotObjectEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table whose INDEX names a plain OID node."
+    ::= { indexTestTables 23 }
+
+notObjectEntry OBJECT-TYPE
+    SYNTAX NotObjectEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { plainIndexNode }
+    ::= { notObjectTable 1 }
+
+NotObjectEntry ::= SEQUENCE {
+    notObjectValue Integer32
+}
+
+notObjectValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { notObjectEntry 1 }
+
+badAugmentTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF BadAugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Table whose AUGMENTS names a plain OID node."
+    ::= { indexTestTables 24 }
+
+badAugmentEntry OBJECT-TYPE
+    SYNTAX BadAugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    AUGMENTS { plainIndexNode }
+    ::= { badAugmentTable 1 }
+
+BadAugmentEntry ::= SEQUENCE {
+    badAugmentValue Integer32
+}
+
+badAugmentValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { badAugmentEntry 1 }
+
+-- A zero-width component is harmless when another component identifies rows
+
+zeroCompositeTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF ZeroCompositeEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Composite table containing a zero-width component."
+    ::= { indexTestTables 25 }
+
+zeroCompositeEntry OBJECT-TYPE
+    SYNTAX ZeroCompositeEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Row."
+    INDEX { zeroCompositeEmpty, zeroCompositeTail }
+    ::= { zeroCompositeTable 1 }
+
+ZeroCompositeEntry ::= SEQUENCE {
+    zeroCompositeEmpty OCTET STRING,
+    zeroCompositeTail Integer32,
+    zeroCompositeValue Integer32
+}
+
+zeroCompositeEmpty OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0))
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Zero-width component."
+    ::= { zeroCompositeEntry 1 }
+
+zeroCompositeTail OBJECT-TYPE
+    SYNTAX Integer32 (1..10)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Identifying component."
+    ::= { zeroCompositeEntry 2 }
+
+zeroCompositeValue OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Value."
+    ::= { zeroCompositeEntry 3 }
 
 END

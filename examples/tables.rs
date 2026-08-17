@@ -17,7 +17,7 @@ fn main() {
     // -- Find all tables --
     println!("=== Tables ===");
     for table in mib.tables() {
-        println!("  {} ({})", table.name(), table.node().oid());
+        println!("  {} ({})", table.name(), table.node().unwrap().oid());
     }
 
     // -- Table structure --
