@@ -1582,21 +1582,21 @@ fn check_group_member_locality(ctx: &mut ResolverContext) {
     for (ir_id, m) in ctx.all_modules() {
         let local = ctx.module_symbol_to_node.get(&ir_id);
         for def in &m.definitions {
-            let (span, members): (SourceRange, &[String]) = match def {
-                ir::Definition::ObjectGroup(g) => (g.range, &g.objects),
-                ir::Definition::NotificationGroup(g) => (g.range, &g.notifications),
+            let members: &[ir::NameRef] = match def {
+                ir::Definition::ObjectGroup(g) => &g.objects,
+                ir::Definition::NotificationGroup(g) => &g.notifications,
                 _ => continue,
             };
             for member in members {
-                let is_local = local.is_some_and(|syms| syms.contains_key(member));
+                let is_local = local.is_some_and(|syms| syms.contains_key(&member.name));
                 if !is_local {
                     diags.push(Diag {
                         code: DiagCode::ComplianceMemberNotLocal,
                         ir_id: Some(ir_id),
-                        span: Some(span),
+                        span: Some(member.range),
                         message: format!(
                             "group member {:?} is not defined in module {:?}",
-                            member, m.name
+                            member.name, m.name
                         ),
                     });
                 }

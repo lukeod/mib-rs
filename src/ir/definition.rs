@@ -154,6 +154,15 @@ pub struct IndexItem {
     pub range: SourceRange,
 }
 
+/// A named symbol reference with its source range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameRef {
+    /// Referenced symbol name.
+    pub name: String,
+    /// Source range of the identifier.
+    pub range: SourceRange,
+}
+
 /// `MODULE-IDENTITY` definition.
 #[derive(Debug, Clone)]
 pub struct ModuleIdentity {
@@ -297,8 +306,8 @@ pub struct ObjectGroup {
     pub name: String,
     /// Source range of the entire definition.
     pub range: SourceRange,
-    /// Names of objects in this group.
-    pub objects: Vec<String>,
+    /// Object references in this group.
+    pub objects: Vec<NameRef>,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.
@@ -316,8 +325,8 @@ pub struct NotificationGroup {
     pub name: String,
     /// Source range of the entire definition.
     pub range: SourceRange,
-    /// Names of notifications in this group.
-    pub notifications: Vec<String>,
+    /// Notification references in this group.
+    pub notifications: Vec<NameRef>,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.

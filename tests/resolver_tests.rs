@@ -183,6 +183,168 @@ fn conformance_diagnostic_catalog_matches_gomib_severities() {
 }
 
 #[test]
+fn group_member_diagnostics_use_individual_identifier_ranges() {
+    let source = memory_modules([
+        (
+            "IMPORTED-GROUP-MEMBER-MIB",
+            &br#"IMPORTED-GROUP-MEMBER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+importedGroupMemberMIB MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Imported group member."
+    ::= { enterprises 99994 }
+
+importedObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Imported object."
+    ::= { importedGroupMemberMIB 1 }
+END
+"#[..],
+        ),
+        (
+            "GROUP-MEMBER-RANGES-MIB",
+            &br#"GROUP-MEMBER-RANGES-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    importedObject
+        FROM IMPORTED-GROUP-MEMBER-MIB;
+
+groupMemberRanges MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Group member range checks."
+    ::= { enterprises 99995 }
+
+knownObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Known object."
+    ::= { groupMemberRanges 1 }
+
+knownNotification NOTIFICATION-TYPE
+    OBJECTS { knownObject }
+    STATUS current
+    DESCRIPTION "Known notification."
+    ::= { groupMemberRanges 2 }
+
+inaccessibleObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Not-accessible object."
+    ::= { groupMemberRanges 3 }
+
+deprecatedObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS deprecated
+    DESCRIPTION "Deprecated object."
+    ::= { groupMemberRanges 4 }
+
+badObjectGroup OBJECT-GROUP
+    OBJECTS {
+        knownObject,
+        knownNotification,
+        inaccessibleObject,
+        deprecatedObject,
+        importedObject,
+        missingObject
+    }
+    STATUS current
+    DESCRIPTION "Bad object members."
+    ::= { groupMemberRanges 5 }
+
+badNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+        knownNotification,
+        knownObject,
+        missingNotification
+    }
+    STATUS current
+    DESCRIPTION "Bad notification members."
+    ::= { groupMemberRanges 6 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["GROUP-MEMBER-RANGES-MIB"]),
+    )
+    .expect("load failed");
+    let report = mib.diagnostic_report();
+
+    let cases = [
+        (DiagCode::GroupObjectsNotification, "knownNotification"),
+        (DiagCode::GroupMemberUnresolved, "missingObject"),
+        (DiagCode::GroupNotificationsObject, "knownObject"),
+        (DiagCode::GroupMemberUnresolved, "missingNotification"),
+        (DiagCode::GroupNotAccessible, "inaccessibleObject"),
+        (DiagCode::GroupObjectStatus, "deprecatedObject"),
+        (DiagCode::ComplianceMemberNotLocal, "importedObject"),
+    ];
+    let mut lines = Vec::new();
+    for (code, member) in cases {
+        let entry = report
+            .iter()
+            .find(|entry| {
+                let diagnostic = entry.diagnostic();
+                diagnostic.code == code && diagnostic.message.contains(member)
+            })
+            .unwrap_or_else(|| panic!("expected {code} diagnostic for {member}"));
+        assert_eq!(entry.slice().unwrap(), Some(member.as_bytes()));
+        let (start, _) = entry
+            .byte_positions()
+            .unwrap()
+            .expect("group member diagnostic should have a range");
+        lines.push(start.line());
+    }
+    assert_ne!(lines[0], lines[1]);
+    assert_ne!(lines[2], lines[3]);
+
+    let object_group = mib
+        .group("badObjectGroup")
+        .expect("object group should resolve");
+    let object_members: Vec<_> = object_group.members().map(|member| member.name()).collect();
+    assert_eq!(
+        object_members,
+        [
+            "knownObject",
+            "knownNotification",
+            "inaccessibleObject",
+            "deprecatedObject",
+            "importedObject",
+        ]
+    );
+
+    let notification_group = mib
+        .group("badNotificationGroup")
+        .expect("notification group should resolve");
+    let notification_members: Vec<_> = notification_group
+        .members()
+        .map(|member| member.name())
+        .collect();
+    assert_eq!(notification_members, ["knownNotification", "knownObject"]);
+}
+
+#[test]
 fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
     let mib = load_capabilities_reference_fixture();
 

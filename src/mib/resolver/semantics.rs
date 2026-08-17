@@ -982,7 +982,8 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         let mut has_notifications = false;
 
         // Resolve members.
-        for member_name in &members {
+        for member in &members {
+            let member_name = &member.name;
             if let Some((member_node, used_import)) = lookup_member_node(ctx, ir_id, member_name) {
                 if used_import {
                     ctx.mark_import_used(ir_id, member_name);
@@ -999,7 +1000,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupNotificationsObject,
                             Some(ir_id),
-                            Some(range),
+                            Some(member.range),
                             format!(
                                 "notification group {:?} includes object {:?}",
                                 name, member_name
@@ -1014,7 +1015,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupObjectsNotification,
                             Some(ir_id),
-                            Some(range),
+                            Some(member.range),
                             format!(
                                 "object group {:?} includes notification {:?}",
                                 name, member_name
@@ -1030,7 +1031,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                         ctx.emit_diagnostic(
                             DiagCode::GroupNotAccessible,
                             Some(ir_id),
-                            Some(range),
+                            Some(member.range),
                             format!(
                                 "object {:?} of group {:?} must not be not-accessible",
                                 member_name, name
@@ -1042,7 +1043,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                 check_group_member_status(
                     ctx,
                     ir_id,
-                    range,
+                    member.range,
                     status,
                     &name,
                     member_node,
@@ -1053,7 +1054,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
                 ctx.emit_diagnostic(
                     DiagCode::GroupMemberUnresolved,
                     Some(ir_id),
-                    Some(range),
+                    Some(member.range),
                     format!(
                         "group {:?} references unresolved member {:?}",
                         name, member_name

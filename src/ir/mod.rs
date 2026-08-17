@@ -5,8 +5,10 @@
 //! Type and OID references remain unresolved strings until the resolver phase
 //! transforms the IR into a fully resolved [`Mib`](crate::mib::Mib).
 //!
-//! Unlike the AST, the IR uses plain `String` values instead of [`Ident`](crate::ast::Ident)
-//! nodes, and optional clauses are represented as empty strings rather than `Option`s.
+//! Unlike the AST, the IR generally uses plain `String` values instead of
+//! [`Ident`](crate::ast::Ident) nodes. References that need precise diagnostics
+//! use [`NameRef`], and optional clauses are represented as empty strings rather
+//! than `Option`s.
 
 pub mod definition;
 pub mod oid;

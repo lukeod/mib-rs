@@ -381,6 +381,16 @@ fn ident_names(idents: &[ast::Ident]) -> Vec<String> {
     idents.iter().map(|id| id.name.clone()).collect()
 }
 
+fn name_refs(idents: &[ast::Ident]) -> Vec<ir::NameRef> {
+    idents
+        .iter()
+        .map(|id| ir::NameRef {
+            name: id.name.clone(),
+            range: id.span,
+        })
+        .collect()
+}
+
 fn optional_string(qs: &Option<ast::QuotedString>) -> String {
     match qs {
         Some(qs) => qs.value.clone(),
@@ -907,7 +917,7 @@ fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext<'_>) 
     ir::ObjectGroup {
         name: name.clone(),
         range: def.span,
-        objects: ident_names(&def.objects),
+        objects: name_refs(&def.objects),
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -925,7 +935,7 @@ fn lower_notification_group(
     ir::NotificationGroup {
         name: name.clone(),
         range: def.span,
-        notifications: ident_names(&def.notifications),
+        notifications: name_refs(&def.notifications),
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -1458,6 +1468,95 @@ mod tests {
         assert_eq!(context.diagnostics.len(), 1);
         assert_eq!(context.diagnostics[0].range, Some(range));
         assert_eq!(context.diagnostics[0].module.as_deref(), Some("TEST-MIB"));
+    }
+
+    #[test]
+    fn group_members_retain_identifier_ranges() {
+        let source = br#"GROUP-RANGES-MIB DEFINITIONS ::= BEGIN
+badObjectGroup OBJECT-GROUP
+    OBJECTS {
+        missingObjectOne,
+        missingObjectTwo
+    }
+    STATUS current
+    DESCRIPTION "Test object group."
+    ::= { 1 3 6 1 }
+
+badNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+        missingNotificationOne,
+        missingNotificationTwo
+    }
+    STATUS current
+    DESCRIPTION "Test notification group."
+    ::= { 1 3 6 2 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("group-ranges"),
+                "group-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::ObjectGroup(object_group) = &lowered.definitions[0] else {
+            panic!("expected object group");
+        };
+        assert_eq!(object_group.objects.len(), 2);
+        assert_eq!(object_group.objects[0].name, "missingObjectOne");
+        assert_eq!(object_group.objects[1].name, "missingObjectTwo");
+        assert_eq!(
+            document.slice(object_group.objects[0].range).unwrap(),
+            b"missingObjectOne"
+        );
+        assert_eq!(
+            document.slice(object_group.objects[1].range).unwrap(),
+            b"missingObjectTwo"
+        );
+        let first_object_line = document
+            .byte_position(object_group.objects[0].range.start())
+            .unwrap()
+            .line();
+        let second_object_line = document
+            .byte_position(object_group.objects[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_object_line, second_object_line);
+
+        let ir::Definition::NotificationGroup(notification_group) = &lowered.definitions[1] else {
+            panic!("expected notification group");
+        };
+        assert_eq!(notification_group.notifications.len(), 2);
+        assert_eq!(
+            document
+                .slice(notification_group.notifications[0].range)
+                .unwrap(),
+            b"missingNotificationOne"
+        );
+        assert_eq!(
+            document
+                .slice(notification_group.notifications[1].range)
+                .unwrap(),
+            b"missingNotificationTwo"
+        );
+        let first_notification_line = document
+            .byte_position(notification_group.notifications[0].range.start())
+            .unwrap()
+            .line();
+        let second_notification_line = document
+            .byte_position(notification_group.notifications[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_notification_line, second_notification_line);
     }
 
     #[test]
