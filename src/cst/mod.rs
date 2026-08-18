@@ -16,17 +16,20 @@ mod parser;
 mod typed;
 
 pub use typed::{
-    AccessClause, AugmentsClause, BitsSyntax, ChoiceSyntax, ConstrainedSyntax, Constraint,
-    ContactInfoClause, CstNode, Definition, DefvalClause, DefvalContent, DescriptionClause,
-    DisplayHintClause, EnterpriseClause, ErrorRegion, ImportGroup, Imports, IndexClause, IndexItem,
-    IntegerEnumSyntax, LastUpdatedClause, MacroDefinition, Module, ModuleHeader,
-    ModuleIdentityDefinition, NamedNumber, NotificationTypeDefinition, NotificationsClause,
-    ObjectIdentifierSyntax, ObjectIdentityDefinition, ObjectTypeDefinition, ObjectsClause,
-    OctetStringSyntax, OidAssignment, OidComponent, OrganizationClause, ProductReleaseClause,
-    Range, ReferenceClause, RevisionClause, SequenceField, SequenceOfSyntax, SequenceSyntax,
-    SourceFile, StatusClause, SyntaxClause, TaggedSyntax, TextualConventionDefinition,
-    TrapTypeDefinition, TypeAssignment, TypeRefSyntax, UnitsClause, UnparsedRegion,
-    ValueAssignment, VariablesClause,
+    AccessClause, AgentCapabilitiesDefinition, AugmentsClause, BitsSyntax, ChoiceSyntax,
+    ComplianceGroup, ComplianceModule, ComplianceObject, ComplianceRefinement, ConstrainedSyntax,
+    Constraint, ContactInfoClause, CreationRequiresClause, CstNode, Definition, DefvalClause,
+    DefvalContent, DescriptionClause, DisplayHintClause, EnterpriseClause, ErrorRegion,
+    ImportGroup, Imports, IncludesClause, IndexClause, IndexItem, IntegerEnumSyntax,
+    LastUpdatedClause, MacroDefinition, MandatoryGroupsClause, Module, ModuleComplianceDefinition,
+    ModuleHeader, ModuleIdentityDefinition, NamedNumber, NotificationGroupDefinition,
+    NotificationTypeDefinition, NotificationsClause, ObjectGroupDefinition, ObjectIdentifierSyntax,
+    ObjectIdentityDefinition, ObjectTypeDefinition, ObjectsClause, OctetStringSyntax,
+    OidAssignment, OidComponent, OrganizationClause, ProductReleaseClause, Range, ReferenceClause,
+    RevisionClause, SequenceField, SequenceOfSyntax, SequenceSyntax, SourceFile, StatusClause,
+    SupportsModule, SyntaxClause, TaggedSyntax, TextualConventionDefinition, TrapTypeDefinition,
+    TypeAssignment, TypeRefSyntax, UnitsClause, UnparsedRegion, ValueAssignment, VariablesClause,
+    VariationClause, WriteSyntaxClause,
 };
 
 /// An immutable lossless syntax tree for one source document.
@@ -1722,6 +1725,12 @@ END"#;
                         assert!(node.body().is_some());
                         assert!(node.end().is_some());
                     }
+                    Definition::ObjectGroup(_)
+                    | Definition::NotificationGroup(_)
+                    | Definition::ModuleCompliance(_)
+                    | Definition::AgentCapabilities(_) => {
+                        panic!("{family}: unexpected CST-06 definition")
+                    }
                     Definition::Error(_) => panic!("{family}: valid definition recovered"),
                 }
                 assert_eq!(definitions[1].name().unwrap().text(), b"After", "{family}");
@@ -2376,6 +2385,525 @@ END"#;
             assert_eq!(file.modules().count(), 1);
             let recovery = file.recovery_regions().next().unwrap();
             assert_eq!(recovery.syntax().text(), b"\xff junk");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn conformance_and_capability_definitions_expose_nested_source_order_and_ranges() {
+        let input = br#"CST06-MIB DEFINITIONS ::= BEGIN
+objectGroup OBJECT-GROUP
+ OBJECTS { firstObject, secondObject }
+ STATUS current
+ DESCRIPTION "objects"
+ REFERENCE "object reference"
+ ::= { root 1 }
+notificationGroup NOTIFICATION-GROUP
+ NOTIFICATIONS { firstNotification, secondNotification }
+ STATUS current
+ DESCRIPTION "notifications"
+ ::= { root 2 }
+compliance MODULE-COMPLIANCE
+ STATUS current
+ DESCRIPTION "compliance"
+ MODULE FIRST-MIB { firstRoot 1 }
+  MANDATORY-GROUPS { objectGroup, notificationGroup }
+  GROUP objectGroup DESCRIPTION "conditional"
+  OBJECT firstObject
+   SYNTAX INTEGER (0..10)
+   WRITE-SYNTAX INTEGER (1..9)
+   MIN-ACCESS read-only
+   DESCRIPTION "refined"
+ MODULE
+  MANDATORY-GROUPS { notificationGroup }
+ ::= { root 3 }
+capabilities AGENT-CAPABILITIES
+ PRODUCT-RELEASE "release"
+ STATUS current
+ DESCRIPTION "capabilities"
+ SUPPORTS FIRST-MIB { firstRoot 1 }
+  INCLUDES { objectGroup, notificationGroup }
+  VARIATION firstObject
+   SYNTAX INTEGER (0..8)
+   WRITE-SYNTAX INTEGER (1..7)
+   ACCESS read-only
+   CREATION-REQUIRES { firstObject, secondObject }
+   DEFVAL { 1 }
+   DESCRIPTION "object variation"
+  VARIATION firstNotification
+   ACCESS not-implemented
+   DESCRIPTION "notification variation"
+ ::= { root 4 }
+END"#;
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+            assert_eq!(definitions.len(), 4);
+
+            let Definition::ObjectGroup(group) = definitions[0] else {
+                panic!("expected OBJECT-GROUP")
+            };
+            let objects = group.objects().unwrap().names().collect::<Vec<_>>();
+            assert_eq!(
+                objects.iter().map(|name| name.text()).collect::<Vec<_>>(),
+                [b"firstObject".as_slice(), b"secondObject".as_slice()]
+            );
+            assert_eq!(objects[0].range().byte_range(), 68..79);
+
+            let Definition::NotificationGroup(group) = definitions[1] else {
+                panic!("expected NOTIFICATION-GROUP")
+            };
+            assert_eq!(group.notifications().unwrap().names().count(), 2);
+
+            let Definition::ModuleCompliance(compliance) = definitions[2] else {
+                panic!("expected MODULE-COMPLIANCE")
+            };
+            let modules = compliance.modules().collect::<Vec<_>>();
+            assert_eq!(modules.len(), 2);
+            assert_eq!(modules[0].module_name().unwrap().text(), b"FIRST-MIB");
+            assert!(modules[0].oid().is_some());
+            assert_eq!(modules[0].mandatory_groups().unwrap().names().count(), 2);
+            assert!(matches!(
+                modules[0].refinements().next(),
+                Some(ComplianceRefinement::Group(_))
+            ));
+            assert!(matches!(
+                modules[0].refinements().nth(1),
+                Some(ComplianceRefinement::Object(_))
+            ));
+            let object = modules[0].objects().next().unwrap();
+            assert_eq!(object.object().unwrap().text(), b"firstObject");
+            assert_eq!(
+                object.min_access().unwrap().keyword().unwrap().kind(),
+                SyntaxKind::KwMinAccess
+            );
+            assert!(object.write_syntax().unwrap().type_syntax().is_some());
+
+            let Definition::AgentCapabilities(capabilities) = definitions[3] else {
+                panic!("expected AGENT-CAPABILITIES")
+            };
+            let supports = capabilities.supports().next().unwrap();
+            assert_eq!(supports.module_name().unwrap().text(), b"FIRST-MIB");
+            assert_eq!(supports.includes().unwrap().names().count(), 2);
+            let variations = supports.variations().collect::<Vec<_>>();
+            assert_eq!(variations.len(), 2);
+            assert_eq!(variations[0].target().unwrap().text(), b"firstObject");
+            assert_eq!(
+                variations[0].access().unwrap().keyword().unwrap().kind(),
+                SyntaxKind::KwAccess
+            );
+            assert_eq!(
+                variations[0].creation_requires().unwrap().names().count(),
+                2
+            );
+            assert!(variations[0].defval().is_some());
+            assert_eq!(variations[1].target().unwrap().text(), b"firstNotification");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn representative_conformance_and_capability_corpora_round_trip() {
+        for (name, input, expected_kind) in [
+            (
+                "IF-MIB",
+                include_bytes!("../../testdata/corpus/primary/ietf/IF-MIB.mib").as_slice(),
+                SyntaxKind::ModuleComplianceDefinition,
+            ),
+            (
+                "JNX-SNMPv2-CAPABILITY",
+                include_bytes!("../../testdata/corpus/primary/juniper/JNX-SNMPv2-CAPABILITY.mib")
+                    .as_slice(),
+                SyntaxKind::AgentCapabilitiesDefinition,
+            ),
+        ] {
+            with_document(input, |document| {
+                let (tree, _) = build(document);
+                assert!(
+                    tree.source_file()
+                        .definitions()
+                        .any(|definition| definition.syntax().kind() == expected_kind),
+                    "{name}"
+                );
+                assert_eq!(tree.reconstruct_text(), input, "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn truncated_cst06_families_are_one_partial_error_and_continue() {
+        let cases: &[(&str, &[u8], SyntaxKind)] = &[
+            ("object group", b"broken OBJECT-GROUP\n OBJECTS { first, second", SyntaxKind::ObjectGroupDefinition),
+            ("notification group", b"broken NOTIFICATION-GROUP\n NOTIFICATIONS { first, second", SyntaxKind::NotificationGroupDefinition),
+            ("module compliance", b"broken MODULE-COMPLIANCE\n STATUS current\n DESCRIPTION \"x\"\n MODULE TEST-MIB\n MANDATORY-GROUPS { group", SyntaxKind::ModuleComplianceDefinition),
+            ("agent capabilities", b"broken AGENT-CAPABILITIES\n PRODUCT-RELEASE \"x\"\n STATUS current\n DESCRIPTION \"x\"\n SUPPORTS TEST-MIB\n INCLUDES { group\n VARIATION object\n CREATION-REQUIRES { column", SyntaxKind::AgentCapabilitiesDefinition),
+        ];
+        for &(name, broken, descendant_kind) in cases {
+            let mut source = b"RECOVERY-MIB DEFINITIONS ::= BEGIN\n".to_vec();
+            source.extend_from_slice(broken);
+            source.extend_from_slice(b"\nAfter ::= INTEGER\nEND");
+            with_document(&source, |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{name}");
+                let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+                assert_eq!(definitions.len(), 2, "{name}");
+                let Definition::Error(error) = definitions[0] else {
+                    panic!("{name}: expected one definition error")
+                };
+                let descendants = error
+                    .syntax()
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .collect::<Vec<_>>();
+                assert_eq!(descendants.len(), 1, "{name}");
+                assert_eq!(descendants[0].kind(), descendant_kind, "{name}");
+                assert!(
+                    matches!(definitions[1], Definition::TypeAssignment(_)),
+                    "{name}"
+                );
+                assert_eq!(tree.reconstruct_text(), source, "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn malformed_cst06_nested_structures_retain_typed_descendants_and_continue() {
+        let cases: &[(&str, &[u8], SyntaxKind)] = &[
+            (
+                "OBJECTS member",
+                br#"broken OBJECT-GROUP OBJECTS { first, @ } STATUS current DESCRIPTION "x" ::= { root 1 }"#,
+                SyntaxKind::ObjectsClause,
+            ),
+            (
+                "NOTIFICATIONS member",
+                br#"broken NOTIFICATION-GROUP NOTIFICATIONS { first, @ } STATUS current DESCRIPTION "x" ::= { root 1 }"#,
+                SyntaxKind::NotificationsClause,
+            ),
+            (
+                "compliance module OID",
+                br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE TEST-MIB { root @ } MANDATORY-GROUPS { group } ::= { root 1 }"#,
+                SyntaxKind::ComplianceModule,
+            ),
+            (
+                "mandatory group",
+                br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE MANDATORY-GROUPS { group, @ } ::= { root 1 }"#,
+                SyntaxKind::MandatoryGroupsClause,
+            ),
+            (
+                "compliance group",
+                br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE GROUP @ DESCRIPTION "group" ::= { root 1 }"#,
+                SyntaxKind::ComplianceGroup,
+            ),
+            (
+                "compliance object access",
+                br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE OBJECT item MIN-ACCESS current DESCRIPTION "item" ::= { root 1 }"#,
+                SyntaxKind::ComplianceObject,
+            ),
+            (
+                "supports module",
+                br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS @ INCLUDES { group } ::= { root 1 }"#,
+                SyntaxKind::SupportsModule,
+            ),
+            (
+                "includes group",
+                br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group, @ } ::= { root 1 }"#,
+                SyntaxKind::IncludesClause,
+            ),
+            (
+                "variation write syntax",
+                br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } VARIATION item WRITE-SYNTAX @ DESCRIPTION "item" ::= { root 1 }"#,
+                SyntaxKind::VariationClause,
+            ),
+            (
+                "creation requirement",
+                br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } VARIATION item CREATION-REQUIRES { column, @ } DESCRIPTION "item" ::= { root 1 }"#,
+                SyntaxKind::CreationRequiresClause,
+            ),
+            (
+                "variation access status value",
+                br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } VARIATION item ACCESS current DESCRIPTION "item" ::= { root 1 }"#,
+                SyntaxKind::AccessClause,
+            ),
+        ];
+        for &(name, broken, descendant_kind) in cases {
+            let mut source = b"MALFORMED-MIB DEFINITIONS ::= BEGIN\n".to_vec();
+            source.extend_from_slice(broken);
+            source.extend_from_slice(b"\nAfter ::= INTEGER\nEND");
+            with_document(&source, |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{name}");
+                let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+                assert!(
+                    matches!(
+                        definitions.as_slice(),
+                        [Definition::Error(_), Definition::TypeAssignment(_)]
+                    ),
+                    "{name}: {definitions:#?}"
+                );
+                assert!(
+                    definitions[0]
+                        .syntax()
+                        .descendant_nodes()
+                        .any(|node| node.kind() == descendant_kind),
+                    "{name}: missing {descendant_kind:?}"
+                );
+                assert_eq!(tree.reconstruct_text(), source, "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn repeated_cst06_clauses_recover_without_losing_nested_nodes() {
+        let cases: &[(&str, &[u8], SyntaxKind)] = &[
+            ("object group objects", br#"broken OBJECT-GROUP OBJECTS { item } OBJECTS { other } STATUS current DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::ObjectsClause),
+            ("object group status", br#"broken OBJECT-GROUP OBJECTS { item } STATUS current STATUS obsolete DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::StatusClause),
+            ("notification group notifications", br#"broken NOTIFICATION-GROUP NOTIFICATIONS { notice } NOTIFICATIONS { other } STATUS current DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::NotificationsClause),
+            ("notification group description", br#"broken NOTIFICATION-GROUP NOTIFICATIONS { notice } STATUS current DESCRIPTION "x" DESCRIPTION "y" ::= { root 1 }"#, SyntaxKind::DescriptionClause),
+            ("mandatory groups", br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE MANDATORY-GROUPS { group } MANDATORY-GROUPS { other } ::= { root 1 }"#, SyntaxKind::MandatoryGroupsClause),
+            ("compliance group description", br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE GROUP group DESCRIPTION "x" DESCRIPTION "y" ::= { root 1 }"#, SyntaxKind::DescriptionClause),
+            ("compliance object syntax", br#"broken MODULE-COMPLIANCE STATUS current DESCRIPTION "x" MODULE OBJECT item SYNTAX INTEGER SYNTAX INTEGER DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::SyntaxClause),
+            ("includes", br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } INCLUDES { other } ::= { root 1 }"#, SyntaxKind::IncludesClause),
+            ("variation access", br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } VARIATION item ACCESS read-only ACCESS not-accessible DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::AccessClause),
+            ("variation creation requirements", br#"broken AGENT-CAPABILITIES PRODUCT-RELEASE "x" STATUS current DESCRIPTION "x" SUPPORTS TEST-MIB INCLUDES { group } VARIATION item CREATION-REQUIRES { column } CREATION-REQUIRES { other } DESCRIPTION "x" ::= { root 1 }"#, SyntaxKind::CreationRequiresClause),
+        ];
+        for &(name, broken, repeated_kind) in cases {
+            let mut source = b"REPEATED-MIB DEFINITIONS ::= BEGIN\n".to_vec();
+            source.extend_from_slice(broken);
+            source.extend_from_slice(b"\nAfter ::= INTEGER\nEND");
+            with_document(&source, |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{name}");
+                let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+                assert!(
+                    matches!(
+                        definitions.as_slice(),
+                        [Definition::Error(_), Definition::TypeAssignment(_)]
+                    ),
+                    "{name}: {definitions:#?}"
+                );
+                let repeated = definitions[0]
+                    .syntax()
+                    .descendant_nodes()
+                    .filter(|node| node.kind() == repeated_kind)
+                    .count();
+                assert!(repeated >= 2, "{name}: found {repeated}");
+                assert_eq!(tree.reconstruct_text(), source, "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn reordered_outer_lists_are_owned_by_their_sections_not_nested_items() {
+        let input = br#"BOUNDARY-MIB DEFINITIONS ::= BEGIN
+compliance MODULE-COMPLIANCE
+ STATUS current
+ DESCRIPTION "compliance"
+ MODULE TEST-MIB
+  MANDATORY-GROUPS { firstGroup }
+  GROUP firstGroup DESCRIPTION "conditional"
+  MANDATORY-GROUPS { laterGroup }
+ ::= { root 1 }
+capabilities AGENT-CAPABILITIES
+ PRODUCT-RELEASE "release"
+ STATUS current
+ DESCRIPTION "capabilities"
+ SUPPORTS TEST-MIB
+  INCLUDES { firstGroup }
+  VARIATION firstObject DESCRIPTION "variation"
+  INCLUDES { laterGroup }
+ ::= { root 2 }
+After ::= INTEGER
+END"#;
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+            assert!(matches!(
+                definitions.as_slice(),
+                [
+                    Definition::Error(_),
+                    Definition::Error(_),
+                    Definition::TypeAssignment(_)
+                ]
+            ));
+
+            let Definition::Error(compliance_error) = definitions[0] else {
+                unreachable!()
+            };
+            let compliance = compliance_error
+                .syntax()
+                .children()
+                .filter_map(SyntaxElement::as_node)
+                .find_map(ModuleComplianceDefinition::cast)
+                .unwrap();
+            let module = compliance.modules().next().unwrap();
+            let mandatory = module.mandatory_group_clauses().collect::<Vec<_>>();
+            assert_eq!(mandatory.len(), 2);
+            assert!(
+                mandatory[0].syntax().range().byte_range().start
+                    < mandatory[1].syntax().range().byte_range().start
+            );
+            assert_eq!(
+                mandatory[1].syntax().text(),
+                b"MANDATORY-GROUPS { laterGroup }"
+            );
+            assert_eq!(
+                document.slice(mandatory[1].syntax().range()).unwrap(),
+                mandatory[1].syntax().text()
+            );
+            let group = module.groups().next().unwrap();
+            assert!(
+                !group
+                    .syntax()
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .any(|node| node.kind() == SyntaxKind::MandatoryGroupsClause)
+            );
+            assert!(
+                group.syntax().range().byte_range().end
+                    <= mandatory[1].syntax().range().byte_range().start
+            );
+
+            let Definition::Error(capabilities_error) = definitions[1] else {
+                unreachable!()
+            };
+            let capabilities = capabilities_error
+                .syntax()
+                .children()
+                .filter_map(SyntaxElement::as_node)
+                .find_map(AgentCapabilitiesDefinition::cast)
+                .unwrap();
+            let supports = capabilities.supports().next().unwrap();
+            let includes = supports.includes_clauses().collect::<Vec<_>>();
+            assert_eq!(includes.len(), 2);
+            assert!(
+                includes[0].syntax().range().byte_range().start
+                    < includes[1].syntax().range().byte_range().start
+            );
+            assert_eq!(includes[1].syntax().text(), b"INCLUDES { laterGroup }");
+            assert_eq!(
+                document.slice(includes[1].syntax().range()).unwrap(),
+                includes[1].syntax().text()
+            );
+            let variation = supports.variations().next().unwrap();
+            assert!(
+                !variation
+                    .syntax()
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .any(|node| node.kind() == SyntaxKind::IncludesClause)
+            );
+            assert!(
+                variation.syntax().range().byte_range().end
+                    <= includes[1].syntax().range().byte_range().start
+            );
+
+            assert_eq!(definitions[2].name().unwrap().text(), b"After");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn unambiguous_definition_clauses_escape_nested_cst06_sections() {
+        let input = br#"OUTER-BOUNDARY-MIB DEFINITIONS ::= BEGIN
+compliance MODULE-COMPLIANCE
+ STATUS current
+ DESCRIPTION "compliance"
+ MODULE
+  GROUP firstGroup DESCRIPTION "conditional"
+ STATUS obsolete
+ REFERENCE "late compliance reference"
+ ::= { root 1 }
+capabilities AGENT-CAPABILITIES
+ PRODUCT-RELEASE "release"
+ STATUS current
+ DESCRIPTION "capabilities"
+ SUPPORTS TEST-MIB
+  INCLUDES { firstGroup }
+  VARIATION firstObject DESCRIPTION "variation"
+ PRODUCT-RELEASE "late release"
+ STATUS obsolete
+ REFERENCE "late capabilities reference"
+ ::= { root 2 }
+After ::= INTEGER
+END"#;
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+            assert!(matches!(
+                definitions.as_slice(),
+                [
+                    Definition::Error(_),
+                    Definition::Error(_),
+                    Definition::TypeAssignment(_)
+                ]
+            ));
+
+            let definition_nodes = definitions[..2]
+                .iter()
+                .map(|definition| {
+                    definition
+                        .syntax()
+                        .children()
+                        .filter_map(SyntaxElement::as_node)
+                        .next()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let compliance = ModuleComplianceDefinition::cast(definition_nodes[0]).unwrap();
+            let module = compliance.modules().next().unwrap();
+            assert_eq!(
+                definition_nodes[0]
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .filter(|node| node.kind() == SyntaxKind::StatusClause)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                definition_nodes[0]
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .filter(|node| node.kind() == SyntaxKind::ReferenceClause)
+                    .count(),
+                1
+            );
+            assert!(!module.syntax().descendant_nodes().any(|node| {
+                matches!(
+                    node.kind(),
+                    SyntaxKind::StatusClause | SyntaxKind::ReferenceClause
+                )
+            }));
+
+            let capabilities = AgentCapabilitiesDefinition::cast(definition_nodes[1]).unwrap();
+            let supports = capabilities.supports().next().unwrap();
+            assert_eq!(
+                definition_nodes[1]
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .filter(|node| node.kind() == SyntaxKind::ProductReleaseClause)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                definition_nodes[1]
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .filter(|node| node.kind() == SyntaxKind::StatusClause)
+                    .count(),
+                2
+            );
+            assert!(!supports.syntax().descendant_nodes().any(|node| {
+                matches!(
+                    node.kind(),
+                    SyntaxKind::ProductReleaseClause
+                        | SyntaxKind::StatusClause
+                        | SyntaxKind::ReferenceClause
+                )
+            }));
+            assert_eq!(definitions[2].name().unwrap().text(), b"After");
             assert_eq!(tree.reconstruct_text(), input);
         });
     }

@@ -431,6 +431,20 @@ define_syntax_kinds! {
         NotificationTypeDefinition => ("NOTIFICATION_TYPE_DEFINITION", "NOTIFICATION-TYPE definition");
         TrapTypeDefinition => ("TRAP_TYPE_DEFINITION", "TRAP-TYPE definition");
         MacroDefinition => ("MACRO_DEFINITION", "MACRO definition");
+        ObjectGroupDefinition => ("OBJECT_GROUP_DEFINITION", "OBJECT-GROUP definition");
+        NotificationGroupDefinition => ("NOTIFICATION_GROUP_DEFINITION", "NOTIFICATION-GROUP definition");
+        ModuleComplianceDefinition => ("MODULE_COMPLIANCE_DEFINITION", "MODULE-COMPLIANCE definition");
+        AgentCapabilitiesDefinition => ("AGENT_CAPABILITIES_DEFINITION", "AGENT-CAPABILITIES definition");
+
+        ComplianceModule => ("COMPLIANCE_MODULE", "MODULE compliance section");
+        MandatoryGroupsClause => ("MANDATORY_GROUPS_CLAUSE", "MANDATORY-GROUPS clause");
+        ComplianceGroup => ("COMPLIANCE_GROUP", "GROUP compliance refinement");
+        ComplianceObject => ("COMPLIANCE_OBJECT", "OBJECT compliance refinement");
+        WriteSyntaxClause => ("WRITE_SYNTAX_CLAUSE", "WRITE-SYNTAX clause");
+        SupportsModule => ("SUPPORTS_MODULE", "SUPPORTS capability section");
+        IncludesClause => ("INCLUDES_CLAUSE", "INCLUDES clause");
+        VariationClause => ("VARIATION_CLAUSE", "VARIATION clause");
+        CreationRequiresClause => ("CREATION_REQUIRES_CLAUSE", "CREATION-REQUIRES clause");
 
         SyntaxClause => ("SYNTAX_CLAUSE", "SYNTAX clause");
         AccessClause => ("ACCESS_CLAUSE", "access clause");
@@ -508,10 +522,10 @@ mod tests {
 
     #[test]
     fn inventory_and_categories_are_exhaustive() {
-        assert_eq!(SyntaxKind::ALL.len(), 162);
+        assert_eq!(SyntaxKind::ALL.len(), 175);
         assert_eq!(
             SyntaxKind::ALL.iter().filter(|kind| kind.is_node()).count(),
-            53
+            66
         );
         assert_eq!(
             SyntaxKind::ALL

@@ -52,6 +52,19 @@ typed_node!(ObjectIdentityDefinition, ObjectIdentityDefinition);
 typed_node!(NotificationTypeDefinition, NotificationTypeDefinition);
 typed_node!(TrapTypeDefinition, TrapTypeDefinition);
 typed_node!(MacroDefinition, MacroDefinition);
+typed_node!(ObjectGroupDefinition, ObjectGroupDefinition);
+typed_node!(NotificationGroupDefinition, NotificationGroupDefinition);
+typed_node!(ModuleComplianceDefinition, ModuleComplianceDefinition);
+typed_node!(AgentCapabilitiesDefinition, AgentCapabilitiesDefinition);
+typed_node!(ComplianceModule, ComplianceModule);
+typed_node!(MandatoryGroupsClause, MandatoryGroupsClause);
+typed_node!(ComplianceGroup, ComplianceGroup);
+typed_node!(ComplianceObject, ComplianceObject);
+typed_node!(WriteSyntaxClause, WriteSyntaxClause);
+typed_node!(SupportsModule, SupportsModule);
+typed_node!(IncludesClause, IncludesClause);
+typed_node!(VariationClause, VariationClause);
+typed_node!(CreationRequiresClause, CreationRequiresClause);
 typed_node!(SyntaxClause, SyntaxClause);
 typed_node!(AccessClause, AccessClause);
 typed_node!(StatusClause, StatusClause);
@@ -112,8 +125,44 @@ pub enum Definition<'tree, 'src> {
     TrapType(TrapTypeDefinition<'tree, 'src>),
     /// ASN.1 `MACRO` definition.
     Macro(MacroDefinition<'tree, 'src>),
+    /// `OBJECT-GROUP` definition.
+    ObjectGroup(ObjectGroupDefinition<'tree, 'src>),
+    /// `NOTIFICATION-GROUP` definition.
+    NotificationGroup(NotificationGroupDefinition<'tree, 'src>),
+    /// `MODULE-COMPLIANCE` definition.
+    ModuleCompliance(ModuleComplianceDefinition<'tree, 'src>),
+    /// `AGENT-CAPABILITIES` definition.
+    AgentCapabilities(AgentCapabilitiesDefinition<'tree, 'src>),
     /// A malformed definition retained for recovery.
     Error(ErrorRegion<'tree, 'src>),
+}
+
+/// A `GROUP` or `OBJECT` refinement in source order.
+#[derive(Clone, Copy, Debug)]
+pub enum ComplianceRefinement<'tree, 'src> {
+    /// A conditionally required group.
+    Group(ComplianceGroup<'tree, 'src>),
+    /// An object with refined requirements.
+    Object(ComplianceObject<'tree, 'src>),
+}
+
+impl<'tree, 'src> ComplianceRefinement<'tree, 'src> {
+    /// Cast a refinement node.
+    pub fn cast(node: SyntaxNode<'tree, 'src>) -> Option<Self> {
+        match node.kind() {
+            SyntaxKind::ComplianceGroup => ComplianceGroup::cast(node).map(Self::Group),
+            SyntaxKind::ComplianceObject => ComplianceObject::cast(node).map(Self::Object),
+            _ => None,
+        }
+    }
+
+    /// Return the underlying syntax node.
+    pub fn syntax(self) -> SyntaxNode<'tree, 'src> {
+        match self {
+            Self::Group(node) => node.syntax(),
+            Self::Object(node) => node.syntax(),
+        }
+    }
 }
 
 impl<'tree, 'src> Definition<'tree, 'src> {
@@ -139,6 +188,18 @@ impl<'tree, 'src> Definition<'tree, 'src> {
             }
             SyntaxKind::TrapTypeDefinition => TrapTypeDefinition::cast(node).map(Self::TrapType),
             SyntaxKind::MacroDefinition => MacroDefinition::cast(node).map(Self::Macro),
+            SyntaxKind::ObjectGroupDefinition => {
+                ObjectGroupDefinition::cast(node).map(Self::ObjectGroup)
+            }
+            SyntaxKind::NotificationGroupDefinition => {
+                NotificationGroupDefinition::cast(node).map(Self::NotificationGroup)
+            }
+            SyntaxKind::ModuleComplianceDefinition => {
+                ModuleComplianceDefinition::cast(node).map(Self::ModuleCompliance)
+            }
+            SyntaxKind::AgentCapabilitiesDefinition => {
+                AgentCapabilitiesDefinition::cast(node).map(Self::AgentCapabilities)
+            }
             SyntaxKind::Error if is_definition_or_recovery(node) => {
                 ErrorRegion::cast(node).map(Self::Error)
             }
@@ -158,6 +219,10 @@ impl<'tree, 'src> Definition<'tree, 'src> {
             Self::NotificationType(node) => node.syntax(),
             Self::TrapType(node) => node.syntax(),
             Self::Macro(node) => node.syntax(),
+            Self::ObjectGroup(node) => node.syntax(),
+            Self::NotificationGroup(node) => node.syntax(),
+            Self::ModuleCompliance(node) => node.syntax(),
+            Self::AgentCapabilities(node) => node.syntax(),
             Self::Error(node) => node.syntax(),
         }
     }
@@ -174,6 +239,10 @@ impl<'tree, 'src> Definition<'tree, 'src> {
             Self::NotificationType(node) => node.name(),
             Self::TrapType(node) => node.name(),
             Self::Macro(node) => node.name(),
+            Self::ObjectGroup(node) => node.name(),
+            Self::NotificationGroup(node) => node.name(),
+            Self::ModuleCompliance(node) => node.name(),
+            Self::AgentCapabilities(node) => node.name(),
             Self::Error(_) => None,
         }
     }
@@ -259,6 +328,10 @@ fn is_definition_kind(kind: SyntaxKind) -> bool {
             | SyntaxKind::NotificationTypeDefinition
             | SyntaxKind::TrapTypeDefinition
             | SyntaxKind::MacroDefinition
+            | SyntaxKind::ObjectGroupDefinition
+            | SyntaxKind::NotificationGroupDefinition
+            | SyntaxKind::ModuleComplianceDefinition
+            | SyntaxKind::AgentCapabilitiesDefinition
     )
 }
 
@@ -321,8 +394,6 @@ impl<'tree, 'src> Module<'tree, 'src> {
     /// Iterate over primary definitions and malformed-definition recovery
     /// regions in source order.
     ///
-    /// Conformance and capability definitions remain untyped until the next
-    /// CST grammar stage and are therefore not yielded here.
     pub fn definitions(self) -> impl Iterator<Item = Definition<'tree, 'src>> {
         self.unparsed_regions().flat_map(|region| {
             region
@@ -379,6 +450,10 @@ definition_common!(ObjectIdentityDefinition, KwObjectIdentity);
 definition_common!(NotificationTypeDefinition, KwNotificationType);
 definition_common!(TrapTypeDefinition, KwTrapType);
 definition_common!(MacroDefinition, KwMacro);
+definition_common!(ObjectGroupDefinition, KwObjectGroup);
+definition_common!(NotificationGroupDefinition, KwNotificationGroup);
+definition_common!(ModuleComplianceDefinition, KwModuleCompliance);
+definition_common!(AgentCapabilitiesDefinition, KwAgentCapabilities);
 
 impl<'tree, 'src> TypeAssignment<'tree, 'src> {
     /// Return the assigned type name.
@@ -618,6 +693,315 @@ impl<'tree, 'src> TrapTypeDefinition<'tree, 'src> {
     }
 }
 
+macro_rules! group_definition {
+    ($name:ident, $members:ident, $method:ident) => {
+        impl<'tree, 'src> $name<'tree, 'src> {
+            /// Return the member-list clause.
+            pub fn $method(self) -> Option<$members<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the status clause.
+            pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the description clause.
+            pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the optional reference clause.
+            pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the assigned OID.
+            pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+                child_node(self.0)
+            }
+        }
+    };
+}
+
+group_definition!(ObjectGroupDefinition, ObjectsClause, objects);
+group_definition!(
+    NotificationGroupDefinition,
+    NotificationsClause,
+    notifications
+);
+
+impl<'tree, 'src> ModuleComplianceDefinition<'tree, 'src> {
+    /// Return the status clause.
+    pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional reference clause.
+    pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over `MODULE` sections in source order.
+    pub fn modules(self) -> impl Iterator<Item = ComplianceModule<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Return the assigned OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+impl<'tree, 'src> ComplianceModule<'tree, 'src> {
+    /// Return the `MODULE` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwModule)
+    }
+
+    /// Return the optional named module reference.
+    pub fn module_name(self) -> Option<SyntaxToken<'tree, 'src>> {
+        token_after(self.0, SyntaxKind::KwModule, SyntaxKind::UppercaseIdent)
+    }
+
+    /// Return the optional module-identifying OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional mandatory-groups clause.
+    pub fn mandatory_groups(self) -> Option<MandatoryGroupsClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over mandatory-groups clauses in source order, including
+    /// repeated clauses retained for recovery.
+    pub fn mandatory_group_clauses(
+        self,
+    ) -> impl Iterator<Item = MandatoryGroupsClause<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over `GROUP` and `OBJECT` refinements in source order.
+    pub fn refinements(self) -> impl Iterator<Item = ComplianceRefinement<'tree, 'src>> {
+        self.0
+            .children()
+            .filter_map(SyntaxElement::as_node)
+            .filter_map(ComplianceRefinement::cast)
+    }
+
+    /// Iterate over group refinements in source order.
+    pub fn groups(self) -> impl Iterator<Item = ComplianceGroup<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over object refinements in source order.
+    pub fn objects(self) -> impl Iterator<Item = ComplianceObject<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over malformed portions of the section.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> ComplianceGroup<'tree, 'src> {
+    /// Return the `GROUP` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwGroup)
+    }
+
+    /// Return the referenced group.
+    pub fn group(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token_matching(self.0, SyntaxKind::is_identifier)
+    }
+
+    /// Return the required description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over malformed portions of the refinement.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> ComplianceObject<'tree, 'src> {
+    /// Return the `OBJECT` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwObject)
+    }
+
+    /// Return the referenced object.
+    pub fn object(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token_matching(self.0, SyntaxKind::is_identifier)
+    }
+
+    /// Return the optional refined syntax.
+    pub fn syntax_clause(self) -> Option<SyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional refined write syntax.
+    pub fn write_syntax(self) -> Option<WriteSyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional minimum-access clause.
+    pub fn min_access(self) -> Option<AccessClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the required description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over malformed portions of the refinement.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> AgentCapabilitiesDefinition<'tree, 'src> {
+    /// Return the product-release clause.
+    pub fn product_release(self) -> Option<ProductReleaseClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the status clause.
+    pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional reference clause.
+    pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over `SUPPORTS` sections in source order.
+    pub fn supports(self) -> impl Iterator<Item = SupportsModule<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Return the assigned OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+impl<'tree, 'src> SupportsModule<'tree, 'src> {
+    /// Return the `SUPPORTS` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwSupports)
+    }
+
+    /// Return the supported module reference.
+    pub fn module_name(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token_matching(self.0, SyntaxKind::is_identifier)
+    }
+
+    /// Return the optional module-identifying OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the required includes clause.
+    pub fn includes(self) -> Option<IncludesClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over includes clauses in source order, including repeated
+    /// clauses retained for recovery.
+    pub fn includes_clauses(self) -> impl Iterator<Item = IncludesClause<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over variations in source order.
+    pub fn variations(self) -> impl Iterator<Item = VariationClause<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over malformed portions of the section.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> VariationClause<'tree, 'src> {
+    /// Return the `VARIATION` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwVariation)
+    }
+
+    /// Return the referenced object or notification.
+    pub fn target(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token_matching(self.0, SyntaxKind::is_identifier)
+    }
+
+    /// Return the optional refined syntax.
+    pub fn syntax_clause(self) -> Option<SyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional refined write syntax.
+    pub fn write_syntax(self) -> Option<WriteSyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional access clause.
+    pub fn access(self) -> Option<AccessClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional creation-requires clause.
+    pub fn creation_requires(self) -> Option<CreationRequiresClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional default value.
+    pub fn defval(self) -> Option<DefvalClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the required description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over malformed portions of the variation.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
 impl<'tree, 'src> MacroDefinition<'tree, 'src> {
     /// Return the opaque lexer token retaining the macro body.
     pub fn body(self) -> Option<SyntaxToken<'tree, 'src>> {
@@ -752,6 +1136,23 @@ impl<'tree, 'src> SyntaxClause<'tree, 'src> {
     }
 }
 
+impl<'tree, 'src> WriteSyntaxClause<'tree, 'src> {
+    /// Return the `WRITE-SYNTAX` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwWriteSyntax)
+    }
+
+    /// Return the contained type-syntax node, when recognized.
+    pub fn type_syntax(self) -> Option<SyntaxNode<'tree, 'src>> {
+        child_type_syntax(self.0)
+    }
+
+    /// Iterate over malformed portions of the clause.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+}
+
 macro_rules! value_clause {
     ($name:ident, $keyword:ident, $value:expr) => {
         impl<'tree, 'src> $name<'tree, 'src> {
@@ -853,6 +1254,9 @@ macro_rules! name_list_clause {
 name_list_clause!(ObjectsClause, KwObjects);
 name_list_clause!(NotificationsClause, KwNotifications);
 name_list_clause!(VariablesClause, KwVariables);
+name_list_clause!(MandatoryGroupsClause, KwMandatoryGroups);
+name_list_clause!(IncludesClause, KwIncludes);
+name_list_clause!(CreationRequiresClause, KwCreationRequires);
 
 impl<'tree, 'src> AugmentsClause<'tree, 'src> {
     /// Return the `AUGMENTS` keyword.

@@ -86,7 +86,15 @@ impl BodyParser<'_, '_> {
 
     fn parse_definition(&mut self, start: usize, end: usize, kind: SyntaxKind) -> NodeData {
         let parse_error_start = self.parse_errors;
-        let children = self.parse_fragment(start, end, Some(start));
+        let children = match kind {
+            SyntaxKind::ModuleComplianceDefinition => {
+                self.parse_module_compliance_fragment(start, end)
+            }
+            SyntaxKind::AgentCapabilitiesDefinition => {
+                self.parse_agent_capabilities_fragment(start, end)
+            }
+            _ => self.parse_fragment(start, end, Some(start)),
+        };
         let definition = self.node(kind, children);
         let complete = self.definition_is_complete(&definition);
         if !complete && self.parse_errors == parse_error_start {
@@ -149,6 +157,256 @@ impl BodyParser<'_, '_> {
         children
     }
 
+    fn parse_module_compliance_fragment(&mut self, start: usize, end: usize) -> Vec<ElementData> {
+        let mut children = Vec::new();
+        let mut cursor = start;
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if self.tokens[current].kind == SyntaxKind::KwModule {
+                let (module, next) = self.parse_compliance_module(current, end);
+                children.push(ElementData::Node(module));
+                cursor = next;
+                continue;
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+                continue;
+            }
+            if self.tokens[current].kind == SyntaxKind::ColonColonEqual
+                && let Some(open) = self.next_significant(current + 1, end)
+                && self.tokens[open].kind == SyntaxKind::LBrace
+            {
+                self.push_plain(&mut children, current, open);
+                let (oid, next) = self.parse_oid_assignment(open, end);
+                children.push(ElementData::Node(oid));
+                cursor = next;
+                continue;
+            }
+            children.push(self.element(current));
+            cursor = current + 1;
+        }
+        self.push_plain(&mut children, cursor, end);
+        children
+    }
+
+    fn parse_compliance_module(&mut self, start: usize, end: usize) -> (NodeData, usize) {
+        let mut children = vec![ElementData::Token(self.tokens[start])];
+        let mut cursor = start + 1;
+
+        if let Some(name) = self.next_significant(cursor, end)
+            && self.tokens[name].kind == SyntaxKind::UppercaseIdent
+        {
+            self.push_plain(&mut children, cursor, name + 1);
+            cursor = name + 1;
+        }
+        if let Some(open) = self.next_significant(cursor, end)
+            && self.tokens[open].kind == SyntaxKind::LBrace
+        {
+            self.push_plain(&mut children, cursor, open);
+            let (oid, next) = self.parse_oid_assignment(open, end);
+            children.push(ElementData::Node(oid));
+            cursor = next;
+        }
+
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if matches!(
+                self.tokens[current].kind,
+                SyntaxKind::KwStatus | SyntaxKind::KwReference
+            ) {
+                return (self.node(SyntaxKind::ComplianceModule, children), current);
+            }
+            match self.tokens[current].kind {
+                SyntaxKind::KwModule | SyntaxKind::ColonColonEqual => {
+                    return (self.node(SyntaxKind::ComplianceModule, children), current);
+                }
+                SyntaxKind::KwGroup => {
+                    let (group, next) =
+                        self.parse_compliance_refinement(SyntaxKind::ComplianceGroup, current, end);
+                    children.push(ElementData::Node(group));
+                    cursor = next;
+                    continue;
+                }
+                SyntaxKind::KwObject => {
+                    let (object, next) = self.parse_compliance_refinement(
+                        SyntaxKind::ComplianceObject,
+                        current,
+                        end,
+                    );
+                    children.push(ElementData::Node(object));
+                    cursor = next;
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+            } else {
+                children.push(self.element(current));
+                cursor = current + 1;
+            }
+        }
+        self.push_plain(&mut children, cursor, end);
+        (self.node(SyntaxKind::ComplianceModule, children), end)
+    }
+
+    fn parse_compliance_refinement(
+        &mut self,
+        node_kind: SyntaxKind,
+        start: usize,
+        end: usize,
+    ) -> (NodeData, usize) {
+        let mut children = vec![ElementData::Token(self.tokens[start])];
+        let mut cursor = start + 1;
+        if let Some(name) = self.next_significant(cursor, end)
+            && self.tokens[name].kind.is_identifier()
+        {
+            self.push_plain(&mut children, cursor, name + 1);
+            cursor = name + 1;
+        }
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if matches!(
+                self.tokens[current].kind,
+                SyntaxKind::KwGroup
+                    | SyntaxKind::KwObject
+                    | SyntaxKind::KwModule
+                    | SyntaxKind::KwMandatoryGroups
+                    | SyntaxKind::KwStatus
+                    | SyntaxKind::KwReference
+                    | SyntaxKind::ColonColonEqual
+            ) {
+                return (self.node(node_kind, children), current);
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+            } else {
+                children.push(self.element(current));
+                cursor = current + 1;
+            }
+        }
+        self.push_plain(&mut children, cursor, end);
+        (self.node(node_kind, children), end)
+    }
+
+    fn parse_agent_capabilities_fragment(&mut self, start: usize, end: usize) -> Vec<ElementData> {
+        let mut children = Vec::new();
+        let mut cursor = start;
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if self.tokens[current].kind == SyntaxKind::KwSupports {
+                let (supports, next) = self.parse_supports_module(current, end);
+                children.push(ElementData::Node(supports));
+                cursor = next;
+                continue;
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+                continue;
+            }
+            if self.tokens[current].kind == SyntaxKind::ColonColonEqual
+                && let Some(open) = self.next_significant(current + 1, end)
+                && self.tokens[open].kind == SyntaxKind::LBrace
+            {
+                self.push_plain(&mut children, current, open);
+                let (oid, next) = self.parse_oid_assignment(open, end);
+                children.push(ElementData::Node(oid));
+                cursor = next;
+                continue;
+            }
+            children.push(self.element(current));
+            cursor = current + 1;
+        }
+        self.push_plain(&mut children, cursor, end);
+        children
+    }
+
+    fn parse_supports_module(&mut self, start: usize, end: usize) -> (NodeData, usize) {
+        let mut children = vec![ElementData::Token(self.tokens[start])];
+        let mut cursor = start + 1;
+        if let Some(name) = self.next_significant(cursor, end)
+            && self.tokens[name].kind.is_identifier()
+        {
+            self.push_plain(&mut children, cursor, name + 1);
+            cursor = name + 1;
+        }
+        if let Some(open) = self.next_significant(cursor, end)
+            && self.tokens[open].kind == SyntaxKind::LBrace
+        {
+            self.push_plain(&mut children, cursor, open);
+            let (oid, next) = self.parse_oid_assignment(open, end);
+            children.push(ElementData::Node(oid));
+            cursor = next;
+        }
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if matches!(
+                self.tokens[current].kind,
+                SyntaxKind::KwSupports
+                    | SyntaxKind::KwProductRelease
+                    | SyntaxKind::KwStatus
+                    | SyntaxKind::KwReference
+                    | SyntaxKind::ColonColonEqual
+            ) {
+                return (self.node(SyntaxKind::SupportsModule, children), current);
+            }
+            if self.tokens[current].kind == SyntaxKind::KwVariation {
+                let (variation, next) = self.parse_variation(current, end);
+                children.push(ElementData::Node(variation));
+                cursor = next;
+                continue;
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+            } else {
+                children.push(self.element(current));
+                cursor = current + 1;
+            }
+        }
+        self.push_plain(&mut children, cursor, end);
+        (self.node(SyntaxKind::SupportsModule, children), end)
+    }
+
+    fn parse_variation(&mut self, start: usize, end: usize) -> (NodeData, usize) {
+        let mut children = vec![ElementData::Token(self.tokens[start])];
+        let mut cursor = start + 1;
+        if let Some(name) = self.next_significant(cursor, end)
+            && self.tokens[name].kind.is_identifier()
+        {
+            self.push_plain(&mut children, cursor, name + 1);
+            cursor = name + 1;
+        }
+        while let Some(current) = self.next_significant(cursor, end) {
+            self.push_plain(&mut children, cursor, current);
+            if matches!(
+                self.tokens[current].kind,
+                SyntaxKind::KwVariation
+                    | SyntaxKind::KwSupports
+                    | SyntaxKind::KwIncludes
+                    | SyntaxKind::KwProductRelease
+                    | SyntaxKind::KwStatus
+                    | SyntaxKind::KwReference
+                    | SyntaxKind::ColonColonEqual
+            ) {
+                return (self.node(SyntaxKind::VariationClause, children), current);
+            }
+            if let Some((clause, next)) = self.parse_clause(current, end) {
+                children.push(ElementData::Node(clause));
+                cursor = next;
+            } else {
+                children.push(self.element(current));
+                cursor = current + 1;
+            }
+        }
+        self.push_plain(&mut children, cursor, end);
+        (self.node(SyntaxKind::VariationClause, children), end)
+    }
+
     fn definition_kind(&self, start: usize, end: usize) -> Option<SyntaxKind> {
         let first = self.tokens[start].kind;
         let Some(second) = self.next_significant(start + 1, end) else {
@@ -174,6 +432,10 @@ impl BodyParser<'_, '_> {
             SyntaxKind::KwNotificationType => Some(SyntaxKind::NotificationTypeDefinition),
             SyntaxKind::KwTrapType => Some(SyntaxKind::TrapTypeDefinition),
             SyntaxKind::KwMacro => Some(SyntaxKind::MacroDefinition),
+            SyntaxKind::KwObjectGroup => Some(SyntaxKind::ObjectGroupDefinition),
+            SyntaxKind::KwNotificationGroup => Some(SyntaxKind::NotificationGroupDefinition),
+            SyntaxKind::KwModuleCompliance => Some(SyntaxKind::ModuleComplianceDefinition),
+            SyntaxKind::KwAgentCapabilities => Some(SyntaxKind::AgentCapabilitiesDefinition),
             kind if (first == SyntaxKind::UppercaseIdent || first.is_type_keyword())
                 && is_type_start(kind) =>
             {
@@ -202,6 +464,24 @@ impl BodyParser<'_, '_> {
             SyntaxKind::MacroDefinition => {
                 validate_macro_definition(&parts, definition, self.document)
             }
+            SyntaxKind::ObjectGroupDefinition => validate_group_definition(
+                &parts,
+                definition,
+                SyntaxKind::KwObjectGroup,
+                SyntaxKind::ObjectsClause,
+            ),
+            SyntaxKind::NotificationGroupDefinition => validate_group_definition(
+                &parts,
+                definition,
+                SyntaxKind::KwNotificationGroup,
+                SyntaxKind::NotificationsClause,
+            ),
+            SyntaxKind::ModuleComplianceDefinition => {
+                validate_module_compliance(&parts, definition)
+            }
+            SyntaxKind::AgentCapabilitiesDefinition => {
+                validate_agent_capabilities(&parts, definition)
+            }
             _ => false,
         }
     }
@@ -210,6 +490,7 @@ impl BodyParser<'_, '_> {
         let kind = self.tokens[start].kind;
         match kind {
             SyntaxKind::KwSyntax => Some(self.parse_syntax_clause(start, end)),
+            SyntaxKind::KwWriteSyntax => Some(self.parse_write_syntax_clause(start, end)),
             SyntaxKind::KwMaxAccess | SyntaxKind::KwAccess | SyntaxKind::KwMinAccess => {
                 Some(self.parse_value_clause(
                     SyntaxKind::AccessClause,
@@ -278,33 +559,59 @@ impl BodyParser<'_, '_> {
             SyntaxKind::KwVariables => {
                 Some(self.parse_name_list_clause(SyntaxKind::VariablesClause, start, end))
             }
+            SyntaxKind::KwMandatoryGroups => {
+                Some(self.parse_name_list_clause(SyntaxKind::MandatoryGroupsClause, start, end))
+            }
+            SyntaxKind::KwIncludes => {
+                Some(self.parse_name_list_clause(SyntaxKind::IncludesClause, start, end))
+            }
+            SyntaxKind::KwCreationRequires => {
+                Some(self.parse_name_list_clause(SyntaxKind::CreationRequiresClause, start, end))
+            }
             _ => None,
         }
     }
 
     fn parse_syntax_clause(&mut self, start: usize, end: usize) -> (NodeData, usize) {
+        self.parse_type_clause(SyntaxKind::SyntaxClause, start, end, "SYNTAX")
+    }
+
+    fn parse_write_syntax_clause(&mut self, start: usize, end: usize) -> (NodeData, usize) {
+        self.parse_type_clause(SyntaxKind::WriteSyntaxClause, start, end, "WRITE-SYNTAX")
+    }
+
+    fn parse_type_clause(
+        &mut self,
+        node_kind: SyntaxKind,
+        start: usize,
+        end: usize,
+        keyword: &str,
+    ) -> (NodeData, usize) {
         let mut children = vec![ElementData::Token(self.tokens[start])];
         let Some(syntax_start) = self.next_significant(start + 1, end) else {
-            self.emit_at(end, "expected type syntax after SYNTAX");
-            return (self.node(SyntaxKind::SyntaxClause, children), start + 1);
+            self.emit_at(end, format!("expected type syntax after {keyword}"));
+            return (self.node(node_kind, children), start + 1);
         };
         self.push_plain(&mut children, start + 1, syntax_start);
         if self.is_clause_boundary(syntax_start)
             || self.tokens[syntax_start].kind == SyntaxKind::ColonColonEqual
         {
-            self.emit_at(syntax_start, "expected type syntax after SYNTAX");
-            return (self.node(SyntaxKind::SyntaxClause, children), syntax_start);
+            self.emit_at(
+                syntax_start,
+                format!("expected type syntax after {keyword}"),
+            );
+            return (self.node(node_kind, children), syntax_start);
         }
         if let Some((syntax, next)) = self.parse_type_syntax(syntax_start, end) {
             children.push(ElementData::Node(syntax));
-            (self.node(SyntaxKind::SyntaxClause, children), next)
+            (self.node(node_kind, children), next)
         } else {
             self.push_error(&mut children, syntax_start, syntax_start + 1);
-            self.emit_at(syntax_start, "expected type syntax after SYNTAX");
-            (
-                self.node(SyntaxKind::SyntaxClause, children),
-                syntax_start + 1,
-            )
+            self.emit_at(
+                syntax_start,
+                format!("expected type syntax after {keyword}"),
+            );
+            (self.node(node_kind, children), syntax_start + 1)
         }
     }
 
@@ -1237,6 +1544,14 @@ impl BodyParser<'_, '_> {
                 | SyntaxKind::KwEnterprise
                 | SyntaxKind::KwVariables
                 | SyntaxKind::KwProductRelease
+                | SyntaxKind::KwModule
+                | SyntaxKind::KwMandatoryGroups
+                | SyntaxKind::KwGroup
+                | SyntaxKind::KwWriteSyntax
+                | SyntaxKind::KwSupports
+                | SyntaxKind::KwIncludes
+                | SyntaxKind::KwVariation
+                | SyntaxKind::KwCreationRequires
         )
     }
 
@@ -1875,8 +2190,225 @@ fn validate_macro_definition(
     })
 }
 
+fn validate_group_definition(
+    parts: &[DefinitionPart],
+    definition: &NodeData,
+    keyword: SyntaxKind,
+    members: SyntaxKind,
+) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    cursor.token_matching(SyntaxKind::is_identifier)
+        && cursor.token(keyword)
+        && cursor.node(members)
+        && find_node(definition, members).is_some_and(complete_braced_node)
+        && cursor.node(SyntaxKind::StatusClause)
+        && cursor.node(SyntaxKind::DescriptionClause)
+        && {
+            cursor.optional_node(SyntaxKind::ReferenceClause);
+            true
+        }
+        && cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_module_compliance(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwModuleCompliance)
+        || !cursor.node(SyntaxKind::StatusClause)
+        || !cursor.node(SyntaxKind::DescriptionClause)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    while cursor.peek_node(SyntaxKind::ComplianceModule) {
+        if !cursor.node(SyntaxKind::ComplianceModule) {
+            return false;
+        }
+    }
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && definition
+            .children
+            .iter()
+            .filter_map(as_node)
+            .filter(|node| node.kind == SyntaxKind::ComplianceModule)
+            .all(validate_compliance_module)
+        && cursor.finish()
+}
+
+fn validate_compliance_module(module: &NodeData) -> bool {
+    let parts = definition_parts(module);
+    let mut cursor = PartCursor::new(&parts);
+    if !cursor.token(SyntaxKind::KwModule) {
+        return false;
+    }
+    let _ = cursor.token(SyntaxKind::UppercaseIdent);
+    if cursor.peek_node(SyntaxKind::OidAssignment) && !cursor.node(SyntaxKind::OidAssignment) {
+        return false;
+    }
+    if cursor.peek_node(SyntaxKind::MandatoryGroupsClause) {
+        let _ = cursor.node(SyntaxKind::MandatoryGroupsClause);
+        if find_node(module, SyntaxKind::MandatoryGroupsClause)
+            .is_none_or(|node| !complete_braced_node(node))
+        {
+            return false;
+        }
+    }
+    while cursor.peek_node(SyntaxKind::ComplianceGroup)
+        || cursor.peek_node(SyntaxKind::ComplianceObject)
+    {
+        let kind = parts[cursor.index];
+        if !cursor.take(kind) {
+            return false;
+        }
+    }
+    module
+        .children
+        .iter()
+        .filter_map(as_node)
+        .all(|node| match node.kind {
+            SyntaxKind::OidAssignment => complete_braced_node(node),
+            SyntaxKind::MandatoryGroupsClause => complete_braced_node(node),
+            SyntaxKind::ComplianceGroup => validate_compliance_group(node),
+            SyntaxKind::ComplianceObject => validate_compliance_object(node),
+            _ => false,
+        })
+        && cursor.finish()
+}
+
+fn validate_compliance_group(group: &NodeData) -> bool {
+    let parts = definition_parts(group);
+    let mut cursor = PartCursor::new(&parts);
+    cursor.token(SyntaxKind::KwGroup)
+        && cursor.token_matching(SyntaxKind::is_identifier)
+        && cursor.node(SyntaxKind::DescriptionClause)
+        && cursor.finish()
+}
+
+fn validate_compliance_object(object: &NodeData) -> bool {
+    let parts = definition_parts(object);
+    let mut cursor = PartCursor::new(&parts);
+    if !cursor.token(SyntaxKind::KwObject) || !cursor.token_matching(SyntaxKind::is_identifier) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::SyntaxClause);
+    cursor.optional_node(SyntaxKind::WriteSyntaxClause);
+    if cursor.peek_node(SyntaxKind::AccessClause) {
+        let _ = cursor.node(SyntaxKind::AccessClause);
+        if find_node(object, SyntaxKind::AccessClause)
+            .is_none_or(|access| !contains_token_kind(access, SyntaxKind::KwMinAccess))
+        {
+            return false;
+        }
+    }
+    cursor.node(SyntaxKind::DescriptionClause) && cursor.finish()
+}
+
+fn validate_agent_capabilities(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwAgentCapabilities)
+        || !cursor.node(SyntaxKind::ProductReleaseClause)
+        || !cursor.node(SyntaxKind::StatusClause)
+        || !cursor.node(SyntaxKind::DescriptionClause)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    while cursor.peek_node(SyntaxKind::SupportsModule) {
+        let _ = cursor.node(SyntaxKind::SupportsModule);
+    }
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && definition
+            .children
+            .iter()
+            .filter_map(as_node)
+            .filter(|node| node.kind == SyntaxKind::SupportsModule)
+            .all(validate_supports_module)
+        && cursor.finish()
+}
+
+fn validate_supports_module(module: &NodeData) -> bool {
+    let parts = definition_parts(module);
+    let mut cursor = PartCursor::new(&parts);
+    if !cursor.token(SyntaxKind::KwSupports) || !cursor.token_matching(SyntaxKind::is_identifier) {
+        return false;
+    }
+    if cursor.peek_node(SyntaxKind::OidAssignment) && !cursor.node(SyntaxKind::OidAssignment) {
+        return false;
+    }
+    if !cursor.node(SyntaxKind::IncludesClause)
+        || find_node(module, SyntaxKind::IncludesClause)
+            .is_none_or(|node| !complete_braced_node(node))
+    {
+        return false;
+    }
+    while cursor.peek_node(SyntaxKind::VariationClause) {
+        let _ = cursor.node(SyntaxKind::VariationClause);
+    }
+    module
+        .children
+        .iter()
+        .filter_map(as_node)
+        .all(|node| match node.kind {
+            SyntaxKind::OidAssignment | SyntaxKind::IncludesClause => complete_braced_node(node),
+            SyntaxKind::VariationClause => validate_variation(node),
+            _ => false,
+        })
+        && cursor.finish()
+}
+
+fn validate_variation(variation: &NodeData) -> bool {
+    let parts = definition_parts(variation);
+    let mut cursor = PartCursor::new(&parts);
+    if !cursor.token(SyntaxKind::KwVariation) || !cursor.token_matching(SyntaxKind::is_identifier) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::SyntaxClause);
+    cursor.optional_node(SyntaxKind::WriteSyntaxClause);
+    if cursor.peek_node(SyntaxKind::AccessClause) {
+        let _ = cursor.node(SyntaxKind::AccessClause);
+        if find_node(variation, SyntaxKind::AccessClause)
+            .is_none_or(|access| !contains_token_kind(access, SyntaxKind::KwAccess))
+        {
+            return false;
+        }
+    }
+    if cursor.peek_node(SyntaxKind::CreationRequiresClause) {
+        let _ = cursor.node(SyntaxKind::CreationRequiresClause);
+        if find_node(variation, SyntaxKind::CreationRequiresClause)
+            .is_none_or(|node| !complete_braced_node(node))
+        {
+            return false;
+        }
+    }
+    cursor.optional_node(SyntaxKind::DefvalClause);
+    cursor.node(SyntaxKind::DescriptionClause) && cursor.finish()
+}
+
+fn as_node(element: &ElementData) -> Option<&NodeData> {
+    match element {
+        ElementData::Node(node) => Some(node),
+        ElementData::Token(_) => None,
+    }
+}
+
+fn complete_braced_node(node: &NodeData) -> bool {
+    contains_token_kind(node, SyntaxKind::RBrace)
+}
+
 fn complete_oid(definition: &NodeData) -> bool {
-    find_node(definition, SyntaxKind::OidAssignment)
+    definition
+        .children
+        .iter()
+        .filter_map(as_node)
+        .find(|node| node.kind == SyntaxKind::OidAssignment)
         .is_some_and(|oid| contains_token_kind(oid, SyntaxKind::RBrace))
 }
 
