@@ -13,21 +13,34 @@ pub fn problems_dir() -> PathBuf {
 }
 
 #[allow(dead_code)]
-pub fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
+pub fn collect_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if let Some("mib" | "smi" | "txt" | "my") = path.extension().and_then(|e| e.to_str()) {
-            files.push(path.to_path_buf());
+    for entry in walkdir::WalkDir::new(dir) {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to enumerate corpus beneath {}: {error}",
+                dir.display()
+            )
+        });
+        if entry.file_type().is_file() {
+            files.push(entry.into_path());
         }
     }
+    files.sort();
     files
+}
+
+#[allow(dead_code)]
+pub fn collect_mib_files(dir: &Path) -> Vec<PathBuf> {
+    collect_files(dir)
+        .into_iter()
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("mib" | "smi" | "txt" | "my")
+            )
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
