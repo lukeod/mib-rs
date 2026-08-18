@@ -8,7 +8,8 @@
 //! checks character validity, calendar validity, and chronological ordering,
 //! and emits style warnings for dates outside the reasonable SMI range.
 
-use crate::types::{DiagCode, Span};
+use crate::source::SourceRange;
+use crate::types::DiagCode;
 
 use super::LoweringContext;
 
@@ -20,15 +21,15 @@ use super::LoweringContext;
 pub(super) fn check_module_identity_dates(
     ctx: &mut LoweringContext,
     last_updated: &str,
-    last_updated_span: Span,
-    revision_dates: &[(String, Span)],
+    last_updated_range: SourceRange,
+    revision_dates: &[(String, SourceRange)],
 ) {
     let now = now_utc();
 
-    let last_updated_time = check_date(ctx, last_updated, last_updated_span, now);
+    let last_updated_time = check_date(ctx, last_updated, last_updated_range, now);
 
     // Validate each revision date and collect parsed times for ordering checks.
-    let revs: Vec<(Option<DateComponents>, Span)> = revision_dates
+    let revs: Vec<(Option<DateComponents>, SourceRange)> = revision_dates
         .iter()
         .map(|(date, span)| (check_date(ctx, date, *span, now), *span))
         .collect();
@@ -87,7 +88,7 @@ struct DateComponents {
 fn check_date(
     ctx: &mut LoweringContext,
     date: &str,
-    span: Span,
+    range: SourceRange,
     now: DateComponents,
 ) -> Option<DateComponents> {
     if date.is_empty() {
@@ -100,7 +101,7 @@ fn check_date(
     if bytes.len() != 11 && bytes.len() != 13 {
         ctx.emit_diagnostic(
             DiagCode::DateLength,
-            span,
+            range,
             format!(
                 "date {:?} has illegal length {} (expected 11 or 13)",
                 date,
@@ -115,7 +116,7 @@ fn check_date(
         if !b.is_ascii_digit() {
             ctx.emit_diagnostic(
                 DiagCode::DateCharacter,
-                span,
+                range,
                 format!(
                     "date {:?} contains illegal character at position {}",
                     date,
@@ -128,7 +129,7 @@ fn check_date(
     if bytes[bytes.len() - 1] != b'Z' {
         ctx.emit_diagnostic(
             DiagCode::DateCharacter,
-            span,
+            range,
             format!("date {:?} must end with 'Z'", date),
         );
         return None;
@@ -142,7 +143,7 @@ fn check_date(
         let y = if yy >= 70 { 1900 + yy } else { 2000 + yy };
         ctx.emit_diagnostic(
             DiagCode::DateYear2Digits,
-            span,
+            range,
             format!("date {:?} uses 2-digit year representing {}", date, y),
         );
         (y, 2)
@@ -162,7 +163,7 @@ fn check_date(
     if !(1..=12).contains(&month) {
         ctx.emit_diagnostic(
             DiagCode::DateMonth,
-            span,
+            range,
             format!("date {:?} has illegal month {:02}", date, month),
         );
         return None;
@@ -170,7 +171,7 @@ fn check_date(
     if !(1..=31).contains(&day) {
         ctx.emit_diagnostic(
             DiagCode::DateDay,
-            span,
+            range,
             format!("date {:?} has illegal day {:02}", date, day),
         );
         return None;
@@ -178,7 +179,7 @@ fn check_date(
     if hour > 23 {
         ctx.emit_diagnostic(
             DiagCode::DateHour,
-            span,
+            range,
             format!("date {:?} has illegal hour {:02}", date, hour),
         );
         return None;
@@ -186,7 +187,7 @@ fn check_date(
     if min > 59 {
         ctx.emit_diagnostic(
             DiagCode::DateMinutes,
-            span,
+            range,
             format!("date {:?} has illegal minutes {:02}", date, min),
         );
         return None;
@@ -196,7 +197,7 @@ fn check_date(
     if !is_valid_date(year, month, day) {
         ctx.emit_diagnostic(
             DiagCode::DateValue,
-            span,
+            range,
             format!("date {:?} is not a valid calendar date", date),
         );
         return None;
@@ -222,14 +223,14 @@ fn check_date(
     if dc < smi_epoch {
         ctx.emit_diagnostic(
             DiagCode::DateInPast,
-            span,
+            range,
             format!("date {:?} predates the SMI standard", date),
         );
     }
     if dc > now {
         ctx.emit_diagnostic(
             DiagCode::DateInFuture,
-            span,
+            range,
             format!("date {:?} is in the future", date),
         );
     }
@@ -299,7 +300,10 @@ fn now_utc() -> DateComponents {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::source::{SourceOrigin, SourceSet};
     use crate::types::DiagnosticConfig;
 
     #[test]
@@ -310,8 +314,22 @@ mod tests {
         assert!(!is_valid_date(2023, 4, 31));
     }
 
-    fn make_ctx(config: &DiagnosticConfig) -> LoweringContext<'_> {
-        LoweringContext::new(b"", config)
+    fn with_context<T>(
+        config: &DiagnosticConfig,
+        f: impl FnOnce(&mut LoweringContext<'_>, SourceRange) -> T,
+    ) -> T {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("date-test"),
+                "date-test",
+                Arc::from(&b""[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.empty_range(0).unwrap();
+        let mut context = LoweringContext::new(document, config);
+        f(&mut context, range)
     }
 
     fn far_future() -> DateComponents {
@@ -327,20 +345,21 @@ mod tests {
     #[test]
     fn two_digit_year_post_2000() {
         let config = DiagnosticConfig::verbose();
-        let mut ctx = make_ctx(&config);
-        let dc = check_date(&mut ctx, "0501010000Z", Span::default(), far_future());
-        assert_eq!(dc.unwrap().year, 2005);
-        // The diagnostic message should mention 2005, not 1905.
-        let diag = ctx
-            .diagnostics
-            .iter()
-            .find(|d| d.code == DiagCode::DateYear2Digits)
-            .expect("expected DateYear2Digits diagnostic");
-        assert!(
-            diag.message.contains("2005"),
-            "expected 2005 in message: {}",
-            diag.message
-        );
+        with_context(&config, |ctx, range| {
+            let dc = check_date(ctx, "0501010000Z", range, far_future());
+            assert_eq!(dc.unwrap().year, 2005);
+            // The diagnostic message should mention 2005, not 1905.
+            let diag = ctx
+                .diagnostics
+                .iter()
+                .find(|d| d.code == DiagCode::DateYear2Digits)
+                .expect("expected DateYear2Digits diagnostic");
+            assert!(
+                diag.message.contains("2005"),
+                "expected 2005 in message: {}",
+                diag.message
+            );
+        });
     }
 
     #[test]
@@ -348,29 +367,31 @@ mod tests {
         let config = DiagnosticConfig::verbose();
 
         for (date, expected_year) in [("6901010000Z", 2069), ("7001010000Z", 1970)] {
-            let mut ctx = make_ctx(&config);
-            let dc = check_date(&mut ctx, date, Span::default(), far_future());
-            assert_eq!(dc.unwrap().year, expected_year);
+            with_context(&config, |ctx, range| {
+                let dc = check_date(ctx, date, range, far_future());
+                assert_eq!(dc.unwrap().year, expected_year);
 
-            let diag = ctx
-                .diagnostics
-                .iter()
-                .find(|d| d.code == DiagCode::DateYear2Digits)
-                .expect("expected DateYear2Digits diagnostic");
-            assert!(
-                diag.message.contains(&expected_year.to_string()),
-                "expected {expected_year} in message: {}",
-                diag.message
-            );
+                let diag = ctx
+                    .diagnostics
+                    .iter()
+                    .find(|d| d.code == DiagCode::DateYear2Digits)
+                    .expect("expected DateYear2Digits diagnostic");
+                assert!(
+                    diag.message.contains(&expected_year.to_string()),
+                    "expected {expected_year} in message: {}",
+                    diag.message
+                );
+            });
         }
     }
 
     #[test]
     fn two_digit_year_high() {
         let config = DiagnosticConfig::default();
-        let mut ctx = make_ctx(&config);
-        let dc = check_date(&mut ctx, "9901010000Z", Span::default(), far_future());
-        assert_eq!(dc.unwrap().year, 1999);
+        with_context(&config, |ctx, range| {
+            let dc = check_date(ctx, "9901010000Z", range, far_future());
+            assert_eq!(dc.unwrap().year, 1999);
+        });
     }
 
     #[test]

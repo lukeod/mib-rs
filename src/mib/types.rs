@@ -8,7 +8,8 @@
 use std::fmt;
 
 use crate::mib::Oid;
-use crate::types::{Access, BaseType, IndexEncoding, Span};
+use crate::source::SourceRange;
+use crate::types::{Access, BaseType, IndexEncoding};
 
 /// A single imported symbol with its source location.
 ///
@@ -19,7 +20,7 @@ pub struct ImportSymbol {
     /// The symbol name as it appears in the IMPORTS clause.
     pub name: String,
     /// Source location of this symbol reference.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A group of symbols imported from a single source module.
@@ -32,6 +33,120 @@ pub struct Import {
     pub module: String,
     /// Symbols imported from this module.
     pub symbols: Vec<ImportSymbol>,
+}
+
+/// Resolver strategy used for one imported symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportResolutionMode {
+    /// The selected source module directly defines the complete import group.
+    Direct,
+    /// A well-known source-module alias selected the defining module.
+    Alias,
+    /// The declared source module forwarded the complete import group.
+    Forwarded,
+    /// The symbol was retained while resolving a mixed direct/forwarded group.
+    Partial,
+    /// No source module candidate could resolve the symbol.
+    Unresolved,
+    /// No target was selected and at least one candidate path was cyclic.
+    Cycle,
+}
+
+impl fmt::Display for ImportResolutionMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Direct => "direct",
+            Self::Alias => "alias",
+            Self::Forwarded => "forwarded",
+            Self::Partial => "partial",
+            Self::Unresolved => "unresolved",
+            Self::Cycle => "cycle",
+        })
+    }
+}
+
+/// Terminal result of one candidate path attempted during import resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportAttemptOutcome {
+    /// The path reached a module defining the symbol.
+    Resolved,
+    /// The path ended at a loaded module that neither defines nor imports the symbol.
+    SymbolNotDefined,
+    /// The next declared source module was unavailable.
+    ModuleNotFound,
+    /// The path revisited a module.
+    Cycle,
+}
+
+/// Import resolver stage that produced a candidate-path attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportResolutionStage {
+    /// Aggregate direct-source candidate scoring.
+    Direct,
+    /// Aggregate well-known module-alias candidate scoring.
+    Alias,
+    /// Aggregate import-forwarding traversal.
+    Forwarding,
+    /// Per-symbol partial-resolution traversal.
+    Partial,
+    /// Terminal failure because the declared source module was unavailable.
+    Unresolved,
+}
+
+impl fmt::Display for ImportResolutionStage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Direct => "direct",
+            Self::Alias => "alias",
+            Self::Forwarding => "forwarding",
+            Self::Partial => "partial",
+            Self::Unresolved => "unresolved",
+        })
+    }
+}
+
+impl fmt::Display for ImportAttemptOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Resolved => "resolved",
+            Self::SymbolNotDefined => "symbol-not-defined",
+            Self::ModuleNotFound => "module-not-found",
+            Self::Cycle => "cycle",
+        })
+    }
+}
+
+/// One exact module-version path observed during live import resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportResolutionAttempt {
+    /// Live resolver stage that executed this attempt.
+    pub stage: ImportResolutionStage,
+    /// Loaded module versions visited by the attempt, including a repeated
+    /// final module for a detected cycle.
+    pub path: Vec<ModuleId>,
+    /// Unavailable module named by the last visited module, when applicable.
+    pub missing_module: Option<String>,
+    /// Terminal result.
+    pub outcome: ImportAttemptOutcome,
+    /// Whether this attempt supplied the retained resolution.
+    pub selected: bool,
+}
+
+/// Retained pre-collapse provenance for one IMPORTS symbol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportResolution {
+    /// Imported symbol.
+    pub symbol: String,
+    /// Source module name written in the importing module.
+    pub declared_module: String,
+    /// Resolver strategy used for the import group.
+    pub mode: ImportResolutionMode,
+    /// Exact defining module version retained after resolution.
+    pub target: Option<ModuleId>,
+    /// Exact selected forwarding path, excluding the importing module itself.
+    pub selected_path: Vec<ModuleId>,
+    /// Candidate paths attempted before the transitive import map was collapsed.
+    pub attempts: Vec<ImportResolutionAttempt>,
 }
 
 /// An endpoint in a resolved SIZE or value range constraint.
@@ -126,7 +241,7 @@ pub struct Range {
     /// Upper bound (inclusive). Equal to `min` for single-value ranges.
     pub max: RangeBound,
     /// Source location of this constraint.
-    pub span: Span,
+    pub range: Option<SourceRange>,
 }
 
 impl Range {
@@ -179,7 +294,7 @@ pub struct NamedValue {
     /// The integer value associated with this label.
     pub value: i64,
     /// Source location of this named value.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Finds a named value by label in a slice.
@@ -198,7 +313,7 @@ pub struct Revision {
     /// Free-text description of what changed.
     pub description: String,
     /// Source location of this revision clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An index component from a table row's INDEX clause.
@@ -220,7 +335,7 @@ pub struct IndexEntry {
     /// Wire encoding inferred from the index object's type.
     pub encoding: IndexEncoding,
     /// Source location of this index entry.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Classify the index encoding from the object's resolved base type and size constraints.
@@ -315,6 +430,7 @@ pub struct DefVal {
     pub(crate) kind: DefValKind,
     pub(crate) value: DefValValue,
     pub(crate) raw: String,
+    pub(crate) oid_ref: Option<OidRef>,
 }
 
 /// The interpreted value of a DEFVAL clause.
@@ -347,6 +463,7 @@ impl DefVal {
             kind: DefValKind::Unset,
             value: DefValValue::None,
             raw: String::new(),
+            oid_ref: None,
         }
     }
 
@@ -356,6 +473,7 @@ impl DefVal {
             kind: DefValKind::Int,
             value: DefValValue::Int(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -365,6 +483,7 @@ impl DefVal {
             kind: DefValKind::Uint,
             value: DefValValue::Uint(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -374,6 +493,7 @@ impl DefVal {
             kind: DefValKind::String,
             value: DefValValue::String(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -383,6 +503,7 @@ impl DefVal {
             kind: DefValKind::Bytes,
             value: DefValValue::Bytes(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -392,6 +513,7 @@ impl DefVal {
             kind: DefValKind::Enum,
             value: DefValValue::Enum(label),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -401,6 +523,7 @@ impl DefVal {
             kind: DefValKind::Bits,
             value: DefValValue::Bits(labels),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -410,6 +533,16 @@ impl DefVal {
             kind: DefValKind::Oid,
             value: DefValValue::Oid(oid),
             raw,
+            oid_ref: None,
+        }
+    }
+
+    pub(crate) fn oid_with_ref(oid: Oid, raw: String, oid_ref: OidRef) -> Self {
+        DefVal {
+            kind: DefValKind::Oid,
+            value: DefValValue::Oid(oid),
+            raw,
+            oid_ref: Some(oid_ref),
         }
     }
 
@@ -426,6 +559,11 @@ impl DefVal {
     /// Return the interpreted [`DefValValue`].
     pub fn value(&self) -> &DefValValue {
         &self.value
+    }
+
+    /// Return the exact symbolic OID reference used by this default value.
+    pub fn oid_ref(&self) -> Option<&OidRef> {
+        self.oid_ref.as_ref()
     }
 
     /// Return `true` if no default value was specified.
@@ -478,7 +616,7 @@ pub struct ComplianceModule {
     /// Optional OBJECT refinements.
     pub objects: Vec<ComplianceObject>,
     /// Source location of this MODULE clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A GROUP clause within a [`ComplianceModule`].
@@ -492,7 +630,7 @@ pub struct ComplianceGroup {
     /// Description of when this group is required.
     pub description: String,
     /// Source location of this GROUP clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An OBJECT refinement within a [`ComplianceModule`].
@@ -512,7 +650,7 @@ pub struct ComplianceObject {
     /// Description of the refinement.
     pub description: String,
     /// Source location of this OBJECT clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A SUPPORTS clause within a [`CapabilityData`](super::capability::CapabilityData) definition.
@@ -530,7 +668,7 @@ pub struct CapabilitiesModule {
     /// Notification VARIATION clauses.
     pub notification_variations: Vec<NotificationVariation>,
     /// Source location of this SUPPORTS clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// An object VARIATION within a [`CapabilitiesModule`].
@@ -547,14 +685,15 @@ pub struct ObjectVariation {
     pub write_syntax: Option<SyntaxConstraints>,
     /// Overridden access level, if any.
     pub access: Option<Access>,
-    /// Objects required for row creation.
-    pub creation_requires: Vec<String>,
+    /// Objects required for row creation, with their exact resolved defining
+    /// module and OID when available.
+    pub creation_requires: Vec<OidRef>,
     /// Implementation-specific default value, if any.
     pub def_val: Option<DefVal>,
     /// Description of this variation.
     pub description: String,
     /// Source location of this VARIATION clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// A notification VARIATION within a [`CapabilitiesModule`].
@@ -569,7 +708,7 @@ pub struct NotificationVariation {
     /// Description of this variation.
     pub description: String,
     /// Source location of this VARIATION clause.
-    pub span: Span,
+    pub range: SourceRange,
 }
 
 /// Inline syntax constraints from a VARIATION SYNTAX/WRITE-SYNTAX clause
@@ -660,14 +799,31 @@ pub struct UnresolvedRef {
     pub reason: String,
 }
 
-/// A symbolic name referenced in an OID value assignment (e.g. `enterprises` in
-/// `{ enterprises 9 }`).
+/// A symbolic reference to an OID-bearing definition.
+///
+/// Used both for OID value-assignment components (for example `enterprises` in
+/// `{ enterprises 9 }`) and for resolved conformance references that need to
+/// retain exact defining-module provenance.
 #[derive(Debug, Clone)]
 pub struct OidRef {
     /// The symbolic name referenced in the OID assignment.
     pub name: String,
     /// Source location of this reference.
-    pub span: Span,
+    pub range: SourceRange,
+    pub(crate) module: Option<ModuleId>,
+    pub(crate) oid: Option<Oid>,
+}
+
+impl OidRef {
+    /// Return the exact resolved defining module/version, when known.
+    pub fn module_id(&self) -> Option<ModuleId> {
+        self.module
+    }
+
+    /// Return the resolved numeric OID of the referenced symbol, when known.
+    pub fn oid(&self) -> Option<&Oid> {
+        self.oid.as_ref()
+    }
 }
 
 // Arena index types for the resolved model.

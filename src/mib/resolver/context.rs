@@ -8,7 +8,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ir;
-use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness, Span};
+use crate::source::{SourceRange, SourceSet};
+use crate::types::{
+    DiagCode, Diagnostic, DiagnosticConfig, Language, ResolutionDomain, ResolverStrictness,
+};
 
 use super::super::mib::Mib;
 use super::super::types::*;
@@ -97,6 +100,16 @@ pub(super) struct ResolverContext {
     /// IR module -> symbol name -> source IR module. Import chain.
     pub module_imports: HashMap<IrModuleId, HashMap<String, IrModuleId>>,
 
+    /// Per-symbol import strategy retained before collapse.
+    pub import_resolution_modes: HashMap<IrModuleId, HashMap<String, ImportResolutionModeInternal>>,
+
+    /// Candidate paths observed by the live import resolver before collapse.
+    pub import_resolution_attempts:
+        HashMap<IrModuleId, HashMap<String, Vec<ImportAttemptInternal>>>,
+
+    /// Exact live traversal path selected for each resolved import.
+    pub import_selected_paths: HashMap<IrModuleId, HashMap<String, Vec<IrModuleId>>>,
+
     /// IR module -> symbol name -> TypeId. Populated by type phase.
     pub module_symbol_to_type: HashMap<IrModuleId, HashMap<String, TypeId>>,
 
@@ -128,6 +141,13 @@ pub(super) struct ResolverContext {
     pub diag_config: DiagnosticConfig,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ConformanceNode {
+    pub module: IrModuleId,
+    pub node: NodeId,
+    pub used_import: bool,
+}
+
 /// Tracks an unresolved reference during resolution, before conversion to the
 /// public [`UnresolvedRef`] type.
 pub(super) struct UnresolvedTracking {
@@ -143,15 +163,22 @@ pub(super) struct UnresolvedTracking {
 
 impl ResolverContext {
     /// Create a new resolver context with no registered modules.
-    pub fn new(strictness: ResolverStrictness, diag_config: DiagnosticConfig) -> Self {
+    pub fn new(
+        strictness: ResolverStrictness,
+        diag_config: DiagnosticConfig,
+        sources: SourceSet,
+    ) -> Self {
         Self {
-            mib: Mib::new(),
+            mib: Mib::with_sources(sources, strictness),
             modules: Vec::new(),
             module_index: HashMap::new(),
             module_to_resolved: HashMap::new(),
             resolved_to_module: HashMap::new(),
             module_symbol_to_node: HashMap::new(),
             module_imports: HashMap::new(),
+            import_resolution_modes: HashMap::new(),
+            import_resolution_attempts: HashMap::new(),
+            import_selected_paths: HashMap::new(),
             module_symbol_to_type: HashMap::new(),
             module_def_names: HashMap::new(),
             module_oid_def_names: HashMap::new(),
@@ -205,35 +232,26 @@ impl ResolverContext {
 
     /// Emit a diagnostic if the config says to report it.
     ///
-    /// Resolves source location (line/column) from the module's line table
-    /// when `ir_mod` is provided. Diagnostics filtered out by the
-    /// [`DiagnosticConfig`] are silently dropped.
+    /// Diagnostics filtered out by the [`DiagnosticConfig`] are silently
+    /// dropped. Source ranges are retained exactly for later presentation.
     pub fn emit_diagnostic(
         &mut self,
         code: DiagCode,
         ir_mod: Option<IrModuleId>,
-        span: Span,
+        range: Option<SourceRange>,
         message: String,
     ) {
         if !self.diag_config.should_collect(code) {
             return;
         }
         let severity = self.diag_config.effective_severity(code);
-        let (module_name, line, col) = match ir_mod {
-            Some(id) => {
-                let m = &self.modules[id.index()];
-                let (l, c) = line_col_from_module(m, span);
-                (m.name.clone(), l, c)
-            }
-            None => (String::new(), 0, 0),
-        };
+        let module_name = ir_mod.map(|id| self.modules[id.index()].name.clone());
         self.mib.add_diagnostic(Diagnostic {
             severity,
             code,
             message,
-            module: Some(module_name).filter(|s| !s.is_empty()),
-            line: if line > 0 { Some(line) } else { None },
-            column: if col > 0 { Some(col) } else { None },
+            module: module_name.filter(|s| !s.is_empty()),
+            range,
         });
     }
 
@@ -269,6 +287,207 @@ impl ResolverContext {
                 .and_then(|syms| syms.get(name))
         {
             return Some((*node, true));
+        }
+        None
+    }
+
+    /// Retain symbolic OID references with the exact module version selected
+    /// by module scope, import resolution, or foundation fallback.
+    pub fn build_oid_refs(&self, mod_id: IrModuleId, oid: &ir::OidAssignment) -> Vec<OidRef> {
+        self.build_oid_component_refs(mod_id, &oid.components)
+    }
+
+    pub fn build_oid_component_refs(
+        &self,
+        mod_id: IrModuleId,
+        components: &[ir::OidComponent],
+    ) -> Vec<OidRef> {
+        components
+            .iter()
+            .filter_map(|component| {
+                let (name, range, target) = match component {
+                    ir::OidComponent::Name { name, range }
+                    | ir::OidComponent::NamedNumber { name, range, .. } => {
+                        (name, *range, self.oid_ref_target(mod_id, name))
+                    }
+                    ir::OidComponent::QualifiedName {
+                        module,
+                        name,
+                        range,
+                    }
+                    | ir::OidComponent::QualifiedNamedNumber {
+                        module,
+                        name,
+                        range,
+                        ..
+                    } => (
+                        name,
+                        *range,
+                        self.module_index.get(module).and_then(|versions| {
+                            versions.iter().copied().find(|version| {
+                                self.module_symbol_to_node
+                                    .get(version)
+                                    .is_some_and(|symbols| symbols.contains_key(name))
+                            })
+                        }),
+                    ),
+                    ir::OidComponent::Number { .. } => return None,
+                };
+                let node = target.and_then(|target| {
+                    self.module_symbol_to_node
+                        .get(&target)
+                        .and_then(|symbols| symbols.get(name))
+                        .copied()
+                });
+                Some(OidRef {
+                    name: name.clone(),
+                    range,
+                    module: target.and_then(|target| self.module_to_resolved.get(&target).copied()),
+                    oid: node.map(|node| self.mib.tree().oid_of(node).clone()),
+                })
+            })
+            .collect()
+    }
+
+    pub fn oid_ref_for_name(&self, mod_id: IrModuleId, name: &str, range: SourceRange) -> OidRef {
+        let target = self.oid_ref_target(mod_id, name);
+        let node = target.and_then(|target| {
+            self.module_symbol_to_node
+                .get(&target)
+                .and_then(|symbols| symbols.get(name))
+                .copied()
+        });
+        OidRef {
+            name: name.to_owned(),
+            range,
+            module: target.and_then(|target| self.module_to_resolved.get(&target).copied()),
+            oid: node.map(|node| self.mib.tree().oid_of(node).clone()),
+        }
+    }
+
+    /// Resolve a name using the scope rules shared by conformance module
+    /// clauses. The returned IR module is the exact selected module version
+    /// that defined the matching node.
+    pub(super) fn lookup_conformance_node(
+        &self,
+        mod_id: IrModuleId,
+        supports_module: &str,
+        name: &str,
+    ) -> Option<ConformanceNode> {
+        if !supports_module.is_empty()
+            && let Some(candidates) = self.module_index.get(supports_module)
+        {
+            for &candidate in candidates {
+                if let Some(&node_id) = self
+                    .module_symbol_to_node
+                    .get(&candidate)
+                    .and_then(|symbols| symbols.get(name))
+                {
+                    return Some(ConformanceNode {
+                        module: candidate,
+                        node: node_id,
+                        used_import: false,
+                    });
+                }
+            }
+        }
+
+        if let Some(&node_id) = self
+            .module_symbol_to_node
+            .get(&mod_id)
+            .and_then(|symbols| symbols.get(name))
+        {
+            return Some(ConformanceNode {
+                module: mod_id,
+                node: node_id,
+                used_import: false,
+            });
+        }
+        if let Some(&source) = self
+            .module_imports
+            .get(&mod_id)
+            .and_then(|imports| imports.get(name))
+            && let Some(&node_id) = self
+                .module_symbol_to_node
+                .get(&source)
+                .and_then(|symbols| symbols.get(name))
+        {
+            return Some(ConformanceNode {
+                module: source,
+                node: node_id,
+                used_import: true,
+            });
+        }
+
+        if super::rules::allows_global_fallback(ResolutionDomain::Conformance, self.strictness) {
+            for (candidate, _) in self.all_modules() {
+                if let Some(&node_id) = self
+                    .module_symbol_to_node
+                    .get(&candidate)
+                    .and_then(|symbols| symbols.get(name))
+                {
+                    return Some(ConformanceNode {
+                        module: candidate,
+                        node: node_id,
+                        used_import: false,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Retain a SUPPORTS-scoped reference with exact selected-version
+    /// provenance when it resolves.
+    pub(super) fn supports_oid_ref(
+        &mut self,
+        mod_id: IrModuleId,
+        supports_module: &str,
+        name: &str,
+        range: SourceRange,
+    ) -> OidRef {
+        let target = self.lookup_conformance_node(mod_id, supports_module, name);
+        if target.is_some_and(|target| target.used_import) {
+            self.mark_import_used(mod_id, name);
+        }
+        OidRef {
+            name: name.to_owned(),
+            range,
+            module: target.and_then(|target| self.module_to_resolved.get(&target.module).copied()),
+            oid: target.map(|target| self.mib.tree().oid_of(target.node).clone()),
+        }
+    }
+
+    fn oid_ref_target(&self, mod_id: IrModuleId, name: &str) -> Option<IrModuleId> {
+        if self
+            .module_symbol_to_node
+            .get(&mod_id)
+            .is_some_and(|symbols| symbols.contains_key(name))
+        {
+            return Some(mod_id);
+        }
+        if let Some(target) = self
+            .module_imports
+            .get(&mod_id)
+            .and_then(|imports| imports.get(name))
+            .copied()
+        {
+            return Some(target);
+        }
+        if super::rules::intrinsic_foundation_module(ResolutionDomain::Oid, name).is_some() {
+            return self.snmpv2_smi;
+        }
+        if !super::rules::constrained_foundation_modules(ResolutionDomain::Oid, self.strictness)
+            .is_empty()
+        {
+            return [self.snmpv2_smi, self.rfc1155_smi]
+                .into_iter()
+                .flatten()
+                .find(|target| {
+                    self.module_symbol_to_node
+                        .get(target)
+                        .is_some_and(|symbols| symbols.contains_key(name))
+                });
         }
         None
     }
@@ -353,10 +572,8 @@ impl ResolverContext {
     /// Tier 3 (global, Permissive only): not handled here (see global lookup).
     fn try_well_known_type_fallbacks(&self, name: &str) -> Option<TypeId> {
         // Tier 1: ASN.1 primitives always resolve from SNMPv2-SMI
-        if matches!(
-            name,
-            "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS"
-        ) && let Some(smi) = self.snmpv2_smi
+        if super::rules::intrinsic_foundation_module(ResolutionDomain::Type, name).is_some()
+            && let Some(smi) = self.snmpv2_smi
         {
             return self
                 .module_symbol_to_type
@@ -365,7 +582,9 @@ impl ResolverContext {
                 .copied();
         }
         // Tier 2: constrained fallbacks (Normal+)
-        if !self.strictness.allow_constrained_fallbacks() {
+        if super::rules::constrained_foundation_modules(ResolutionDomain::Type, self.strictness)
+            .is_empty()
+        {
             return None;
         }
         // SMI global types from SNMPv2-SMI
@@ -454,7 +673,7 @@ impl ResolverContext {
         from_module: impl AsRef<str>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: Option<SourceRange>,
     ) {
         let symbol = symbol.into();
         let importing_module = importing_module.into();
@@ -472,7 +691,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             code,
             Some(ir_mod),
-            span,
+            range,
             format!(
                 "unresolved import: {:?} from {:?} ({})",
                 symbol,
@@ -490,7 +709,7 @@ impl ResolverContext {
         module: impl Into<String>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         debug_assert!(matches!(
             reason,
@@ -523,7 +742,7 @@ impl ResolverContext {
                 ),
             )
         };
-        self.emit_diagnostic(code, Some(ir_mod), span, message);
+        self.emit_diagnostic(code, Some(ir_mod), Some(range), message);
     }
 
     /// Record an unresolved OID component and emit a diagnostic.
@@ -534,7 +753,7 @@ impl ResolverContext {
         module: impl Into<String>,
         reason: UnresolvedReason,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let component = component.into();
         let module = module.into();
@@ -552,7 +771,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             code,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved OID: {:?} references unknown parent {:?}",
                 def_name.as_ref(),
@@ -567,7 +786,7 @@ impl ResolverContext {
         def_name: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let def_name = def_name.into();
         self.unresolved_oids.push(UnresolvedTracking {
@@ -579,7 +798,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::TrapNumberOverflow,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "TRAP-TYPE {:?} trap number overflows the snmpTraps sub-identifier",
                 def_name
@@ -594,7 +813,7 @@ impl ResolverContext {
         index_object: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let index_object = index_object.into();
         let module = module.into();
@@ -607,7 +826,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::IndexUnresolved,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved INDEX: {:?} references unknown object {:?}",
                 row.as_ref(),
@@ -623,7 +842,7 @@ impl ResolverContext {
         object: impl Into<String>,
         module: impl Into<String>,
         ir_mod: IrModuleId,
-        span: Span,
+        range: SourceRange,
     ) {
         let object = object.into();
         let module = module.into();
@@ -636,7 +855,7 @@ impl ResolverContext {
         self.emit_diagnostic(
             DiagCode::ObjectsUnresolved,
             Some(ir_mod),
-            span,
+            Some(range),
             format!(
                 "unresolved OBJECTS: {:?} references unknown object {:?}",
                 notification.as_ref(),
@@ -674,9 +893,118 @@ impl ResolverContext {
     }
 }
 
-fn line_col_from_module(m: &ir::Module, span: Span) -> (usize, usize) {
-    if span.is_synthetic() || m.line_table.is_empty() {
-        return (0, 0);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ImportResolutionModeInternal {
+    Direct,
+    Alias,
+    Forwarded,
+    Partial,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ImportAttemptInternal {
+    pub stage: ImportResolutionStage,
+    pub path: Vec<IrModuleId>,
+    pub missing_module: Option<String>,
+    pub outcome: ImportAttemptOutcome,
+    pub selected: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::source::{ByteOffset, SourceOrigin, SourceRangeError};
+
+    use super::*;
+
+    fn insert_source(sources: &mut SourceSet, identity: &str, bytes: &[u8]) -> crate::SourceId {
+        sources
+            .insert(SourceOrigin::memory(identity), identity, Arc::from(bytes))
+            .unwrap()
     }
-    crate::types::line_col_from_table(&m.line_table, span.start)
+
+    fn context(sources: SourceSet) -> ResolverContext {
+        ResolverContext::new(
+            ResolverStrictness::Strict,
+            DiagnosticConfig::default(),
+            sources,
+        )
+    }
+
+    fn emit_test_diagnostic(ctx: &mut ResolverContext, range: Option<SourceRange>) {
+        ctx.emit_diagnostic(
+            DiagCode::TypeUnknown,
+            None,
+            range,
+            "test diagnostic".to_string(),
+        );
+    }
+
+    #[test]
+    fn diagnostic_uses_validated_retained_source_range() {
+        let mut sources = SourceSet::new();
+        let source_id = insert_source(&mut sources, "valid", b"first\nsecond");
+        let range = sources.get(source_id).unwrap().range(8..10).unwrap();
+        let mut ctx = context(sources);
+
+        emit_test_diagnostic(&mut ctx, Some(range));
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.range, Some(range));
+        let report = ctx.mib.diagnostic_report();
+        assert_eq!(report.get(0).unwrap().slice().unwrap(), Some(&b"co"[..]));
+    }
+
+    #[test]
+    fn diagnostic_without_source_range_has_no_location() {
+        let mut ctx = context(SourceSet::new());
+
+        emit_test_diagnostic(&mut ctx, None);
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.range, None);
+    }
+
+    #[test]
+    fn diagnostic_preserves_unretained_range_for_checked_report_failure() {
+        let mut retained_sources = SourceSet::new();
+        insert_source(&mut retained_sources, "retained", b"retained");
+
+        let mut foreign_sources = SourceSet::new();
+        insert_source(&mut foreign_sources, "foreign-first", b"first");
+        let foreign_id = insert_source(&mut foreign_sources, "foreign-second", b"second");
+        let foreign_range = foreign_sources
+            .get(foreign_id)
+            .unwrap()
+            .range(0..1)
+            .unwrap();
+        let mut ctx = context(retained_sources);
+
+        emit_test_diagnostic(&mut ctx, Some(foreign_range));
+
+        let diagnostic = &ctx.mib.diagnostics()[0];
+        assert_eq!(diagnostic.range, Some(foreign_range));
+        let report = ctx.mib.diagnostic_report();
+        assert!(matches!(
+            report.get(0).unwrap().range(),
+            Err(crate::DiagnosticReportError::SourceNotRetained(id)) if id == foreign_id
+        ));
+    }
+
+    #[test]
+    fn out_of_bounds_diagnostic_range_cannot_be_safely_constructed() {
+        let mut sources = SourceSet::new();
+        let source_id = insert_source(&mut sources, "short", b"abc");
+        let source = sources.get(source_id).unwrap();
+
+        assert_eq!(
+            source.range(0..4),
+            Err(SourceRangeError::OffsetOutOfBounds {
+                offset: ByteOffset::new(4),
+                len: ByteOffset::new(3),
+            })
+        );
+    }
 }

@@ -3,18 +3,32 @@
 mod common;
 
 use mib_rs::types::{DiagCode, DiagnosticConfig, Severity};
+use mib_rs::{SourceOrigin, SourceSet};
 use std::path::Path;
+use std::sync::Arc;
 
-use common::{collect_mib_files, corpus_dir};
+use common::{collect_mib_files, corpus_dir, problems_dir};
+
+fn lower_source(source: &[u8], config: &DiagnosticConfig) -> Vec<mib_rs::ir::Module> {
+    let mut sources = SourceSet::new();
+    let id = sources
+        .insert(
+            SourceOrigin::memory("lower-corpus"),
+            "lower-corpus",
+            Arc::from(source),
+        )
+        .unwrap();
+    let document = sources.get(id).unwrap();
+    mib_rs::parser::parse(document, config)
+        .into_iter()
+        .map(|module| mib_rs::lower::lower(module, document, config))
+        .collect()
+}
 
 fn parse_and_lower(path: &Path) -> Vec<mib_rs::ir::Module> {
     let content = std::fs::read(path).unwrap();
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(&content, &config);
-    ast_modules
-        .into_iter()
-        .map(|m| mib_rs::lower::lower(m, &content, &config))
-        .collect()
+    lower_source(&content, &config)
 }
 
 #[test]
@@ -65,54 +79,199 @@ fn primary_corpus_lowering_no_panics() {
 }
 
 #[test]
+fn integral_overflow_fixture_lowers_with_zero_placeholders() {
+    let path = problems_dir().join("PROBLEM-INTEGRAL-OVERFLOW-MIB.mib");
+    let module = parse_and_lower(&path).into_iter().next().unwrap();
+    assert_eq!(module.name, "PROBLEM-INTEGRAL-OVERFLOW-MIB");
+
+    let definition = |name: &str| {
+        module
+            .definitions
+            .iter()
+            .find(|definition| definition.name() == name)
+            .unwrap_or_else(|| panic!("missing lowered definition {name}"))
+    };
+
+    for name in ["ProblemOverflowEnum", "ProblemOverflowBits"] {
+        let values: Vec<i64> = match definition(name) {
+            mib_rs::ir::Definition::TypeDef(definition) => match &definition.syntax {
+                mib_rs::ir::TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                    named_numbers.iter().map(|value| value.value).collect()
+                }
+                mib_rs::ir::TypeSyntax::Bits { named_bits, .. } => named_bits
+                    .iter()
+                    .map(|value| i64::from(value.position))
+                    .collect(),
+                other => panic!("expected named-number syntax, got {other:?}"),
+            },
+            other => panic!("expected type definition, got {other:?}"),
+        };
+        assert_eq!(
+            values,
+            [0, 0, if name == "ProblemOverflowEnum" { 1 } else { 2 }]
+        );
+    }
+
+    for (name, expected_kind) in [
+        ("problemOverflowPlain", "plain"),
+        ("problemOverflowNamed", "named"),
+        ("problemOverflowQualified", "qualified"),
+    ] {
+        let components = definition(name).oid().unwrap().components.as_slice();
+        let last = components.last().unwrap();
+        match (expected_kind, last) {
+            ("plain", mib_rs::ir::OidComponent::Number { value: 0, .. })
+            | ("named", mib_rs::ir::OidComponent::NamedNumber { number: 0, .. })
+            | ("qualified", mib_rs::ir::OidComponent::QualifiedNamedNumber { number: 0, .. }) => {}
+            _ => panic!("unexpected lowered OID component for {name}: {last:?}"),
+        }
+    }
+
+    for name in [
+        "problemOverflowPositiveDefault",
+        "problemOverflowNegativeDefault",
+    ] {
+        match definition(name) {
+            mib_rs::ir::Definition::ObjectType(definition) => assert!(matches!(
+                definition.defval,
+                Some(mib_rs::ir::DefVal::Integer(0))
+            )),
+            other => panic!("expected object type, got {other:?}"),
+        }
+    }
+    match definition("problemValidUnsignedDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => assert!(matches!(
+            definition.defval,
+            Some(mib_rs::ir::DefVal::Unsigned(u64::MAX))
+        )),
+        other => panic!("expected object type, got {other:?}"),
+    }
+
+    let oid_default = match definition("problemOverflowOidDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => definition.defval.as_ref().unwrap(),
+        other => panic!("expected object type, got {other:?}"),
+    };
+    assert!(matches!(
+        oid_default,
+        mib_rs::ir::DefVal::OidValue { components }
+            if matches!(
+                components.as_slice(),
+                [
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. },
+                    mib_rs::ir::OidComponent::Number { value: 0, .. },
+                    mib_rs::ir::OidComponent::QualifiedNamedNumber { number: 0, .. },
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. }
+                ]
+            )
+    ));
+
+    let numeric_first_oid_default = match definition("problemOverflowNumericFirstOidDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => definition.defval.as_ref().unwrap(),
+        other => panic!("expected object type, got {other:?}"),
+    };
+    assert!(matches!(
+        numeric_first_oid_default,
+        mib_rs::ir::DefVal::OidValue { components }
+            if matches!(
+                components.as_slice(),
+                [
+                    mib_rs::ir::OidComponent::Number { value: 0, .. },
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. }
+                ]
+            )
+    ));
+
+    match definition("problemOverflowTrap") {
+        mib_rs::ir::Definition::Notification(definition) => {
+            assert_eq!(definition.trap_info.as_ref().unwrap().trap_number, 0);
+        }
+        other => panic!("expected notification, got {other:?}"),
+    }
+    assert!(matches!(
+        definition("problemAfterOverflow"),
+        mib_rs::ir::Definition::ValueAssignment(_)
+    ));
+
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidI64)
+            .count(),
+        6
+    );
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidU32)
+            .count(),
+        10
+    );
+}
+
+#[test]
 fn base_modules_have_definitions() {
-    use mib_rs::lower::base_modules::{base_module_names, get_base_module};
+    use mib_rs::lower::base_modules::base_module_names;
 
     assert_eq!(base_module_names().len(), 7);
+    let mib = mib_rs::Loader::new()
+        .modules(base_module_names().iter().copied())
+        .load()
+        .expect("embedded foundation load failed");
 
     // SNMPv2-SMI should have OIDs and type definitions
-    let smi = get_base_module("SNMPv2-SMI").expect("missing SNMPv2-SMI");
-    assert_eq!(smi.name, "SNMPv2-SMI");
-    assert_eq!(smi.language, mib_rs::types::Language::SMIv2);
-    assert!(!smi.definitions.is_empty());
+    let smi = mib.module("SNMPv2-SMI").expect("missing SNMPv2-SMI");
+    assert_eq!(smi.name(), "SNMPv2-SMI");
+    assert_eq!(smi.language(), mib_rs::types::Language::SMIv2);
     // Should have iso, internet, enterprises, etc. and Integer32, Counter32, etc.
-    let names: Vec<&str> = smi.definitions.iter().map(|d| d.name()).collect();
-    assert!(names.contains(&"iso"), "missing iso OID");
-    assert!(names.contains(&"internet"), "missing internet OID");
-    assert!(names.contains(&"enterprises"), "missing enterprises OID");
-    assert!(names.contains(&"Integer32"), "missing Integer32 type");
-    assert!(names.contains(&"Counter32"), "missing Counter32 type");
-    assert!(names.contains(&"Counter64"), "missing Counter64 type");
-    assert!(names.contains(&"IpAddress"), "missing IpAddress type");
+    for name in ["iso", "internet", "enterprises"] {
+        assert!(smi.node(name).is_some(), "missing {name} OID");
+    }
+    for name in ["Integer32", "Counter32", "Counter64", "IpAddress"] {
+        assert!(smi.r#type(name).is_some(), "missing {name} type");
+    }
 
     // SNMPv2-TC should have textual conventions
-    let tc = get_base_module("SNMPv2-TC").expect("missing SNMPv2-TC");
-    assert_eq!(tc.name, "SNMPv2-TC");
-    let tc_names: Vec<&str> = tc.definitions.iter().map(|d| d.name()).collect();
-    assert!(tc_names.contains(&"DisplayString"), "missing DisplayString");
-    assert!(tc_names.contains(&"TruthValue"), "missing TruthValue");
-    assert!(tc_names.contains(&"RowStatus"), "missing RowStatus");
-    assert!(tc_names.contains(&"MacAddress"), "missing MacAddress");
+    let tc = mib.module("SNMPv2-TC").expect("missing SNMPv2-TC");
+    assert_eq!(tc.name(), "SNMPv2-TC");
+    for name in ["DisplayString", "TruthValue", "RowStatus", "MacAddress"] {
+        assert!(tc.r#type(name).is_some(), "missing {name}");
+    }
 
     // SNMPv2-CONF should be empty (MACROs only)
-    let conf = get_base_module("SNMPv2-CONF").expect("missing SNMPv2-CONF");
-    assert_eq!(conf.name, "SNMPv2-CONF");
-    assert!(conf.definitions.is_empty());
+    let conf = mib.module("SNMPv2-CONF").expect("missing SNMPv2-CONF");
+    assert_eq!(conf.name(), "SNMPv2-CONF");
+    assert_eq!(conf.types().count(), 0);
+    assert_eq!(conf.nodes().count(), 0);
+    assert_eq!(conf.objects().count(), 0);
 
     // RFC1155-SMI should have SMIv1 types
-    let rfc1155 = get_base_module("RFC1155-SMI").expect("missing RFC1155-SMI");
-    assert_eq!(rfc1155.name, "RFC1155-SMI");
-    assert_eq!(rfc1155.language, mib_rs::types::Language::SMIv1);
-    let rfc1155_names: Vec<&str> = rfc1155.definitions.iter().map(|d| d.name()).collect();
-    assert!(rfc1155_names.contains(&"Counter"), "missing Counter type");
-    assert!(rfc1155_names.contains(&"Gauge"), "missing Gauge type");
-    assert!(rfc1155_names.contains(&"iso"), "missing iso OID");
+    let rfc1155 = mib.module("RFC1155-SMI").expect("missing RFC1155-SMI");
+    assert_eq!(rfc1155.name(), "RFC1155-SMI");
+    assert_eq!(rfc1155.language(), mib_rs::types::Language::SMIv1);
+    assert!(rfc1155.r#type("Counter").is_some(), "missing Counter type");
+    assert!(rfc1155.r#type("Gauge").is_some(), "missing Gauge type");
+    assert!(rfc1155.node("internet").is_some(), "missing internet OID");
 
-    // RFC-1212 and RFC-1215 should be empty
-    let rfc1212 = get_base_module("RFC-1212").expect("missing RFC-1212");
-    assert!(rfc1212.definitions.is_empty());
-    let rfc1215 = get_base_module("RFC-1215").expect("missing RFC-1215");
-    assert!(rfc1215.definitions.is_empty());
+    // Embedded foundations are parsed source, so their definitions retain
+    // checked source ranges and their typed embedded origin.
+    assert!(
+        smi.r#type("Counter32")
+            .expect("missing Counter32")
+            .range()
+            .is_some()
+    );
+    assert_eq!(smi.source_label(), Some("embedded:SNMPv2-SMI"));
+
+    // RFC-1212 contains ordinary type assignments around its macro body;
+    // RFC-1215 contains only its macro definition.
+    let rfc1212 = mib.module("RFC-1212").expect("missing RFC-1212");
+    assert!(rfc1212.r#type("IndexSyntax").is_some());
+    let rfc1215 = mib.module("RFC-1215").expect("missing RFC-1215");
+    assert_eq!(rfc1215.types().count(), 0);
+    assert_eq!(rfc1215.nodes().count(), 0);
+    assert_eq!(rfc1215.objects().count(), 0);
 }
 
 #[test]
@@ -145,9 +304,9 @@ testMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
     assert_eq!(module.language, mib_rs::types::Language::SMIv2);
     assert_eq!(module.name, "TEST-MIB");
     // Should have flattened imports
@@ -171,9 +330,9 @@ brokenMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::SMIv2);
     assert_eq!(
@@ -192,12 +351,14 @@ END
 }
 
 #[test]
-fn lower_conflicting_language_evidence_stays_unknown() {
+fn lower_mixed_language_module_runs_identity_date_checks_only() {
     let source = br#"
-HYBRID-MIB DEFINITIONS ::= BEGIN
+RAPID-CITY-LIKE DEFINITIONS ::= BEGIN
 
 IMPORTS
     enterprises FROM RFC1155-SMI;
+
+earlyNode OBJECT IDENTIFIER ::= { enterprises 99998 }
 
 hybridMIB MODULE-IDENTITY
     LAST-UPDATED "200901080000Z"
@@ -209,17 +370,88 @@ hybridMIB MODULE-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::Unknown);
     assert!(
         module
             .diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code != mib_rs::types::DiagCode::MacroNotImported),
-        "conflicting language evidence should not run version-specific checks"
+            .any(|diagnostic| diagnostic.code == DiagCode::RevisionLastUpdated),
+        "MODULE-IDENTITY date checks should run despite mixed language evidence: {:?}",
+        module.diagnostics
+    );
+
+    for smiv2_only in [
+        DiagCode::MacroNotImported,
+        DiagCode::ModuleNameSuffix,
+        DiagCode::ModuleIdentityNotFirst,
+    ] {
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != smiv2_only),
+            "mixed language evidence should not run {smiv2_only}: {:?}",
+            module.diagnostics
+        );
+    }
+}
+
+#[test]
+fn lower_unknown_module_validates_each_module_identity_date() {
+    let source = br#"
+UNKNOWN-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    enterprises FROM RFC1155-SMI;
+
+firstIdentity MODULE-IDENTITY
+    LAST-UPDATED "invalid"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "first identity"
+    ::= { enterprises 99998 }
+
+secondIdentity MODULE-IDENTITY
+    LAST-UPDATED "200901080000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "test"
+    DESCRIPTION "second identity"
+    ::= { enterprises 99999 }
+
+END
+"#;
+    let config = DiagnosticConfig::default();
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
+
+    assert_eq!(module.language, mib_rs::types::Language::Unknown);
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::RevisionLastUpdated)
+            .count(),
+        2,
+        "each MODULE-IDENTITY should be checked for a matching revision"
+    );
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::DateLength),
+        "each MODULE-IDENTITY should receive date-format validation"
+    );
+    assert!(
+        module
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::ModuleIdentityMultiple),
+        "multiple identity validation remains SMIv2-specific"
     );
 }
 
@@ -236,9 +468,9 @@ root OBJECT-IDENTITY
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::Unknown);
 }
@@ -251,13 +483,9 @@ fn lower_parsed_base_modules_use_explicit_language() {
     ] {
         let source = format!("{name} DEFINITIONS ::= BEGIN\nEND\n");
         let config = DiagnosticConfig::default();
-        let ast_modules = mib_rs::parser::parse(source.as_bytes(), &config);
-        assert_eq!(ast_modules.len(), 1);
-        let module = mib_rs::lower::lower(
-            ast_modules.into_iter().next().unwrap(),
-            source.as_bytes(),
-            &config,
-        );
+        let modules = lower_source(source.as_bytes(), &config);
+        assert_eq!(modules.len(), 1);
+        let module = modules.into_iter().next().unwrap();
 
         assert_eq!(module.language, expected, "base module {name}");
     }
@@ -282,9 +510,9 @@ testObject OBJECT-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    assert_eq!(ast_modules.len(), 1);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let modules = lower_source(source, &config);
+    assert_eq!(modules.len(), 1);
+    let module = modules.into_iter().next().unwrap();
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
 }
 
@@ -304,8 +532,7 @@ Boundary ::= INTEGER {
 END
 "#;
     let config = DiagnosticConfig::verbose();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let module = lower_source(source, &config).into_iter().next().unwrap();
 
     let syntax = match &module.definitions[0] {
         mib_rs::ir::Definition::TypeDef(def) => &def.syntax,
@@ -359,12 +586,10 @@ END
 "#;
 
     let default_config = DiagnosticConfig::default();
-    let default_ast = mib_rs::parser::parse(source, &default_config);
-    let default_module = mib_rs::lower::lower(
-        default_ast.into_iter().next().unwrap(),
-        source,
-        &default_config,
-    );
+    let default_module = lower_source(source, &default_config)
+        .into_iter()
+        .next()
+        .unwrap();
     assert!(
         default_module
             .diagnostics
@@ -377,12 +602,10 @@ END
     overridden_config
         .overrides
         .insert(DiagCode::EnumValueOutOfRange, Severity::Minor);
-    let overridden_ast = mib_rs::parser::parse(source, &overridden_config);
-    let overridden_module = mib_rs::lower::lower(
-        overridden_ast.into_iter().next().unwrap(),
-        source,
-        &overridden_config,
-    );
+    let overridden_module = lower_source(source, &overridden_config)
+        .into_iter()
+        .next()
+        .unwrap();
     let diagnostic = overridden_module
         .diagnostics
         .iter()
@@ -394,12 +617,10 @@ END
     ignored_config
         .ignore
         .push("enum-value-out-of-range".to_string());
-    let ignored_ast = mib_rs::parser::parse(source, &ignored_config);
-    let ignored_module = mib_rs::lower::lower(
-        ignored_ast.into_iter().next().unwrap(),
-        source,
-        &ignored_config,
-    );
+    let ignored_module = lower_source(source, &ignored_config)
+        .into_iter()
+        .next()
+        .unwrap();
     assert!(
         ignored_module
             .diagnostics
@@ -421,8 +642,7 @@ testTrap TRAP-TYPE
 END
 "#;
     let config = DiagnosticConfig::default();
-    let ast_modules = mib_rs::parser::parse(source, &config);
-    let module = mib_rs::lower::lower(ast_modules.into_iter().next().unwrap(), source, &config);
+    let module = lower_source(source, &config).into_iter().next().unwrap();
 
     assert_eq!(module.language, mib_rs::types::Language::SMIv1);
     assert_eq!(module.definitions.len(), 1);

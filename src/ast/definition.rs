@@ -7,7 +7,7 @@
 use super::common::{Ident, QuotedString};
 use super::oid::OidAssignment;
 use super::syntax::*;
-use crate::types::Span;
+use crate::source::SourceRange;
 
 /// A top-level construct in a MIB module body.
 ///
@@ -16,7 +16,7 @@ use crate::types::Span;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Definition {
     /// OBJECT-TYPE macro (SMIv1/v2).
-    ObjectType(ObjectTypeDef),
+    ObjectType(Box<ObjectTypeDef>),
     /// MODULE-IDENTITY macro (SMIv2).
     ModuleIdentity(ModuleIdentityDef),
     /// OBJECT-IDENTITY macro (SMIv2).
@@ -60,7 +60,7 @@ macro_rules! delegate_def {
     (span: $($variant:ident),+) => {
         impl Definition {
             /// Returns the source span of this definition.
-            pub fn span(&self) -> Span {
+            pub fn span(&self) -> SourceRange {
                 match self {
                     $( Definition::$variant(d) => d.span, )+
                 }
@@ -90,7 +90,7 @@ pub struct ObjectTypeDef {
     /// Object name (the identifier before `OBJECT-TYPE`).
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// SYNTAX clause.
     pub syntax: Option<SyntaxClause>,
     /// UNITS clause.
@@ -119,7 +119,7 @@ pub struct ModuleIdentityDef {
     /// Object name (the identifier before `MODULE-IDENTITY`).
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// LAST-UPDATED clause (timestamp string).
     pub last_updated: QuotedString,
     /// ORGANIZATION clause.
@@ -140,7 +140,7 @@ pub struct ObjectIdentityDef {
     /// Object name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// STATUS clause.
     pub status: StatusClause,
     /// DESCRIPTION clause.
@@ -157,7 +157,7 @@ pub struct NotificationTypeDef {
     /// Notification name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// OBJECTS clause listing associated varbinds.
     pub objects: Vec<Ident>,
     /// STATUS clause.
@@ -176,7 +176,7 @@ pub struct TrapTypeDef {
     /// Trap name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// ENTERPRISE clause naming the enterprise OID.
     pub enterprise: Ident,
     /// VARIABLES clause listing associated varbinds.
@@ -185,7 +185,8 @@ pub struct TrapTypeDef {
     pub description: Option<QuotedString>,
     /// Optional REFERENCE clause.
     pub reference: Option<QuotedString>,
-    /// Numeric trap value from the `::= N` assignment.
+    /// Numeric trap value from the `::= N` assignment. An overflowing source
+    /// literal is retained as zero with an `invalid-u32` parser diagnostic.
     pub trap_number: u32,
 }
 
@@ -195,7 +196,7 @@ pub struct TextualConventionDef {
     /// Type name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// Optional DISPLAY-HINT clause.
     pub display_hint: Option<QuotedString>,
     /// STATUS clause.
@@ -214,7 +215,7 @@ pub struct TypeAssignmentDef {
     /// Type name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// The type expression on the right-hand side.
     pub syntax: TypeSyntax,
 }
@@ -225,7 +226,7 @@ pub struct ValueAssignmentDef {
     /// Object name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// OID value assignment.
     pub oid: OidAssignment,
 }
@@ -236,7 +237,7 @@ pub struct ObjectGroupDef {
     /// Group name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// OBJECTS clause listing member objects.
     pub objects: Vec<Ident>,
     /// STATUS clause.
@@ -255,7 +256,7 @@ pub struct NotificationGroupDef {
     /// Group name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// NOTIFICATIONS clause listing member notifications.
     pub notifications: Vec<Ident>,
     /// STATUS clause.
@@ -274,7 +275,7 @@ pub struct ModuleComplianceDef {
     /// Compliance statement name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// STATUS clause.
     pub status: StatusClause,
     /// DESCRIPTION clause.
@@ -299,7 +300,7 @@ pub struct ComplianceModule {
     /// GROUP and OBJECT refinements.
     pub compliances: Vec<Compliance>,
     /// Source span covering the entire MODULE clause.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// A GROUP or OBJECT refinement in a [`ComplianceModule`].
@@ -308,7 +309,7 @@ pub enum Compliance {
     /// A conditionally required group.
     Group(ComplianceGroup),
     /// An object with refined syntax, access, or write-syntax.
-    Object(ComplianceObject),
+    Object(Box<ComplianceObject>),
 }
 
 /// GROUP clause within MODULE-COMPLIANCE.
@@ -319,7 +320,7 @@ pub struct ComplianceGroup {
     /// DESCRIPTION clause explaining the condition.
     pub description: QuotedString,
     /// Source span covering the entire GROUP clause.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// OBJECT refinement within MODULE-COMPLIANCE.
@@ -336,7 +337,7 @@ pub struct ComplianceObject {
     /// DESCRIPTION clause.
     pub description: QuotedString,
     /// Source span covering the entire OBJECT clause.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// AGENT-CAPABILITIES macro invocation (SMIv2).
@@ -345,7 +346,7 @@ pub struct AgentCapabilitiesDef {
     /// Capabilities name.
     pub name: Ident,
     /// Source span of the entire definition.
-    pub span: Span,
+    pub span: SourceRange,
     /// PRODUCT-RELEASE clause.
     pub product_release: QuotedString,
     /// STATUS clause.
@@ -372,7 +373,7 @@ pub struct SupportsModule {
     /// VARIATION clauses for individual objects.
     pub variations: Vec<Variation>,
     /// Source span covering the entire SUPPORTS clause.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// A VARIATION clause within [`SupportsModule`].
@@ -393,7 +394,7 @@ pub struct Variation {
     /// DESCRIPTION clause.
     pub description: QuotedString,
     /// Source span covering the entire VARIATION clause.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// A MACRO definition whose body was skipped by the lexer.
@@ -402,7 +403,7 @@ pub struct MacroDefinitionDef {
     /// Macro name.
     pub name: Ident,
     /// Source span from the name through `END`.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// Placeholder for a definition that failed to parse.
@@ -412,7 +413,7 @@ pub struct MacroDefinitionDef {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ErrorDef {
     /// Source span covering the skipped region.
-    pub span: Span,
+    pub span: SourceRange,
     /// Diagnostic message describing the parse failure.
     pub message: String,
 }

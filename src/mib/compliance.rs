@@ -5,7 +5,7 @@
 //!
 //! For handle-oriented access, see [`Compliance`](super::handle::Compliance).
 
-use crate::types::Span;
+use crate::source::SourceRange;
 
 use super::object::EntityData;
 use super::types::*;
@@ -33,9 +33,9 @@ impl ComplianceData {
         &self.entity.name
     }
 
-    /// Return the source span.
-    pub fn span(&self) -> Span {
-        self.entity.span
+    /// Return the source range, if this compliance came from source text.
+    pub fn range(&self) -> Option<SourceRange> {
+        self.entity.range
     }
 
     /// Return the OID tree [`NodeId`], if resolved.

@@ -18,11 +18,72 @@ use tracing::{Level, enabled, trace};
 
 use crate::graph;
 use crate::ir;
-use crate::types::{BaseType, DiagCode, Language, Span};
+use crate::source::SourceRange;
+use crate::types::{BaseType, DiagCode, Language};
 
 use super::super::typedef::TypeData;
 use super::super::types::*;
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
+
+/// Recover semantic kinds for application-tagged types in foundation modules.
+///
+/// Lowering intentionally discards ASN.1 tags, so the underlying INTEGER or
+/// OCTET STRING syntax alone cannot distinguish these well-known SMI types.
+fn foundation_base_type(name: &str) -> Option<BaseType> {
+    match name {
+        "Integer32" => Some(BaseType::Integer32),
+        "Counter" | "Counter32" => Some(BaseType::Counter32),
+        "Counter64" => Some(BaseType::Counter64),
+        "Gauge" | "Gauge32" => Some(BaseType::Gauge32),
+        "Unsigned32" => Some(BaseType::Unsigned32),
+        "TimeTicks" => Some(BaseType::TimeTicks),
+        "IpAddress" | "NetworkAddress" => Some(BaseType::IpAddress),
+        "Opaque" => Some(BaseType::Opaque),
+        _ => None,
+    }
+}
+
+/// RFC-derived descriptions for primitive and application types whose plain
+/// ASN.1 assignments cannot carry DESCRIPTION clauses.
+fn foundation_type_description(name: &str) -> Option<&'static str> {
+    match name {
+        "INTEGER" => Some("An arbitrary precision integer value."),
+        "OCTET STRING" => Some("An ordered sequence of zero or more octets."),
+        "OBJECT IDENTIFIER" => Some(
+            "An administratively assigned name identifying an object type or registration point.",
+        ),
+        "BITS" => Some("A named collection of individual bit positions."),
+        "Integer32" => {
+            Some("An integer-valued type restricted to the range -2147483648 to 2147483647.")
+        }
+        "IpAddress" => Some(
+            "A 32-bit internet address represented as an OCTET STRING of length 4 in network byte-order.",
+        ),
+        "Counter" | "Counter32" => Some(
+            "A non-negative integer that monotonically increases to a maximum of 4294967295, then wraps to zero.",
+        ),
+        "Gauge32" => Some(
+            "A non-negative integer that may increase or decrease, but never exceeds 4294967295 or falls below zero.",
+        ),
+        "Gauge" => Some(
+            "A non-negative integer that may increase or decrease, but latches at a maximum of 4294967295.",
+        ),
+        "Unsigned32" => {
+            Some("An unsigned integer-valued type restricted to the range 0 to 4294967295.")
+        }
+        "TimeTicks" => {
+            Some("A non-negative integer counting hundredths of a second between two epochs.")
+        }
+        "Opaque" => Some(
+            "An arbitrary ASN.1 value double-wrapped as an OCTET STRING. Provided for backward-compatibility only.",
+        ),
+        "Counter64" => Some(
+            "A non-negative integer that monotonically increases to a maximum of 18446744073709551615, then wraps to zero.",
+        ),
+        "NetworkAddress" => Some("An address from one of possibly several protocol families."),
+        _ => None,
+    }
+}
 
 /// Phase 3: Build the type system.
 ///
@@ -56,6 +117,9 @@ fn seed_primitive_types(ctx: &mut ResolverContext) {
         let mut td = TypeData::new(name.to_string());
         td.base = base;
         td.module = Some(resolved_id);
+        td.description = foundation_type_description(name)
+            .unwrap_or_default()
+            .to_string();
         let type_id = ctx.mib.add_type(td);
         ctx.module_symbol_to_type
             .entry(smi_id)
@@ -86,20 +150,31 @@ fn create_user_types(ctx: &mut ResolverContext) {
                 continue;
             }
 
-            let base = if let Some(bt) = typedef.base_type {
+            let mut base = if let Some(bt) = typedef.base_type {
                 bt
             } else {
                 syntax_to_base_type(&typedef.syntax)
             };
+            if crate::lower::base_modules::is_base_module(&m.name)
+                && let Some(application_base) = foundation_base_type(&typedef.name)
+            {
+                base = application_base;
+            }
 
             let mut td = TypeData::new(typedef.name.clone());
-            td.span = typedef.span;
-            td.syntax_span = typedef.syntax_span;
+            td.range = Some(typedef.range);
+            td.syntax_range = Some(typedef.syntax_range);
             td.module = Some(resolved_id);
             td.base = base;
             td.status = typedef.status;
             td.hint = typedef.display_hint.clone();
             td.description = typedef.description.clone();
+            if td.description.is_empty()
+                && crate::lower::base_modules::is_base_module(&m.name)
+                && let Some(description) = foundation_type_description(&typedef.name)
+            {
+                td.description = description.to_string();
+            }
             td.reference = typedef.reference.clone();
             td.is_tc = typedef.is_textual_convention;
 
@@ -126,6 +201,7 @@ fn create_user_types(ctx: &mut ResolverContext) {
 /// SEQUENCE OF).
 pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     match syntax {
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => BaseType::Unknown,
         ir::TypeSyntax::IntegerEnum { .. } => BaseType::Integer32,
         ir::TypeSyntax::Bits { .. } => BaseType::Bits,
         ir::TypeSyntax::OctetString { .. } => BaseType::OctetString,
@@ -166,7 +242,7 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
                 .map(|nn| NamedValue {
                     label: nn.name.clone(),
                     value: nn.value,
-                    span: nn.span,
+                    range: nn.range,
                 })
                 .collect();
         }
@@ -176,7 +252,7 @@ fn extract_type_values(syntax: &ir::TypeSyntax, td: &mut TypeData) {
                 .map(|nb| NamedValue {
                     label: nb.name.clone(),
                     value: nb.position as i64,
-                    span: nb.span,
+                    range: nb.range,
                 })
                 .collect();
         }
@@ -216,7 +292,7 @@ pub(super) fn resolve_range(r: &ir::syntax::Range) -> Range {
     Range {
         min,
         max,
-        span: r.span,
+        range: Some(r.range),
     }
 }
 
@@ -236,13 +312,29 @@ fn resolve_type_bases(ctx: &mut ResolverContext) {
     link_primitive_syntax_parents(ctx, &cycle_type_ids);
     link_rfc1213_types_to_tcs(ctx, &cycle_type_ids);
     inherit_base_types(ctx);
+    normalize_named_values_for_base(ctx);
     compute_effective_constraints(ctx);
+}
+
+/// The grammar represents a named refinement of a referenced type with the
+/// same node used for INTEGER enumerations. Once parent bases are known, move
+/// those direct values to BITS when the referenced type is BITS-based.
+fn normalize_named_values_for_base(ctx: &mut ResolverContext) {
+    for index in 0..ctx.mib.types_slice().len() {
+        let type_id = TypeId::new(index as u32);
+        let typ = ctx.mib.raw().type_(type_id);
+        if typ.base != BaseType::Bits || typ.enums.is_empty() || !typ.bits.is_empty() {
+            continue;
+        }
+        let values = std::mem::take(&mut ctx.mib.type_mut(type_id).enums);
+        ctx.mib.type_mut(type_id).bits = values;
+    }
 }
 
 /// Build a dependency graph of types and resolve parent references in topo order.
 fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> {
     // Build graph: type_id -> parent type name reference.
-    let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, Span)> = Vec::new();
+    let mut type_to_parent_ref: Vec<(TypeId, IrModuleId, String, SourceRange)> = Vec::new();
 
     for (ir_id, m) in ctx.all_modules() {
         for def in &m.definitions {
@@ -265,7 +357,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> 
                     type_id,
                     ir_id,
                     ref_name.to_string(),
-                    typedef.syntax.span(),
+                    typedef.syntax.range(),
                 ));
             }
         }
@@ -337,7 +429,7 @@ fn resolve_type_ref_parents_graph(ctx: &mut ResolverContext) -> HashSet<TypeId> 
         .flatten()
         .filter_map(|sym| graph_symbol_to_type_id.get(sym).copied())
         .collect();
-    let parent_ref_by_type: HashMap<TypeId, (IrModuleId, String, Span)> = type_to_parent_ref
+    let parent_ref_by_type: HashMap<TypeId, (IrModuleId, String, SourceRange)> = type_to_parent_ref
         .iter()
         .map(|(tid, ir_id, ref_name, span)| (*tid, (*ir_id, ref_name.clone(), *span)))
         .collect();
@@ -426,6 +518,7 @@ fn extract_type_ref_name(syntax: &ir::TypeSyntax) -> Option<&str> {
                 Some(name)
             }
         }
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => Some(base),
         ir::TypeSyntax::Constrained { base, .. } => extract_type_ref_name(base),
         _ => None,
     }
@@ -625,7 +718,7 @@ fn resolve_effective_constraints(
     };
     if !parent_sizes.present
         && !own_sizes.is_empty()
-        && let Some(range) = base_constraint(*base, true, own_sizes[0].span)
+        && let Some(range) = base_constraint(*base, true)
     {
         parent_sizes = EffectiveConstraint {
             values: vec![range],
@@ -634,7 +727,7 @@ fn resolve_effective_constraints(
     }
     if !parent_ranges.present
         && !own_ranges.is_empty()
-        && let Some(range) = base_constraint(*base, false, own_ranges[0].span)
+        && let Some(range) = base_constraint(*base, false)
     {
         parent_ranges = EffectiveConstraint {
             values: vec![range],
@@ -649,7 +742,7 @@ fn resolve_effective_constraints(
     constraints
 }
 
-pub(super) fn base_constraint(base: BaseType, is_size: bool, span: Span) -> Option<Range> {
+pub(super) fn base_constraint(base: BaseType, is_size: bool) -> Option<Range> {
     let (min, max) = if is_size {
         (RangeBound::Unsigned(0), RangeBound::Unsigned(65535))
     } else {
@@ -669,7 +762,11 @@ pub(super) fn base_constraint(base: BaseType, is_size: bool, span: Span) -> Opti
             _ => return None,
         }
     };
-    Some(Range { min, max, span })
+    Some(Range {
+        min,
+        max,
+        range: None,
+    })
 }
 
 fn effective_constraints(own: &[Range], parent: &EffectiveConstraint) -> EffectiveConstraint {
@@ -727,7 +824,7 @@ pub(super) fn intersect_constraints(own: &[Range], parent: &[Range]) -> Vec<Rang
             result.push(Range {
                 min: max_range_bound(&child_min, &parent_alternative.min),
                 max: min_range_bound(&child_max, &parent_alternative.max),
-                span: child.span,
+                range: child.range,
             });
         }
     }
@@ -890,7 +987,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
             if !imported.contains(ref_name.as_str()) {
                 diagnostics.push((
                     ir_id,
-                    m.span,
+                    m.range,
                     format!(
                         "{} used but not imported from SNMPv2-SMI in {}",
                         ref_name, m.name
@@ -900,7 +997,7 @@ pub(super) fn check_basetype_imports(ctx: &mut ResolverContext) {
         }
     }
 
-    for (ir_id, span, message) in diagnostics {
-        ctx.emit_diagnostic(DiagCode::BasetypeNotImported, Some(ir_id), span, message);
+    for (ir_id, range, message) in diagnostics {
+        ctx.emit_diagnostic(DiagCode::BasetypeNotImported, Some(ir_id), range, message);
     }
 }

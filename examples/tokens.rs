@@ -3,7 +3,37 @@
 //! The token API lets you work with raw MIB syntax without parsing,
 //! useful for syntax highlighting, linting, or custom tooling.
 
-use mib_rs::token::{self, TokenKind};
+use std::sync::Arc;
+
+use mib_rs::token::{self, SyntaxKind};
+use mib_rs::{Diagnostic, SourceDocument, SourceOrigin, SourceSet, SyntaxCategory};
+
+fn render(document: &SourceDocument, diagnostic: &Diagnostic) -> String {
+    let Some(range) = diagnostic.range else {
+        return diagnostic.to_string();
+    };
+    if let Err(error) = document.slice(range) {
+        return format!("{diagnostic} [location unavailable: {error}]");
+    }
+    let start = match document.byte_position(range.start()) {
+        Ok(position) => position,
+        Err(error) => return format!("{diagnostic} [location unavailable: {error}]"),
+    };
+    let end = match document.byte_position(range.end()) {
+        Ok(position) => position,
+        Err(error) => return format!("{diagnostic} [location unavailable: {error}]"),
+    };
+    format!(
+        "[{}] {}:{}:{}-{}:{}: {}",
+        diagnostic.severity,
+        document.label(),
+        u64::from(start.line()) + 1,
+        u64::from(start.column()) + 1,
+        u64::from(end.line()) + 1,
+        u64::from(end.column()) + 1,
+        diagnostic.message
+    )
+}
 
 fn main() {
     let source = br#"EXAMPLE-MIB DEFINITIONS ::= BEGIN
@@ -29,18 +59,33 @@ exValue OBJECT-TYPE
 END
 "#;
 
+    let mut sources = SourceSet::new();
+    let source_id = sources
+        .insert(
+            SourceOrigin::memory("tokens-example"),
+            "EXAMPLE-MIB",
+            Arc::from(source.as_slice()),
+        )
+        .expect("example source should fit the compiler coordinate space");
+    let document = sources
+        .get(source_id)
+        .expect("the example source was just inserted");
+
     // -- Tokenize --
-    let (tokens, diagnostics) = token::tokenize(source);
+    let (tokens, diagnostics) = token::tokenize(document);
 
     println!("=== Tokens ({} total) ===", tokens.len());
     for tok in &tokens {
         // Extract the token text from the source bytes.
-        let start = tok.span.start.0 as usize;
-        let end = tok.span.end.0 as usize;
-        let text = std::str::from_utf8(&source[start..end]).unwrap_or("<binary>");
+        let text = std::str::from_utf8(
+            document
+                .slice(tok.span)
+                .expect("tokens belong to the example source document"),
+        )
+        .unwrap_or("<binary>");
 
         // Skip comments for brevity.
-        if tok.kind == TokenKind::Comment {
+        if tok.kind == SyntaxKind::Comment {
             continue;
         }
 
@@ -53,7 +98,7 @@ END
         );
 
         // Stop at EOF.
-        if tok.kind == TokenKind::Eof {
+        if tok.kind == SyntaxKind::EofToken {
             break;
         }
     }
@@ -61,8 +106,8 @@ END
     // -- Diagnostics from lexing --
     if !diagnostics.is_empty() {
         println!("\nLexer diagnostics:");
-        for d in &diagnostics {
-            println!("  {:?}", d);
+        for diagnostic in &diagnostics {
+            println!("  {}", render(document, diagnostic));
         }
     } else {
         println!("\nNo lexer diagnostics.");
@@ -71,19 +116,19 @@ END
     // -- Token classification predicates --
     println!("\n=== Token classification ===");
     let interesting = [
-        TokenKind::KwDefinitions,
-        TokenKind::KwObjectType,
-        TokenKind::KwModuleIdentity,
-        TokenKind::KwSyntax,
-        TokenKind::KwInteger,
-        TokenKind::KwReadOnly,
-        TokenKind::KwCurrent,
-        TokenKind::UppercaseIdent,
-        TokenKind::LowercaseIdent,
-        TokenKind::Number,
-        TokenKind::QuotedString,
-        TokenKind::ColonColonEqual,
-        TokenKind::LBrace,
+        SyntaxKind::KwDefinitions,
+        SyntaxKind::KwObjectType,
+        SyntaxKind::KwModuleIdentity,
+        SyntaxKind::KwSyntax,
+        SyntaxKind::KwInteger,
+        SyntaxKind::KwReadOnly,
+        SyntaxKind::KwCurrent,
+        SyntaxKind::UppercaseIdent,
+        SyntaxKind::LowercaseIdent,
+        SyntaxKind::Number,
+        SyntaxKind::QuotedString,
+        SyntaxKind::ColonColonEqual,
+        SyntaxKind::LBrace,
     ];
 
     for kind in interesting {
@@ -102,12 +147,12 @@ END
     // -- Display names (human-readable for error messages) --
     println!("\n=== Display names ===");
     for kind in [
-        TokenKind::LBrace,
-        TokenKind::ColonColonEqual,
-        TokenKind::KwObjectType,
-        TokenKind::UppercaseIdent,
-        TokenKind::Number,
-        TokenKind::Eof,
+        SyntaxKind::LBrace,
+        SyntaxKind::ColonColonEqual,
+        SyntaxKind::KwObjectType,
+        SyntaxKind::UppercaseIdent,
+        SyntaxKind::Number,
+        SyntaxKind::EofToken,
     ] {
         println!(
             "  {:<24} display={:?}  libsmi={:?}",
@@ -126,7 +171,7 @@ END
     let mut other = 0;
 
     for tok in &tokens {
-        if tok.kind == TokenKind::Eof || tok.kind == TokenKind::Comment {
+        if tok.kind == SyntaxKind::EofToken || tok.kind == SyntaxKind::Comment {
             continue;
         }
         match classify(tok.kind) {
@@ -145,39 +190,12 @@ END
     println!("  Other:       {other}");
 }
 
-fn classify(kind: TokenKind) -> &'static str {
-    if kind.is_keyword() {
-        "keyword"
-    } else if kind.is_identifier() {
-        "identifier"
-    } else if matches!(
-        kind,
-        TokenKind::Number
-            | TokenKind::NegativeNumber
-            | TokenKind::QuotedString
-            | TokenKind::HexString
-            | TokenKind::BinString
-    ) {
-        "literal"
-    } else if matches!(
-        kind,
-        TokenKind::LBrace
-            | TokenKind::RBrace
-            | TokenKind::LParen
-            | TokenKind::RParen
-            | TokenKind::LBracket
-            | TokenKind::RBracket
-            | TokenKind::Comma
-            | TokenKind::Semicolon
-            | TokenKind::Colon
-            | TokenKind::Dot
-            | TokenKind::DotDot
-            | TokenKind::Pipe
-            | TokenKind::Minus
-            | TokenKind::ColonColonEqual
-    ) {
-        "punctuation"
-    } else {
-        "other"
+fn classify(kind: SyntaxKind) -> &'static str {
+    match kind.category() {
+        SyntaxCategory::Keyword => "keyword",
+        SyntaxCategory::Identifier => "identifier",
+        SyntaxCategory::Literal => "literal",
+        SyntaxCategory::Punctuation => "punctuation",
+        SyntaxCategory::Special | SyntaxCategory::Trivia | SyntaxCategory::Node => "other",
     }
 }

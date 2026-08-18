@@ -5,7 +5,6 @@
 //! pipeline via [`Loader::load`]. The free function [`load`] is equivalent.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -18,7 +17,7 @@ use crate::mib::Mib;
 use crate::parser;
 use crate::scan;
 use crate::searchpath;
-use crate::source::Source;
+use crate::source::{CandidateId, Source, SourceCandidate, SourceDocument, SourceSet};
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 
 /// Builder for loading and resolving MIB modules.
@@ -151,8 +150,8 @@ impl Loader {
 /// [`Loader`] builder, runs the full pipeline (scan, parse, lower, resolve),
 /// and returns the resolved [`Mib`] or a [`LoadError`].
 ///
-/// Synthetic base modules (SNMPv2-SMI, SNMPv2-TC, etc.) are always included
-/// automatically, even if no external sources provide them.
+/// Embedded foundation modules (SNMPv2-SMI, SNMPv2-TC, etc.) are used as
+/// lowest-priority fallbacks when configured sources do not provide them.
 ///
 /// # Errors
 ///
@@ -177,6 +176,8 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
     );
     let _guard = span.enter();
 
+    let has_explicit_sources = !options.sources.is_empty();
+    let has_requested_modules = options.modules.is_some();
     let mut sources = options.sources;
 
     if options.system_paths {
@@ -188,31 +189,33 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
         );
         sources.extend(searchpath::discover_system_sources());
     }
-    if sources.is_empty() {
+    if !has_explicit_sources && !options.system_paths && !has_requested_modules {
         return Err(LoadError::NoSources);
     }
+    sources.push(Box::new(crate::source::EmbeddedSource));
 
     let strictness = options.resolver_strictness;
     let diag_config = options.diag_config;
 
-    let (ir_modules, requested_names) = if let Some(names) = options.modules {
-        let mods = load_modules_by_name(&sources, &names, &diag_config)?;
-        (mods, Some(names))
+    let (loaded, requested_names) = if let Some(names) = options.modules {
+        let loaded = load_modules_by_name(&sources, &names, &diag_config)?;
+        (loaded, Some(names))
     } else {
-        let mods = load_all_modules(&sources, &diag_config, options.parallelism)?;
-        (mods, None)
+        let loaded = load_all_modules(&sources, &diag_config, options.parallelism)?;
+        (loaded, None)
     };
 
     debug!(
         target: "mib_rs::load",
         component = "load",
-        module_count = ir_modules.len(),
+        module_count = loaded.modules.len(),
         phase = "resolve",
         "load pipeline complete, starting resolver",
     );
-    let mib = crate::mib::resolver::resolve(ir_modules, strictness, &diag_config);
+    let mib =
+        crate::mib::resolver::resolve(loaded.modules, loaded.sources, strictness, &diag_config);
 
-    check_load_result(&mib, &diag_config, requested_names.as_deref())?;
+    let mib = check_load_result(mib, &diag_config, requested_names.as_deref())?;
 
     info!(
         target: "mib_rs::load",
@@ -229,12 +232,201 @@ pub fn load(options: Loader) -> Result<Mib, LoadError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{SourceOrigin, SourceRange};
+    use crate::types::{DiagCode, Severity};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Barrier, Condvar, mpsc};
     use std::time::Duration;
 
-    fn cache_key(index: usize) -> FileCacheKey {
-        (0, format!("TEST-{index}"), index, PathBuf::from("<test>"))
+    #[derive(Clone)]
+    struct SharedDocumentSource {
+        names: Vec<String>,
+        candidate: SourceCandidate,
+    }
+
+    impl SharedDocumentSource {
+        fn new(
+            names: impl IntoIterator<Item = impl Into<String>>,
+            identity: &str,
+            origin: SourceOrigin,
+            label: &str,
+            bytes: Arc<[u8]>,
+        ) -> Self {
+            Self {
+                names: names.into_iter().map(Into::into).collect(),
+                candidate: SourceCandidate::new(identity, origin, label, bytes),
+            }
+        }
+    }
+
+    impl Source for SharedDocumentSource {
+        fn find(&self, name: &str) -> std::io::Result<Option<SourceCandidate>> {
+            Ok(self
+                .names
+                .iter()
+                .any(|candidate| candidate == name)
+                .then(|| self.candidate.clone()))
+        }
+
+        fn list_modules(&self) -> std::io::Result<Vec<String>> {
+            Ok(self.names.clone())
+        }
+    }
+
+    fn module_document<'a>(mib: &'a Mib, name: &str) -> &'a SourceDocument {
+        let module = mib
+            .module(name)
+            .unwrap_or_else(|| panic!("missing module {name}"));
+        module
+            .source()
+            .unwrap_or_else(|| panic!("module {name} has no source"))
+    }
+
+    fn assert_retained_range(mib: &Mib, range: SourceRange) {
+        let source = mib
+            .source(range.source())
+            .unwrap_or_else(|| panic!("source {} is not retained", range.source()));
+        source
+            .slice(range)
+            .unwrap_or_else(|error| panic!("invalid retained range {range:?}: {error}"));
+    }
+
+    fn assert_optional_range(mib: &Mib, range: Option<SourceRange>) {
+        if let Some(range) = range {
+            assert_retained_range(mib, range);
+        }
+    }
+
+    fn assert_constraint_ranges(mib: &Mib, ranges: &[crate::mib::Range]) {
+        for range in ranges {
+            assert_optional_range(mib, range.range);
+        }
+    }
+
+    fn assert_named_value_ranges(mib: &Mib, values: &[crate::mib::NamedValue]) {
+        for value in values {
+            assert_retained_range(mib, value.range);
+        }
+    }
+
+    fn assert_syntax_constraint_ranges(mib: &Mib, syntax: &crate::mib::SyntaxConstraints) {
+        assert_constraint_ranges(mib, &syntax.sizes);
+        assert_constraint_ranges(mib, &syntax.declared_sizes);
+        assert_constraint_ranges(mib, &syntax.ranges);
+        assert_constraint_ranges(mib, &syntax.declared_ranges);
+        assert_named_value_ranges(mib, &syntax.enums);
+        assert_named_value_ranges(mib, &syntax.bits);
+    }
+
+    fn assert_entity_ranges(mib: &Mib, entity: &crate::mib::object::EntityData) {
+        assert_optional_range(mib, entity.range);
+        assert_optional_range(mib, entity.status_range);
+        assert_optional_range(mib, entity.description_range);
+        assert_optional_range(mib, entity.reference_range);
+        for oid_ref in &entity.oid_refs {
+            assert_retained_range(mib, oid_ref.range);
+        }
+    }
+
+    fn assert_all_resolved_ranges_are_retained(mib: &Mib) {
+        for module in &mib.modules {
+            if let Some(source_id) = module.source_id {
+                assert!(mib.source(source_id).is_some());
+            }
+            for revision in &module.revisions {
+                assert_retained_range(mib, revision.range);
+            }
+            for import in &module.imports {
+                for symbol in &import.symbols {
+                    assert_retained_range(mib, symbol.range);
+                }
+            }
+        }
+
+        assert_optional_range(mib, mib.tree.get(mib.tree.root()).range);
+        for node_id in mib.tree.all_nodes() {
+            assert_optional_range(mib, mib.tree.get(node_id).range);
+        }
+
+        for object in &mib.objects {
+            assert_entity_ranges(mib, &object.entity);
+            for range in [
+                object.syntax_range,
+                object.access_range,
+                object.units_range,
+                object.augments_range,
+                object.default_value_range,
+            ] {
+                assert_optional_range(mib, range);
+            }
+            for index in &object.index {
+                assert_retained_range(mib, index.range);
+            }
+            assert_constraint_ranges(mib, &object.sizes);
+            assert_constraint_ranges(mib, &object.ranges);
+            assert_constraint_ranges(mib, &object.declared_sizes);
+            assert_constraint_ranges(mib, &object.declared_ranges);
+            assert_named_value_ranges(mib, &object.enums);
+            assert_named_value_ranges(mib, &object.bits);
+        }
+
+        for typ in &mib.types {
+            assert_optional_range(mib, typ.range);
+            assert_optional_range(mib, typ.syntax_range);
+            assert_constraint_ranges(mib, &typ.sizes);
+            assert_constraint_ranges(mib, &typ.ranges);
+            assert_constraint_ranges(mib, &typ.effective_sizes);
+            assert_constraint_ranges(mib, &typ.effective_ranges);
+            assert_named_value_ranges(mib, &typ.enums);
+            assert_named_value_ranges(mib, &typ.bits);
+        }
+
+        for notification in &mib.notifications {
+            assert_entity_ranges(mib, &notification.entity);
+        }
+        for group in &mib.groups {
+            assert_entity_ranges(mib, &group.entity);
+        }
+        for compliance in &mib.compliances {
+            assert_entity_ranges(mib, &compliance.entity);
+            for module in &compliance.modules {
+                assert_retained_range(mib, module.range);
+                for group in &module.groups {
+                    assert_retained_range(mib, group.range);
+                }
+                for object in &module.objects {
+                    assert_retained_range(mib, object.range);
+                    if let Some(syntax) = &object.syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                    if let Some(syntax) = &object.write_syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                }
+            }
+        }
+        for capability in &mib.capabilities {
+            assert_entity_ranges(mib, &capability.entity);
+            for module in &capability.supports {
+                assert_retained_range(mib, module.range);
+                for variation in &module.object_variations {
+                    assert_retained_range(mib, variation.range);
+                    if let Some(syntax) = &variation.syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                    if let Some(syntax) = &variation.write_syntax {
+                        assert_syntax_constraint_ranges(mib, syntax);
+                    }
+                }
+                for variation in &module.notification_variations {
+                    assert_retained_range(mib, variation.range);
+                }
+            }
+        }
+    }
+
+    fn cache_key(index: usize) -> CandidateKey {
+        (0, CandidateId::new(format!("TEST-{index}")))
     }
 
     #[test]
@@ -305,6 +497,300 @@ mod tests {
         assert_eq!(initialization_count.load(Ordering::Relaxed), 1);
         assert!(Arc::ptr_eq(&first, &second));
     }
+
+    #[test]
+    fn source_registry_interns_provider_candidate_once() {
+        let bytes: Arc<[u8]> = Arc::from(&b"A-MIB DEFINITIONS ::= BEGIN END"[..]);
+        let candidate = SourceCandidate::new(
+            "document-7",
+            crate::source::SourceOrigin::memory("buffer-7"),
+            "untitled MIB",
+            Arc::clone(&bytes),
+        );
+        let mut registry = SourceRegistry::default();
+
+        let (first_key, first) = registry.intern(3, &candidate).unwrap();
+        let (second_key, second) = registry.intern(3, &candidate).unwrap();
+
+        assert_eq!(first_key, second_key);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(registry.sources.len(), 1);
+        assert_eq!(first.bytes().as_ptr(), bytes.as_ptr());
+    }
+
+    #[test]
+    fn candidate_identity_is_scoped_by_provider() {
+        let bytes: Arc<[u8]> = Arc::from(&b"contents"[..]);
+        let candidate = SourceCandidate::new(
+            "shared-id",
+            crate::source::SourceOrigin::memory("shared-id"),
+            "shared",
+            bytes,
+        );
+        let mut registry = SourceRegistry::default();
+
+        let (_, first) = registry.intern(0, &candidate).unwrap();
+        let (_, second) = registry.intern(1, &candidate).unwrap();
+
+        assert_ne!(first.id(), second.id());
+        assert_eq!(registry.sources.len(), 2);
+    }
+
+    #[test]
+    fn modules_from_one_document_share_source_id_in_parallel_loading() {
+        let content: Arc<[u8]> = Arc::from(
+            &br#"
+FIRST-MIB DEFINITIONS ::= BEGIN END
+SECOND-MIB DEFINITIONS ::= BEGIN END
+"#[..],
+        );
+        let source = SharedDocumentSource::new(
+            ["FIRST-MIB", "SECOND-MIB"],
+            "both-modules",
+            SourceOrigin::custom("test", "both-modules"),
+            "two modules",
+            content,
+        );
+
+        let mib = Loader::new()
+            .source(Box::new(source))
+            .parallelism(4)
+            .load()
+            .expect("multi-module document should load");
+
+        let first = module_document(&mib, "FIRST-MIB");
+        let second = module_document(&mib, "SECOND-MIB");
+        assert_eq!(first.id(), second.id());
+        assert!(std::ptr::eq(first, second));
+    }
+
+    #[test]
+    fn every_resolved_source_range_is_retained_and_in_bounds() {
+        const CAPABILITIES: &[u8] = br#"
+CAP-RANGE-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    AGENT-CAPABILITIES FROM SNMPv2-CONF
+    enterprises FROM SNMPv2-SMI;
+
+capRange AGENT-CAPABILITIES
+    PRODUCT-RELEASE "1.0"
+    STATUS current
+    DESCRIPTION "Range invariant capability."
+    SUPPORTS EXAMPLE-FULL-MIB
+        INCLUDES { exScalarGroup }
+        VARIATION exDeviceName
+            ACCESS read-only
+            DESCRIPTION "Read-only."
+    ::= { enterprises 99990 }
+
+END
+"#;
+        let source = crate::source::memory_modules([
+            (
+                "EXAMPLE-FULL-MIB",
+                include_bytes!("../tests/data/example-full-mib.txt").as_slice(),
+            ),
+            ("CAP-RANGE-MIB", CAPABILITIES),
+        ]);
+        let mut diagnostics = DiagnosticConfig::verbose();
+        diagnostics.fail_at = Severity::Fatal;
+        let mib = Loader::new()
+            .source(source)
+            .modules(["EXAMPLE-FULL-MIB", "CAP-RANGE-MIB"])
+            .diagnostic_config(diagnostics)
+            .load()
+            .expect("range invariant fixture should load");
+
+        assert!(!mib.objects.is_empty());
+        assert!(!mib.compliances.is_empty());
+        assert!(!mib.capabilities.is_empty());
+        assert_all_resolved_ranges_are_retained(&mib);
+    }
+
+    #[test]
+    fn distinct_documents_have_distinct_source_ids() {
+        let mib = Loader::new()
+            .source(crate::source::memory_modules([
+                (
+                    "FIRST-MIB",
+                    b"FIRST-MIB DEFINITIONS ::= BEGIN END".as_slice(),
+                ),
+                (
+                    "SECOND-MIB",
+                    b"SECOND-MIB DEFINITIONS ::= BEGIN END".as_slice(),
+                ),
+            ]))
+            .modules(["FIRST-MIB", "SECOND-MIB"])
+            .load()
+            .expect("separate memory documents should load");
+
+        assert_ne!(
+            module_document(&mib, "FIRST-MIB").id(),
+            module_document(&mib, "SECOND-MIB").id()
+        );
+    }
+
+    #[test]
+    fn mib_retains_document_and_original_bytes_after_registry_drops() {
+        let bytes: Arc<[u8]> = Arc::from(&b"RETAINED-MIB DEFINITIONS ::= BEGIN END"[..]);
+        let weak_bytes = Arc::downgrade(&bytes);
+        let expected_pointer = bytes.as_ptr();
+        let source = SharedDocumentSource::new(
+            ["RETAINED-MIB"],
+            "retained",
+            SourceOrigin::custom("test", "retained"),
+            "retained source",
+            Arc::clone(&bytes),
+        );
+        drop(bytes);
+
+        let mib = Loader::new()
+            .source(Box::new(source))
+            .modules(["RETAINED-MIB"])
+            .load()
+            .expect("retained source should load");
+
+        let document = module_document(&mib, "RETAINED-MIB");
+        assert_eq!(document.bytes().as_ptr(), expected_pointer);
+        assert_eq!(
+            weak_bytes
+                .upgrade()
+                .expect("Mib should retain source bytes")
+                .as_ptr(),
+            expected_pointer
+        );
+
+        drop(mib);
+        assert!(weak_bytes.upgrade().is_none());
+    }
+
+    #[test]
+    fn resolved_modules_reach_all_source_origin_kinds() {
+        static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let file_path = std::env::temp_dir().join(format!(
+            "mib-rs-source-origin-{}-{}.mib",
+            std::process::id(),
+            TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&file_path, b"FILE-ORIGIN-MIB DEFINITIONS ::= BEGIN END")
+            .expect("write temporary MIB");
+        let file_source = crate::source::file(&file_path).expect("create file source");
+
+        let custom = SharedDocumentSource::new(
+            ["CUSTOM-ORIGIN-MIB"],
+            "custom-origin",
+            SourceOrigin::custom("database", "record-7"),
+            "database record 7",
+            Arc::from(&b"CUSTOM-ORIGIN-MIB DEFINITIONS ::= BEGIN END"[..]),
+        );
+        let result = Loader::new()
+            .source(file_source)
+            .source(crate::source::memory(
+                "MEMORY-ORIGIN-MIB",
+                b"MEMORY-ORIGIN-MIB DEFINITIONS ::= BEGIN END".as_slice(),
+            ))
+            .source(Box::new(custom))
+            .modules([
+                "FILE-ORIGIN-MIB",
+                "MEMORY-ORIGIN-MIB",
+                "CUSTOM-ORIGIN-MIB",
+                "SNMPv2-SMI",
+            ])
+            .load();
+        std::fs::remove_file(&file_path).expect("remove temporary MIB");
+        let mib = result.expect("all source origin kinds should load");
+
+        assert!(matches!(
+            module_document(&mib, "FILE-ORIGIN-MIB").origin(),
+            SourceOrigin::File { path } if path == &file_path
+        ));
+        assert_eq!(
+            module_document(&mib, "MEMORY-ORIGIN-MIB").origin(),
+            &SourceOrigin::memory("MEMORY-ORIGIN-MIB")
+        );
+        assert_eq!(
+            module_document(&mib, "CUSTOM-ORIGIN-MIB").origin(),
+            &SourceOrigin::custom("database", "record-7")
+        );
+        assert_eq!(
+            module_document(&mib, "SNMPv2-SMI").origin(),
+            &SourceOrigin::embedded("SNMPv2-SMI")
+        );
+    }
+
+    #[test]
+    fn generated_records_have_no_source_id() {
+        let module = ir::Module::new("GENERATED-MIB".to_string(), None);
+        assert!(module.source_id.is_none());
+
+        let resolved = crate::mib::module::ModuleData::new("GENERATED-MIB".to_string());
+        assert!(resolved.source_id.is_none());
+
+        let mib = Mib::new();
+        assert!(mib.sources.is_empty());
+        assert!(mib.tree.get(mib.tree.root()).module.is_none());
+
+        let mib = Loader::new()
+            .modules(["SNMPv2-SMI"])
+            .load()
+            .expect("embedded foundation should load");
+        assert_eq!(
+            module_document(&mib, "SNMPv2-SMI").origin(),
+            &SourceOrigin::embedded("SNMPv2-SMI")
+        );
+        let generated_types: Vec<_> = mib.types.iter().filter(|typ| typ.range.is_none()).collect();
+        assert!(!generated_types.is_empty());
+        for typ in generated_types {
+            assert!(typ.range.is_none());
+            assert!(typ.syntax_range.is_none());
+            assert!(typ.sizes.iter().all(|range| range.range.is_none()));
+            assert!(typ.ranges.iter().all(|range| range.range.is_none()));
+        }
+        assert!(mib.root_node().range().is_none());
+    }
+
+    #[test]
+    fn threshold_report_retains_sources_after_failed_mib_is_dropped() {
+        let bytes: Arc<[u8]> = Arc::from(
+            &br#"LEAK-CHECK-MIB { 01 } DEFINITIONS ::= BEGIN
+badName OBJECT IDENTIFIER ::= { iso 99999 }
+END
+"#[..],
+        );
+        let weak_bytes = Arc::downgrade(&bytes);
+        let source = SharedDocumentSource::new(
+            ["LEAK-CHECK-MIB"],
+            "leak-check",
+            SourceOrigin::memory("leak-check"),
+            "leak check",
+            Arc::clone(&bytes),
+        );
+        drop(bytes);
+        let mut diagnostics = DiagnosticConfig::default();
+        diagnostics
+            .overrides
+            .insert(DiagCode::NumberLeadingZero, Severity::Severe);
+
+        let result = Loader::new()
+            .source(Box::new(source))
+            .modules(["LEAK-CHECK-MIB"])
+            .diagnostic_config(diagnostics)
+            .load();
+
+        let Err(LoadError::DiagnosticThreshold { report }) = result else {
+            panic!("expected diagnostic threshold report");
+        };
+        assert!(weak_bytes.upgrade().is_some());
+        let entry = report
+            .iter()
+            .find(|entry| entry.diagnostic().code == DiagCode::NumberLeadingZero)
+            .expect("expected threshold-triggering diagnostic");
+        assert_eq!(entry.slice().unwrap(), Some(&b"01"[..]));
+        assert!(entry.render().unwrap().contains(":1:18-1:20"));
+        drop(report);
+        assert!(weak_bytes.upgrade().is_none());
+    }
 }
 
 impl Loader {
@@ -314,7 +800,8 @@ impl Loader {
     ///
     /// # Errors
     ///
-    /// Returns [`LoadError::NoSources`] if no sources are configured,
+    /// Returns [`LoadError::NoSources`] if neither sources, system paths, nor
+    /// an explicit module selection are configured,
     /// [`LoadError::MissingModules`] if explicitly requested modules cannot
     /// be found, [`LoadError::DiagnosticThreshold`] if any diagnostic
     /// exceeds the configured severity threshold, or [`LoadError::Io`] on
@@ -324,13 +811,52 @@ impl Loader {
     }
 }
 
-type FileCacheKey = (usize, String, usize, PathBuf);
+type CandidateKey = (usize, CandidateId);
 type ModuleCacheEntry = Arc<OnceLock<Arc<Vec<ir::Module>>>>;
-type SharedModuleCache = Mutex<HashMap<FileCacheKey, ModuleCacheEntry>>;
+type SharedModuleCache = Mutex<HashMap<CandidateKey, ModuleCacheEntry>>;
+
+#[derive(Debug, Default)]
+struct SourceRegistry {
+    sources: SourceSet,
+    documents: HashMap<CandidateKey, Arc<SourceDocument>>,
+}
+
+impl SourceRegistry {
+    fn intern(
+        &mut self,
+        provider_index: usize,
+        candidate: &SourceCandidate,
+    ) -> Result<(CandidateKey, Arc<SourceDocument>), LoadError> {
+        let key = (provider_index, candidate.identity().clone());
+        if let Some(document) = self.documents.get(&key) {
+            return Ok((key, Arc::clone(document)));
+        }
+
+        let document = self
+            .sources
+            .insert_shared(
+                candidate.origin().clone(),
+                candidate.label(),
+                Arc::clone(candidate.shared_bytes()),
+            )
+            .map_err(LoadError::from_source)?;
+        self.documents.insert(key.clone(), Arc::clone(&document));
+        Ok((key, document))
+    }
+
+    fn into_sources(self) -> SourceSet {
+        self.sources
+    }
+}
+
+struct LoadedModules {
+    modules: Vec<ir::Module>,
+    sources: SourceSet,
+}
 
 fn cached_modules(
     cache: &SharedModuleCache,
-    key: FileCacheKey,
+    key: CandidateKey,
     decode: impl FnOnce() -> Vec<ir::Module>,
 ) -> Arc<Vec<ir::Module>> {
     let entry = {
@@ -355,7 +881,7 @@ fn load_all_modules(
     sources: &[Box<dyn Source>],
     diag_config: &DiagnosticConfig,
     parallelism: Option<usize>,
-) -> Result<Vec<ir::Module>, LoadError> {
+) -> Result<LoadedModules, LoadError> {
     // Keep every source advertising a name until decoding confirms which
     // candidate actually contains the module. Only then is precedence fixed.
     let mut module_indexes = HashMap::<String, usize>::new();
@@ -380,11 +906,6 @@ fn load_all_modules(
         }
     }
 
-    if all_modules.is_empty() {
-        let base = collect_base_modules(HashMap::new());
-        return Ok(base);
-    }
-
     info!(
         target: "mib_rs::load",
         component = "load",
@@ -393,9 +914,10 @@ fn load_all_modules(
         "parallel loading",
     );
 
-    // Cache decoded candidates without conflating module-specific lookups or
-    // sources that reuse candidate positions and diagnostic paths.
-    let path_cache: SharedModuleCache = Mutex::new(HashMap::new());
+    // Cache each provider-scoped physical candidate independently of the
+    // module name through which it was discovered.
+    let document_cache: SharedModuleCache = Mutex::new(HashMap::new());
+    let source_registry = Mutex::new(SourceRegistry::default());
 
     // Parallel load using std::thread::scope with an atomic work queue.
     let thread_count =
@@ -429,9 +951,7 @@ fn load_all_modules(
 
                     'sources: for candidate in candidates {
                         let src = &sources[candidate.source_index];
-                        for (candidate_index, result) in
-                            src.find_candidates(&candidate.name).enumerate()
-                        {
+                        for result in src.find_candidates(&candidate.name) {
                             let result = match result {
                                 Ok(result) => result,
                                 Err(error_value) => {
@@ -439,16 +959,20 @@ fn load_all_modules(
                                     break 'sources;
                                 }
                             };
-                            let cached = cached_modules(
-                                &path_cache,
-                                (
-                                    candidate.source_index,
-                                    name.clone(),
-                                    candidate_index,
-                                    result.path.clone(),
-                                ),
-                                || decode_modules(&result.content, &result.path, diag_config),
-                            );
+                            let (key, document) = match source_registry
+                                .lock()
+                                .unwrap()
+                                .intern(candidate.source_index, &result)
+                            {
+                                Ok(interned) => interned,
+                                Err(error_value) => {
+                                    *error.lock().unwrap() = Some(error_value);
+                                    break 'sources;
+                                }
+                            };
+                            let cached = cached_modules(&document_cache, key, || {
+                                decode_modules(&document, diag_config)
+                            });
 
                             // A source advertisement is only a candidate until
                             // its decoded content contains the requested module.
@@ -461,7 +985,7 @@ fn load_all_modules(
                                 component = "load",
                                 module = %name,
                                 source_index = candidate.source_index,
-                                path = %result.path.display(),
+                                source = result.label(),
                                 reason = "decoded_module_missing",
                                 "candidate did not contain advertised module",
                             );
@@ -490,7 +1014,11 @@ fn load_all_modules(
         "parallel loading complete",
     );
 
-    Ok(collect_base_modules(modules))
+    let registry = source_registry.into_inner().unwrap();
+    Ok(LoadedModules {
+        modules: collect_modules(modules),
+        sources: registry.into_sources(),
+    })
 }
 
 /// Load specific modules and their dependencies sequentially.
@@ -498,24 +1026,20 @@ fn load_modules_by_name(
     sources: &[Box<dyn Source>],
     names: &[String],
     diag_config: &DiagnosticConfig,
-) -> Result<Vec<ir::Module>, LoadError> {
+) -> Result<LoadedModules, LoadError> {
     let mut modules: HashMap<String, ir::Module> = HashMap::new();
-    let mut file_cache: HashMap<FileCacheKey, Vec<ir::Module>> = HashMap::new();
+    let mut document_cache: HashMap<CandidateKey, Vec<ir::Module>> = HashMap::new();
+    let mut source_registry = SourceRegistry::default();
 
     fn load_one(
         name: &str,
         sources: &[Box<dyn Source>],
         modules: &mut HashMap<String, ir::Module>,
-        file_cache: &mut HashMap<FileCacheKey, Vec<ir::Module>>,
+        document_cache: &mut HashMap<CandidateKey, Vec<ir::Module>>,
+        source_registry: &mut SourceRegistry,
         diag_config: &DiagnosticConfig,
     ) -> Result<(), LoadError> {
         if modules.contains_key(name) {
-            return Ok(());
-        }
-
-        // Check base modules.
-        if let Some(base) = lower::base_modules::get_base_module(name) {
-            modules.insert(name.to_string(), base.clone());
             return Ok(());
         }
 
@@ -524,16 +1048,12 @@ fn load_modules_by_name(
         // advertisements must not shadow valid modules in later sources.
         let mut target = None;
         'sources: for (source_index, source) in sources.iter().enumerate() {
-            for (candidate_index, result) in source.find_candidates(name).enumerate() {
+            for result in source.find_candidates(name) {
                 let result = result.map_err(LoadError::Io)?;
-                let mods = file_cache
-                    .entry((
-                        source_index,
-                        name.to_string(),
-                        candidate_index,
-                        result.path.clone(),
-                    ))
-                    .or_insert_with(|| decode_modules(&result.content, &result.path, diag_config));
+                let (key, document) = source_registry.intern(source_index, &result)?;
+                let mods = document_cache
+                    .entry(key)
+                    .or_insert_with(|| decode_modules(&document, diag_config));
                 if let Some(module) = mods.iter().find(|module| module.name == name) {
                     target = Some(module.clone());
                     break 'sources;
@@ -543,7 +1063,7 @@ fn load_modules_by_name(
                     target: "mib_rs::load",
                     component = "load",
                     module = %name,
-                    path = %result.path.display(),
+                    source = result.label(),
                     reason = "decoded_module_missing",
                     "candidate did not contain advertised module",
                 );
@@ -577,45 +1097,65 @@ fn load_modules_by_name(
 
         // Recursively load dependencies.
         for dep in import_modules {
-            load_one(&dep, sources, modules, file_cache, diag_config)?;
+            load_one(
+                &dep,
+                sources,
+                modules,
+                document_cache,
+                source_registry,
+                diag_config,
+            )?;
         }
 
         Ok(())
     }
 
     for name in names {
-        load_one(name, sources, &mut modules, &mut file_cache, diag_config)?;
+        load_one(
+            name,
+            sources,
+            &mut modules,
+            &mut document_cache,
+            &mut source_registry,
+            diag_config,
+        )?;
     }
 
-    Ok(collect_base_modules(modules))
+    // Foundation modules are always present, with configured sources taking
+    // precedence over the embedded fallback on a per-module basis.
+    for name in lower::base_modules::base_module_names() {
+        load_one(
+            name,
+            sources,
+            &mut modules,
+            &mut document_cache,
+            &mut source_registry,
+            diag_config,
+        )?;
+    }
+
+    Ok(LoadedModules {
+        modules: collect_modules(modules),
+        sources: source_registry.into_sources(),
+    })
 }
 
-/// Ensure base modules are included and return sorted module list.
-fn collect_base_modules(mut modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
-    for &name in lower::base_modules::base_module_names() {
-        if !modules.contains_key(name)
-            && let Some(base) = lower::base_modules::get_base_module(name)
-        {
-            modules.insert(name.to_string(), base.clone());
-        }
-    }
+/// Return modules sorted by name.
+fn collect_modules(modules: HashMap<String, ir::Module>) -> Vec<ir::Module> {
     let mut mods: Vec<ir::Module> = modules.into_values().collect();
     mods.sort_by(|a, b| a.name.cmp(&b.name));
     mods
 }
 
 /// Run the heuristic/parse/lower pipeline on raw MIB content.
-fn decode_modules(
-    content: &[u8],
-    source_path: &Path,
-    diag_config: &DiagnosticConfig,
-) -> Vec<ir::Module> {
-    let path_display = source_path.display();
+fn decode_modules(document: &SourceDocument, diag_config: &DiagnosticConfig) -> Vec<ir::Module> {
+    let content = document.bytes();
+    let source_label = document.label();
     let span = debug_span!(
         target: "mib_rs::load",
         "decode_modules",
         component = "load",
-        path = %path_display,
+        source = source_label,
         byte_count = content.len(),
     );
     let _guard = span.enter();
@@ -624,33 +1164,30 @@ fn decode_modules(
         debug!(
             target: "mib_rs::load",
             component = "load",
-            path = %path_display,
+            source = source_label,
             reason = "heuristic_rejected",
             "content rejected by heuristic",
         );
         return Vec::new();
     }
 
-    let ast_modules = parser::parse(content, diag_config);
-    let path_str = source_path.to_string_lossy();
+    let ast_modules = parser::parse(document, diag_config);
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %path_display,
+        source = source_label,
         ast_module_count = ast_modules.len(),
         "parsed source into AST modules",
     );
 
     let mut modules = Vec::new();
     for am in ast_modules {
-        let mut module = lower::lower(am, content, diag_config);
-        module.source_path = path_str.to_string();
-        modules.push(module);
+        modules.push(lower::lower(am, document, diag_config));
     }
     debug!(
         target: "mib_rs::load",
         component = "load",
-        path = %path_display,
+        source = source_label,
         ir_module_count = modules.len(),
         "lowered source into IR modules",
     );
@@ -659,10 +1196,10 @@ fn decode_modules(
 
 /// Check the resolved Mib for diagnostic threshold violations and missing modules.
 fn check_load_result(
-    mib: &Mib,
+    mib: Mib,
     diag_config: &DiagnosticConfig,
     requested_modules: Option<&[String]>,
-) -> Result<(), LoadError> {
+) -> Result<Mib, LoadError> {
     // Check for missing requested modules.
     if let Some(requested) = requested_modules {
         let mut missing = Vec::new();
@@ -684,19 +1221,23 @@ fn check_load_result(
     }
 
     // Check FailAt threshold.
-    for d in mib.diagnostics() {
-        if diag_config.should_fail(d.severity) {
-            warn!(
-                target: "mib_rs::load",
-                component = "load",
-                reason = "diagnostic_threshold",
-                severity = ?d.severity,
-                code = %d.code,
-                "diagnostic threshold exceeded",
-            );
-            return Err(LoadError::DiagnosticThreshold);
-        }
+    if let Some(diagnostic) = mib
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diag_config.should_fail(diagnostic.severity))
+    {
+        warn!(
+            target: "mib_rs::load",
+            component = "load",
+            reason = "diagnostic_threshold",
+            severity = ?diagnostic.severity,
+            code = %diagnostic.code,
+            "diagnostic threshold exceeded",
+        );
+
+        let report = mib.into_diagnostic_report();
+        return Err(LoadError::DiagnosticThreshold { report });
     }
 
-    Ok(())
+    Ok(mib)
 }

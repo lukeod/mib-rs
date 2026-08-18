@@ -53,6 +53,707 @@ fn load_corpus_with_diags(modules: &[&str], strictness: ResolverStrictness) -> m
     load(opts).expect("load failed")
 }
 
+fn load_capabilities_reference_fixture() -> mib_rs::Mib {
+    let source = memory_modules([
+        (
+            "CAPABILITIES-TARGET-MIB",
+            &br#"CAPABILITIES-TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF;
+
+capabilitiesTarget MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Capabilities reference target."
+    ::= { enterprises 99996 }
+
+existingObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Existing object."
+    ::= { capabilitiesTarget 1 }
+
+existingGroup OBJECT-GROUP
+    OBJECTS { existingObject }
+    STATUS current
+    DESCRIPTION "Existing group."
+    ::= { capabilitiesTarget 2 }
+
+existingNotification NOTIFICATION-TYPE
+    STATUS current
+    DESCRIPTION "Existing notification."
+    ::= { capabilitiesTarget 3 }
+
+existingNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { existingNotification }
+    STATUS current
+    DESCRIPTION "Existing notification group."
+    ::= { capabilitiesTarget 4 }
+
+sharedOidObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Object sharing an OID with a plain node."
+    ::= { capabilitiesTarget 5 }
+
+sharedOidNode OBJECT IDENTIFIER ::= { capabilitiesTarget 5 }
+
+sharedIncludesNode OBJECT IDENTIFIER ::= { capabilitiesTarget 6 }
+
+sharedIncludesGroup OBJECT-GROUP
+    OBJECTS { existingObject }
+    STATUS current
+    DESCRIPTION "Group sharing an OID with a plain node."
+    ::= { capabilitiesTarget 6 }
+END
+"#[..],
+        ),
+        (
+            "CAPABILITIES-REFERENCES-MIB",
+            &br#"CAPABILITIES-REFERENCES-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, enterprises
+        FROM SNMPv2-SMI
+    AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+capabilitiesReferences MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Capabilities reference checks."
+    ::= { enterprises 99997 }
+
+referenceCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Capabilities reference checks."
+    SUPPORTS CAPABILITIES-TARGET-MIB
+        INCLUDES {
+            existingGroup,
+            existingGroup,
+            existingNotificationGroup,
+            missingGroup,
+            missingGroup,
+            existingObject, sharedIncludesNode, sharedIncludesGroup
+        }
+        VARIATION existingObject
+            CREATION-REQUIRES {
+                existingObject,
+                existingObject,
+                missingObject,
+                missingObject,
+                existingGroup,
+                sharedOidNode
+            }
+            DESCRIPTION "Object reference checks."
+    ::= { capabilitiesReferences 1 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["CAPABILITIES-TARGET-MIB", "CAPABILITIES-REFERENCES-MIB"]),
+    )
+    .expect("load failed")
+}
+
+fn diagnostics_for(mib: &mib_rs::Mib, code: DiagCode) -> Vec<&mib_rs::types::Diagnostic> {
+    mib.diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == code)
+        .collect()
+}
+
+#[test]
+fn conformance_diagnostic_catalog_matches_gomib_severities() {
+    for code in [
+        DiagCode::GroupMemberUnresolved,
+        DiagCode::GroupObjectsNotification,
+        DiagCode::GroupNotificationsObject,
+    ] {
+        assert_eq!(code.severity(), Severity::Minor, "{code}");
+        assert_eq!(
+            DiagnosticConfig::default().effective_severity(code),
+            Severity::Minor
+        );
+        assert_eq!(DiagCode::from_code(code.as_code()), Some(code));
+        assert_eq!(code.phase(), "resolver");
+    }
+
+    for code in [
+        DiagCode::IncludesUnresolved,
+        DiagCode::IncludesDuplicate,
+        DiagCode::CreationRequiresUnresolved,
+        DiagCode::CreationRequiresDuplicate,
+    ] {
+        assert_eq!(code.severity(), Severity::Warning, "{code}");
+        assert_eq!(
+            DiagnosticConfig::default().effective_severity(code),
+            Severity::Warning
+        );
+        assert_eq!(DiagCode::from_code(code.as_code()), Some(code));
+        assert_eq!(code.phase(), "resolver");
+    }
+
+    let mut overridden = DiagnosticConfig::default();
+    overridden
+        .overrides
+        .insert(DiagCode::IncludesUnresolved, Severity::Error);
+    assert_eq!(
+        overridden.effective_severity(DiagCode::IncludesUnresolved),
+        Severity::Error
+    );
+}
+
+#[test]
+fn group_member_diagnostics_use_individual_identifier_ranges() {
+    let source = memory_modules([
+        (
+            "IMPORTED-GROUP-MEMBER-MIB",
+            &br#"IMPORTED-GROUP-MEMBER-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+importedGroupMemberMIB MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Imported group member."
+    ::= { enterprises 99994 }
+
+importedObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Imported object."
+    ::= { importedGroupMemberMIB 1 }
+END
+"#[..],
+        ),
+        (
+            "GROUP-MEMBER-RANGES-MIB",
+            &br#"GROUP-MEMBER-RANGES-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    importedObject
+        FROM IMPORTED-GROUP-MEMBER-MIB;
+
+groupMemberRanges MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Group member range checks."
+    ::= { enterprises 99995 }
+
+knownObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Known object."
+    ::= { groupMemberRanges 1 }
+
+knownNotification NOTIFICATION-TYPE
+    OBJECTS { knownObject }
+    STATUS current
+    DESCRIPTION "Known notification."
+    ::= { groupMemberRanges 2 }
+
+inaccessibleObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Not-accessible object."
+    ::= { groupMemberRanges 3 }
+
+deprecatedObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS deprecated
+    DESCRIPTION "Deprecated object."
+    ::= { groupMemberRanges 4 }
+
+badObjectGroup OBJECT-GROUP
+    OBJECTS {
+        knownObject,
+        knownNotification,
+        inaccessibleObject,
+        deprecatedObject,
+        importedObject,
+        missingObject
+    }
+    STATUS current
+    DESCRIPTION "Bad object members."
+    ::= { groupMemberRanges 5 }
+
+badNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+        knownNotification,
+        knownObject,
+        missingNotification
+    }
+    STATUS current
+    DESCRIPTION "Bad notification members."
+    ::= { groupMemberRanges 6 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["GROUP-MEMBER-RANGES-MIB"]),
+    )
+    .expect("load failed");
+    let report = mib.diagnostic_report();
+
+    let cases = [
+        (DiagCode::GroupObjectsNotification, "knownNotification"),
+        (DiagCode::GroupMemberUnresolved, "missingObject"),
+        (DiagCode::GroupNotificationsObject, "knownObject"),
+        (DiagCode::GroupMemberUnresolved, "missingNotification"),
+        (DiagCode::GroupNotAccessible, "inaccessibleObject"),
+        (DiagCode::GroupObjectStatus, "deprecatedObject"),
+        (DiagCode::ComplianceMemberNotLocal, "importedObject"),
+    ];
+    let mut lines = Vec::new();
+    for (code, member) in cases {
+        let entry = report
+            .iter()
+            .find(|entry| {
+                let diagnostic = entry.diagnostic();
+                diagnostic.code == code && diagnostic.message.contains(member)
+            })
+            .unwrap_or_else(|| panic!("expected {code} diagnostic for {member}"));
+        assert_eq!(entry.slice().unwrap(), Some(member.as_bytes()));
+        let (start, _) = entry
+            .byte_positions()
+            .unwrap()
+            .expect("group member diagnostic should have a range");
+        lines.push(start.line());
+    }
+    assert_ne!(lines[0], lines[1]);
+    assert_ne!(lines[2], lines[3]);
+
+    let object_group = mib
+        .group("badObjectGroup")
+        .expect("object group should resolve");
+    let object_members: Vec<_> = object_group.members().map(|member| member.name()).collect();
+    assert_eq!(
+        object_members,
+        [
+            "knownObject",
+            "knownNotification",
+            "inaccessibleObject",
+            "deprecatedObject",
+            "importedObject",
+        ]
+    );
+
+    let notification_group = mib
+        .group("badNotificationGroup")
+        .expect("notification group should resolve");
+    let notification_members: Vec<_> = notification_group
+        .members()
+        .map(|member| member.name())
+        .collect();
+    assert_eq!(notification_members, ["knownNotification", "knownObject"]);
+}
+
+#[test]
+fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
+    let mib = load_capabilities_reference_fixture();
+    let report = mib.diagnostic_report();
+
+    let duplicate = diagnostics_for(&mib, DiagCode::IncludesDuplicate);
+    assert_eq!(duplicate.len(), 2);
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("existingGroup"))
+    );
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("missingGroup"))
+    );
+    assert!(duplicate.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.module.as_deref() == Some("CAPABILITIES-REFERENCES-MIB")
+    }));
+
+    let unresolved = diagnostics_for(&mib, DiagCode::IncludesUnresolved);
+    assert_eq!(unresolved.len(), 4);
+    assert!(unresolved.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
+    }));
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("missingGroup"))
+            .count(),
+        2
+    );
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("existingObject")
+            && diagnostic.message.contains("not an OBJECT-GROUP")
+    }));
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message
+            == "INCLUDES symbol \"sharedIncludesNode\" in module \"CAPABILITIES-TARGET-MIB\" is not an OBJECT-GROUP or NOTIFICATION-GROUP"
+    }));
+    assert!(
+        unresolved
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("sharedIncludesGroup"))
+    );
+
+    let duplicate_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::IncludesDuplicate)
+        .collect();
+    assert_eq!(duplicate_entries.len(), 2);
+    assert_eq!(
+        duplicate_entries[0].slice().unwrap(),
+        Some(&b"existingGroup"[..])
+    );
+    assert_eq!(
+        duplicate_entries[1].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_ne!(
+        duplicate_entries[0].diagnostic().range,
+        duplicate_entries[1].diagnostic().range
+    );
+    let (resolved_duplicate_start, _) = duplicate_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("resolved duplicate should have a range");
+    let (unresolved_duplicate_start, _) = duplicate_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("unresolved duplicate should have a range");
+    assert_eq!(resolved_duplicate_start.line(), 21);
+    assert_eq!(unresolved_duplicate_start.line(), 24);
+
+    let unresolved_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::IncludesUnresolved)
+        .collect();
+    assert_eq!(unresolved_entries.len(), 4);
+    assert_eq!(
+        unresolved_entries[0].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[1].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[2].slice().unwrap(),
+        Some(&b"existingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[3].slice().unwrap(),
+        Some(&b"sharedIncludesNode"[..])
+    );
+    assert_ne!(
+        unresolved_entries[0].diagnostic().range,
+        unresolved_entries[1].diagnostic().range
+    );
+    assert_ne!(
+        unresolved_entries[1].diagnostic().range,
+        unresolved_entries[2].diagnostic().range
+    );
+    let (wrong_kind_start, _) = unresolved_entries[2]
+        .byte_positions()
+        .unwrap()
+        .expect("wrong-kind diagnostic should have a range");
+    assert_eq!(wrong_kind_start.line(), 25);
+    let (shared_oid_wrong_kind_start, _) = unresolved_entries[3]
+        .byte_positions()
+        .unwrap()
+        .expect("shared-OID wrong-kind diagnostic should have a range");
+    assert_eq!(shared_oid_wrong_kind_start.line(), 25);
+
+    let target_module = mib
+        .module_by_name("CAPABILITIES-TARGET-MIB")
+        .expect("target module should resolve");
+    let target_module = mib.raw().module(target_module);
+    let shared_node = target_module
+        .node_by_name("sharedIncludesNode")
+        .expect("shared OID node should resolve");
+    let shared_group = target_module
+        .group_by_name("sharedIncludesGroup")
+        .expect("shared OID group should resolve");
+    assert_eq!(mib.raw().group(shared_group).node(), Some(shared_node));
+
+    let capability = mib
+        .capability("referenceCapabilities")
+        .expect("capability should resolve");
+    assert_eq!(
+        capability.supports()[0].includes,
+        [
+            "existingGroup",
+            "existingGroup",
+            "existingNotificationGroup",
+            "missingGroup",
+            "missingGroup",
+            "existingObject",
+            "sharedIncludesNode",
+            "sharedIncludesGroup",
+        ]
+    );
+}
+
+#[test]
+fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurrence() {
+    let mib = load_capabilities_reference_fixture();
+    let report = mib.diagnostic_report();
+
+    let duplicate = diagnostics_for(&mib, DiagCode::CreationRequiresDuplicate);
+    assert_eq!(duplicate.len(), 2);
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("existingObject"))
+    );
+    assert!(
+        duplicate
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("missingObject"))
+    );
+    assert!(duplicate.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.module.as_deref() == Some("CAPABILITIES-REFERENCES-MIB")
+    }));
+
+    let unresolved = diagnostics_for(&mib, DiagCode::CreationRequiresUnresolved);
+    assert_eq!(unresolved.len(), 4);
+    assert!(unresolved.iter().all(|diagnostic| {
+        diagnostic.severity == Severity::Warning
+            && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
+    }));
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("missingObject"))
+            .count(),
+        2
+    );
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("existingGroup")
+            && diagnostic.message.contains("not an OBJECT-TYPE")
+    }));
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("sharedOidNode")
+            && diagnostic.message.contains("not an OBJECT-TYPE")
+    }));
+
+    let duplicate_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::CreationRequiresDuplicate)
+        .collect();
+    assert_eq!(duplicate_entries.len(), 2);
+    assert_eq!(
+        duplicate_entries[0].slice().unwrap(),
+        Some(&b"existingObject"[..])
+    );
+    assert_eq!(
+        duplicate_entries[1].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    let (existing_duplicate_start, _) = duplicate_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("resolved duplicate should have a range");
+    let (missing_duplicate_start, _) = duplicate_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("unresolved duplicate should have a range");
+    assert_eq!(existing_duplicate_start.line(), 30);
+    assert_eq!(missing_duplicate_start.line(), 32);
+
+    let unresolved_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::CreationRequiresUnresolved)
+        .collect();
+    assert_eq!(unresolved_entries.len(), 4);
+    assert_eq!(
+        unresolved_entries[0].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[1].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[2].slice().unwrap(),
+        Some(&b"existingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[3].slice().unwrap(),
+        Some(&b"sharedOidNode"[..])
+    );
+    assert_ne!(
+        unresolved_entries[0].diagnostic().range,
+        unresolved_entries[1].diagnostic().range
+    );
+    let (first_unresolved_start, _) = unresolved_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("first unresolved reference should have a range");
+    let (second_unresolved_start, _) = unresolved_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("second unresolved reference should have a range");
+    let (wrong_kind_start, _) = unresolved_entries[2]
+        .byte_positions()
+        .unwrap()
+        .expect("wrong-kind reference should have a range");
+    let (shared_oid_wrong_kind_start, _) = unresolved_entries[3]
+        .byte_positions()
+        .unwrap()
+        .expect("shared-OID wrong-kind reference should have a range");
+    assert_eq!(first_unresolved_start.line(), 31);
+    assert_eq!(second_unresolved_start.line(), 32);
+    assert_eq!(wrong_kind_start.line(), 33);
+    assert_eq!(shared_oid_wrong_kind_start.line(), 34);
+
+    let target_module = mib
+        .module_by_name("CAPABILITIES-TARGET-MIB")
+        .expect("target module should resolve");
+    let target_module = mib.raw().module(target_module);
+    let shared_node = target_module
+        .node_by_name("sharedOidNode")
+        .expect("shared OID node should resolve");
+    let shared_object = target_module
+        .object_by_name("sharedOidObject")
+        .expect("shared OID object should resolve");
+    assert_eq!(mib.raw().object(shared_object).node(), Some(shared_node));
+
+    let capability = mib
+        .capability("referenceCapabilities")
+        .expect("capability should resolve");
+    assert_eq!(
+        capability.supports()[0].object_variations[0]
+            .creation_requires
+            .iter()
+            .map(|reference| reference.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "existingObject",
+            "existingObject",
+            "missingObject",
+            "missingObject",
+            "existingGroup",
+            "sharedOidNode",
+        ]
+    );
+}
+
+#[test]
+fn creation_requires_marks_the_exact_import_used() {
+    let source = memory_modules([
+        (
+            "CREATION-IMPORT-TARGET-MIB",
+            &br#"CREATION-IMPORT-TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationImportTargetRoot OBJECT IDENTIFIER ::= { enterprises 99970 }
+creationImportTable OBJECT-TYPE SYNTAX SEQUENCE OF CreationImportEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Table." ::= { creationImportTargetRoot 1 }
+creationImportEntry OBJECT-TYPE SYNTAX CreationImportEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Row." INDEX { creationImportIndex } ::= { creationImportTable 1 }
+creationImportIndex OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-only STATUS current DESCRIPTION "Index." ::= { creationImportEntry 1 }
+CreationImportEntry ::= SEQUENCE { creationImportIndex Integer32 }
+END
+"#[..],
+        ),
+        (
+            "CREATION-IMPORT-DEPENDENCY-MIB",
+            &br#"CREATION-IMPORT-DEPENDENCY-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationOnlyImport OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-create STATUS current DESCRIPTION "Creation requirement." ::= { enterprises 99971 }
+END
+"#[..],
+        ),
+        (
+            "CREATION-IMPORT-CONSUMER-MIB",
+            &br#"CREATION-IMPORT-CONSUMER-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI
+        AGENT-CAPABILITIES FROM SNMPv2-CONF
+        creationOnlyImport FROM CREATION-IMPORT-DEPENDENCY-MIB;
+creationImportCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Creation import usage."
+    SUPPORTS CREATION-IMPORT-TARGET-MIB
+        INCLUDES { }
+        VARIATION creationImportEntry
+            CREATION-REQUIRES { creationOnlyImport }
+            DESCRIPTION "Row variation."
+    ::= { enterprises 99972 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Strict)
+            .diagnostic_config(diagnostics)
+            .modules(["CREATION-IMPORT-CONSUMER-MIB"]),
+    )
+    .expect("creation import fixture should load");
+
+    let consumer = mib
+        .module("CREATION-IMPORT-CONSUMER-MIB")
+        .expect("consumer module should resolve");
+    let dependency = consumer
+        .import_source("creationOnlyImport")
+        .expect("creation-only import should resolve");
+    assert!(
+        mib.raw()
+            .module(consumer.id())
+            .is_import_used("creationOnlyImport")
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ImportUnused
+            && diagnostic.module.as_deref() == Some("CREATION-IMPORT-CONSUMER-MIB")
+            && diagnostic.message.contains("creationOnlyImport")
+    }));
+
+    let reference = &consumer
+        .capability("creationImportCapabilities")
+        .expect("capability should resolve")
+        .supports()[0]
+        .object_variations[0]
+        .creation_requires[0];
+    assert_eq!(reference.module_id(), Some(dependency.id()));
+    assert_eq!(reference.oid().unwrap().to_string(), "1.3.6.1.4.1.99971");
+}
+
 // --- Basic loading tests ---
 
 #[test]
@@ -577,7 +1278,7 @@ END
         &[Range {
             min: RangeBound::Raw("'1G'H".to_string()),
             max: RangeBound::Unsigned(5),
-            span: raw_child.ranges()[0].span,
+            range: raw_child.ranges()[0].range,
         }]
     );
 
@@ -587,7 +1288,7 @@ END
         &[Range {
             min: RangeBound::Raw("'0G'H".to_string()),
             max: RangeBound::Unsigned(5),
-            span: known_child.ranges()[0].span,
+            range: known_child.ranges()[0].range,
         }]
     );
 
@@ -892,7 +1593,10 @@ END
     let min_max_diags = mib
         .diagnostics()
         .iter()
-        .filter(|diagnostic| diagnostic.code == DiagCode::MinMaxRange)
+        .filter(|diagnostic| {
+            diagnostic.module.as_deref() == Some("RANGE-SEMANTICS-MIB")
+                && diagnostic.code == DiagCode::MinMaxRange
+        })
         .count();
     assert_eq!(min_max_diags, 16);
 }
@@ -1112,6 +1816,73 @@ fn notification_resolved() {
         .expect("linkDown not found");
     let notif = mib.raw().notification(notif_id);
     assert_eq!(notif.name(), "linkDown");
+}
+
+#[test]
+fn notification_object_reference_to_non_object_is_distinguished_from_unresolved() {
+    let source = memory_modules([(
+        "NOTIFICATION-WRONG-KIND-MIB",
+        &br#"NOTIFICATION-WRONG-KIND-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, NOTIFICATION-TYPE, enterprises
+        FROM SNMPv2-SMI;
+
+notificationWrongKind MODULE-IDENTITY
+    LAST-UPDATED "202001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Notification reference checks."
+    REVISION "202001010000Z"
+    DESCRIPTION "Initial revision."
+    ::= { enterprises 99995 }
+
+notAnObject OBJECT IDENTIFIER ::= { notificationWrongKind 1 }
+
+wrongKindNotification NOTIFICATION-TYPE
+    OBJECTS { notAnObject, missingObject }
+    STATUS current
+    DESCRIPTION "References a registration node."
+    ::= { notificationWrongKind 2 }
+END
+"#[..],
+    )]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(diagnostics)
+            .modules(["NOTIFICATION-WRONG-KIND-MIB"]),
+    )
+    .expect("load failed");
+
+    let diagnostic = mib
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code == DiagCode::NotifObjectNotObject)
+        .expect("missing wrong-kind notification object diagnostic");
+    assert_eq!(diagnostic.severity, Severity::Minor);
+    assert_eq!(
+        diagnostic.message,
+        "notification \"wrongKindNotification\" references \"notAnObject\" which is not an object definition"
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ObjectsUnresolved && diagnostic.message.contains("notAnObject")
+    }));
+    assert!(mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ObjectsUnresolved
+            && diagnostic.message
+                == "unresolved OBJECTS: \"wrongKindNotification\" references unknown object \"missingObject\""
+    }));
+    assert!(!mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::NotificationObject && unresolved.symbol == "notAnObject"
+    }));
+    assert!(mib.unresolved().iter().any(|unresolved| {
+        unresolved.kind == UnresolvedKind::NotificationObject
+            && unresolved.symbol == "missingObject"
+            && unresolved.module == "NOTIFICATION-WRONG-KIND-MIB"
+    }));
 }
 
 #[test]
@@ -2089,8 +2860,8 @@ fn base_module_beats_vendor_with_newer_timestamp() {
 
 #[test]
 fn snmp_oid_owned_by_snmpv2_mib() {
-    // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the synthetic
-    // SNMPv2-SMI. Verify the synthetic base doesn't claim it.
+    // The snmp OID (mib-2.11) belongs to SNMPv2-MIB, not the foundation
+    // SNMPv2-SMI. Verify the foundation module doesn't claim it.
     let r = load_corpus(&["SNMPv2-MIB"]);
     let mib = &r;
 

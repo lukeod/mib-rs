@@ -103,7 +103,7 @@ fn resolver_strictness_boundaries() {
 
 #[test]
 fn oid_global_root_strictness() {
-    for (strictness, want_unresolved, want_object) in [
+    for (strictness, want_unresolved, want_node) in [
         (ResolverStrictness::Strict, true, false),
         (ResolverStrictness::Normal, false, true),
         (ResolverStrictness::Permissive, false, true),
@@ -119,14 +119,13 @@ fn oid_global_root_strictness() {
             want_unresolved
         );
 
-        let obj = mib.object_by_name("testObject");
+        let obj = require_object(&mib, "testObject");
         assert_eq!(
-            obj.is_some(),
-            want_object,
-            "unexpected object state at {strictness}"
+            obj.node().is_some(),
+            want_node,
+            "node state at {strictness}"
         );
-        if let Some(obj_id) = obj {
-            let node = mib.raw().object(obj_id).node().expect("node missing");
+        if let Some(node) = obj.node() {
             assert_eq!(
                 mib.raw().tree().oid_of(node).to_string(),
                 "1.3.6.1.4.1.99999.1"
@@ -218,17 +217,27 @@ fn module_alias_strictness() {
             want_resolved
         );
 
-        let str_obj = mib.object_by_name("problemAliasString");
-        let int_obj = mib.object_by_name("problemAliasInteger");
+        let str_obj = require_object(&mib, "problemAliasString");
+        let int_obj = require_object(&mib, "problemAliasInteger");
         assert_eq!(
-            str_obj.is_some(),
+            str_obj.node().is_some(),
             want_resolved,
-            "problemAliasString at {strictness}"
+            "problemAliasString node at {strictness}"
         );
         assert_eq!(
-            int_obj.is_some(),
+            int_obj.node().is_some(),
             want_resolved,
-            "problemAliasInteger at {strictness}"
+            "problemAliasInteger node at {strictness}"
+        );
+        assert_eq!(
+            str_obj.type_id().is_some(),
+            want_resolved,
+            "problemAliasString type at {strictness}"
+        );
+        assert_eq!(
+            int_obj.type_id().is_some(),
+            want_resolved,
+            "problemAliasInteger type at {strictness}"
         );
     }
 }

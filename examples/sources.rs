@@ -154,13 +154,14 @@ END
     let modules = source.list_modules().expect("should list");
     println!("  Available modules: {}", modules.join(", "));
 
-    // -- FindResult gives you the raw content and path --
+    // -- SourceCandidate keeps identity, origin, label, and bytes separate --
     let result = source.find("LIST-A").expect("should not error");
     if let Some(found) = result {
         println!(
-            "  Found LIST-A: path={:?}, size={} bytes",
-            found.path,
-            found.content.len()
+            "  Found LIST-A: origin={:?}, label={}, size={} bytes",
+            found.origin(),
+            found.label(),
+            found.bytes().len()
         );
     }
 

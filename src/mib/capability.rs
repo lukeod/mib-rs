@@ -5,7 +5,7 @@
 //!
 //! For handle-oriented access, see [`Capability`](super::handle::Capability).
 
-use crate::types::Span;
+use crate::source::SourceRange;
 
 use super::object::EntityData;
 use super::types::*;
@@ -36,9 +36,9 @@ impl CapabilityData {
         &self.entity.name
     }
 
-    /// Return the source span.
-    pub fn span(&self) -> Span {
-        self.entity.span
+    /// Return the source range, if this capability came from source text.
+    pub fn range(&self) -> Option<SourceRange> {
+        self.entity.range
     }
 
     /// Return the OID tree [`NodeId`], if resolved.

@@ -3,7 +3,7 @@ name = "mib-rs"
 version = "0.9.0"
 edition = "2024"
 description = "SNMP MIB parser and resolver"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 rust-version = "1.88"
 repository = "https://github.com/lukeod/mib-rs"
 documentation = "https://docs.rs/mib-rs"
@@ -44,6 +44,7 @@ cli = ["serde", "dep:clap", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 pretty_assertions = "1"
+proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing-subscriber = "0.3"

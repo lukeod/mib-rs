@@ -5,8 +5,10 @@
 //! Type and OID references remain unresolved strings until the resolver phase
 //! transforms the IR into a fully resolved [`Mib`](crate::mib::Mib).
 //!
-//! Unlike the AST, the IR uses plain `String` values instead of [`Ident`](crate::ast::Ident)
-//! nodes, and optional clauses are represented as empty strings rather than `Option`s.
+//! Unlike the AST, the IR generally uses plain `String` values instead of
+//! [`Ident`](crate::ast::Ident) nodes. References that need precise diagnostics
+//! use [`NameRef`], and optional clauses are represented as empty strings rather
+//! than `Option`s.
 
 pub mod definition;
 pub mod oid;
@@ -16,7 +18,8 @@ pub use definition::*;
 pub use oid::{OidAssignment, OidComponent};
 pub use syntax::*;
 
-use crate::types::{Diagnostic, Language, Span};
+use crate::source::{SourceId, SourceRange};
+use crate::types::{Diagnostic, Language};
 
 /// A normalized, language-independent MIB module.
 ///
@@ -33,30 +36,27 @@ pub struct Module {
     pub imports: Vec<Import>,
     /// All definitions in source order.
     pub definitions: Vec<Definition>,
-    /// Span covering the entire module.
-    pub span: Span,
+    /// Range covering the entire module, or `None` for a generated module.
+    pub range: Option<SourceRange>,
     /// Diagnostics collected during lowering.
     pub diagnostics: Vec<Diagnostic>,
-    /// File path this module was loaded from. Empty for synthetic base modules.
-    pub source_path: String,
-    /// Maps line numbers to byte offsets of line starts.
-    /// Entry i holds the byte offset where line i+1 begins (0-indexed).
-    pub line_table: Vec<usize>,
+    /// Compilation-local source document containing this module.
+    pub(crate) source_id: Option<SourceId>,
 }
 
 impl Module {
-    /// Creates a new module with the given name and span. All other fields
+    /// Creates a new module with the given name and source range. All other fields
     /// are initialized to empty/default values.
-    pub fn new(name: String, span: Span) -> Self {
+    pub fn new(name: String, range: Option<SourceRange>) -> Self {
+        let source_id = range.map(SourceRange::source);
         Module {
             name,
             language: Language::Unknown,
             imports: Vec::new(),
             definitions: Vec::new(),
-            span,
+            range,
             diagnostics: Vec::new(),
-            source_path: String::new(),
-            line_table: Vec::new(),
+            source_id,
         }
     }
 
@@ -73,6 +73,6 @@ pub struct Import {
     pub module: String,
     /// Imported symbol name.
     pub symbol: String,
-    /// Source span of the symbol in the `IMPORTS` section.
-    pub span: Span,
+    /// Source range of the symbol in the `IMPORTS` section.
+    pub range: SourceRange,
 }

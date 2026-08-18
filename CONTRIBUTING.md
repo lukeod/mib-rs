@@ -59,4 +59,5 @@ When reporting bugs, please include:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same terms as the project (MIT).
+By contributing, you agree that your contributions will be licensed under the
+same terms as the project (MIT OR Apache-2.0).

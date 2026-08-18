@@ -1,0 +1,86 @@
+-- Synthetic integral conversion overflow recovery cases.
+-- Most cases match gomib's zero placeholder behavior. Current gomib treats
+-- the first number of a numeric-first OID DEFVAL as a name and omits its
+-- invalid-u32 diagnostic, while the resolved node output remains aligned.
+
+PROBLEM-INTEGRAL-OVERFLOW-MIB DEFINITIONS ::= BEGIN
+
+problemIntegralOverflowRoot OBJECT IDENTIFIER ::= { iso 99998 42 }
+
+ProblemOverflowEnum ::= INTEGER {
+    high(9223372036854775808),
+    low(-9223372036854775809),
+    valid(1)
+}
+
+ProblemOverflowBits ::= BITS {
+    high(9223372036854775809),
+    low(-9223372036854775810),
+    valid(2)
+}
+
+problemOverflowPlain OBJECT IDENTIFIER ::= {
+    problemIntegralOverflowRoot 4294967296
+}
+
+problemOverflowNamed OBJECT IDENTIFIER ::= {
+    problemIntegralOverflowRoot namedArc(4294967297)
+}
+
+problemOverflowQualified OBJECT IDENTIFIER ::= {
+    PROBLEM-INTEGRAL-OVERFLOW-MIB.problemIntegralOverflowRoot(4294967298)
+}
+
+problemOverflowPositiveDefault OBJECT-TYPE
+    SYNTAX      INTEGER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Positive integral overflow in DEFVAL."
+    DEFVAL      { 18446744073709551616 }
+    ::= { problemIntegralOverflowRoot 1 }
+
+problemValidUnsignedDefault OBJECT-TYPE
+    SYNTAX      Counter64
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Largest valid unsigned DEFVAL."
+    DEFVAL      { 18446744073709551615 }
+    ::= { problemIntegralOverflowRoot 4 }
+
+problemOverflowNegativeDefault OBJECT-TYPE
+    SYNTAX      INTEGER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Negative integral overflow in DEFVAL."
+    DEFVAL      { -9223372036854775811 }
+    ::= { problemIntegralOverflowRoot 2 }
+
+problemOverflowOidDefault OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Every numbered OID component form in DEFVAL."
+    DEFVAL      { {
+        first(4294967299)
+        4294967300
+        PROBLEM-INTEGRAL-OVERFLOW-MIB.problemIntegralOverflowRoot(4294967301)
+        later(4294967302)
+    } }
+    ::= { problemIntegralOverflowRoot 3 }
+
+problemOverflowNumericFirstOidDefault OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "Numeric-first OID DEFVAL overflow."
+    DEFVAL      { { 4294967304 later(4294967305) } }
+    ::= { problemIntegralOverflowRoot 5 }
+
+problemOverflowTrap TRAP-TYPE
+    ENTERPRISE  problemIntegralOverflowRoot
+    DESCRIPTION "Overflowing generic trap number."
+    ::= 4294967303
+
+problemAfterOverflow OBJECT IDENTIFIER ::= { problemIntegralOverflowRoot 7 }
+
+END

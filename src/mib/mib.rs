@@ -6,9 +6,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::mib::{Oid, ParseOidError};
-use crate::types::{BaseType, Diagnostic, Kind, Severity};
+use crate::source::{SourceDocument, SourceId, SourceSet};
+use crate::types::{BaseType, Diagnostic, DiagnosticReport, Kind, ResolverStrictness, Severity};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -36,6 +38,7 @@ use super::types::*;
 /// see [`Mib::raw`].
 pub struct Mib {
     pub(crate) tree: OidTree,
+    pub(crate) sources: Arc<SourceSet>,
 
     // Entity arenas
     pub(crate) objects: Vec<ObjectData>,
@@ -59,12 +62,14 @@ pub struct Mib {
     pub(crate) node_count: usize,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) unresolved: Vec<UnresolvedRef>,
+    pub(crate) resolver_strictness: ResolverStrictness,
 }
 
 impl Mib {
     pub(crate) fn new() -> Self {
         Self {
             tree: OidTree::new(),
+            sources: Arc::new(SourceSet::new()),
             objects: Vec::new(),
             types: Vec::new(),
             notifications: Vec::new(),
@@ -83,6 +88,7 @@ impl Mib {
             node_count: 0,
             diagnostics: Vec::new(),
             unresolved: Vec::new(),
+            resolver_strictness: ResolverStrictness::Normal,
         }
     }
 
@@ -92,12 +98,34 @@ impl Mib {
         &self.tree
     }
 
+    pub(crate) fn with_sources(
+        sources: SourceSet,
+        resolver_strictness: ResolverStrictness,
+    ) -> Self {
+        Self {
+            sources: Arc::new(sources),
+            resolver_strictness,
+            ..Self::new()
+        }
+    }
+
+    /// Return the strictness used to resolve this MIB.
+    #[must_use]
+    pub fn resolver_strictness(&self) -> ResolverStrictness {
+        self.resolver_strictness
+    }
+
     /// Return a low-level view of this MIB.
     ///
     /// Exposes arena-backed ids and data structures. Most callers should
     /// prefer the high-level borrowed handles instead.
     pub fn raw(&self) -> RawMib<'_> {
         RawMib::new(self)
+    }
+
+    /// Look up a retained source document by its compilation-local identity.
+    pub fn source(&self, id: SourceId) -> Option<&SourceDocument> {
+        self.sources.get(id)
     }
 
     pub(crate) fn node_data(&self, id: NodeId) -> &NodeData {
@@ -592,7 +620,7 @@ impl Mib {
 
     /// Iterate all resolved modules as [`Module`] handles.
     ///
-    /// This includes the seven synthetic base modules (SNMPv2-SMI, etc.)
+    /// This includes the seven SMI foundation modules (SNMPv2-SMI, etc.)
     /// which are always present. Use [`Module::is_base`] to filter them out
     /// when you only want user-supplied modules.
     pub fn modules(&self) -> HandleIter<'_, Module<'_>, impl Iterator<Item = ModuleId>> {
@@ -604,7 +632,7 @@ impl Mib {
 
     /// Iterate user-supplied (non-base) modules as [`Module`] handles.
     ///
-    /// Excludes the seven synthetic base modules. Equivalent to
+    /// Excludes the seven SMI foundation modules. Equivalent to
     /// `self.modules().filter(|m| !m.is_base())` but more convenient.
     pub fn user_modules(&self) -> impl Iterator<Item = Module<'_>> + '_ {
         self.modules
@@ -746,7 +774,7 @@ impl Mib {
 
     /// Return all non-base modules that define a symbol with the given name.
     ///
-    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
+    /// SMI foundation modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_defining(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -758,7 +786,7 @@ impl Mib {
 
     /// Return all non-base modules that import a symbol with the given name.
     ///
-    /// Synthetic base modules (SNMPv2-SMI, etc.) are excluded from the results.
+    /// SMI foundation modules (SNMPv2-SMI, etc.) are excluded from the results.
     pub fn modules_importing(&self, name: &str) -> Vec<ModuleId> {
         self.modules
             .iter()
@@ -1046,6 +1074,18 @@ impl Mib {
         &self.diagnostics
     }
 
+    /// Build a source-owning report for all retained diagnostics.
+    ///
+    /// Source documents are shared with the MIB, so the report remains valid
+    /// after the MIB is dropped without copying source bytes.
+    pub fn diagnostic_report(&self) -> DiagnosticReport {
+        DiagnosticReport::new(self.diagnostics.clone(), Arc::clone(&self.sources))
+    }
+
+    pub(crate) fn into_diagnostic_report(self) -> DiagnosticReport {
+        DiagnosticReport::new(self.diagnostics, self.sources)
+    }
+
     /// Return all unresolved symbol references collected during resolution.
     pub fn unresolved(&self) -> &[UnresolvedRef] {
         &self.unresolved
@@ -1170,6 +1210,7 @@ impl fmt::Debug for Mib {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Mib")
             .field("modules", &self.modules.len())
+            .field("sources", &self.sources.len())
             .field("objects", &self.objects.len())
             .field("types", &self.types.len())
             .field("notifications", &self.notifications.len())
@@ -1221,25 +1262,18 @@ impl<'a> OidLookup<'a> {
         &self.suffix
     }
 
-    /// Decode the instance suffix into typed index values.
+    /// Decode the instance suffix with a previously compiled owned schema.
     ///
-    /// Uses the matched node's row INDEX clause to interpret the suffix
-    /// arcs per RFC 2578 section 7.7. Returns an empty Vec if the node
-    /// has no associated object, is not part of a table, or the row has
-    /// no index definitions.
-    ///
-    /// See [`index::decode_suffix`](super::index::decode_suffix) for
-    /// the standalone function and encoding details.
-    #[must_use]
-    pub fn decode_indexes(&self) -> Vec<super::index::DecodedIndex> {
-        let Some(obj) = self.node.object() else {
-            return Vec::new();
-        };
-        let mut indexes = obj.effective_indexes().peekable();
-        if indexes.peek().is_none() {
-            return Vec::new();
-        }
-        super::index::decode_suffix(indexes, &self.suffix)
+    /// Runtime plans should compile the schema from the matched row or column
+    /// while the MIB is alive. Passing it explicitly keeps this convenience
+    /// method from recompiling metadata and makes schema ownership visible.
+    pub fn decode_indexes_exact<'schema>(
+        &self,
+        schema: &'schema super::index::IndexSchema,
+        options: super::index::DecodeOptions,
+    ) -> Result<super::index::DecodedRowIndex<'schema, '_>, super::index::IndexDecodeError<'_>>
+    {
+        schema.decode_exact(&self.suffix, options)
     }
 }
 
@@ -1288,10 +1322,43 @@ impl Oid {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::mib::module::ModuleData;
     use crate::mib::object::ObjectData;
     use crate::mib::typedef::TypeData;
+    use crate::source::SourceOrigin;
+
+    fn test_range(mib: &mut Mib) -> crate::source::SourceRange {
+        let sources = Arc::get_mut(&mut mib.sources).expect("test MIB uniquely owns its sources");
+        let id = sources
+            .insert(
+                SourceOrigin::memory("mib-test"),
+                "mib-test",
+                Arc::from(&b"test"[..]),
+            )
+            .unwrap();
+        sources.get(id).unwrap().range(0..4).unwrap()
+    }
+
+    #[test]
+    fn diagnostic_report_outlives_the_mib_and_shares_its_source() {
+        let mut mib = Mib::new();
+        let range = test_range(&mut mib);
+        mib.add_diagnostic(Diagnostic {
+            severity: Severity::Error,
+            code: crate::DiagCode::ParseError,
+            message: "test".to_string(),
+            module: Some("TEST-MIB".to_string()),
+            range: Some(range),
+        });
+        let report = mib.diagnostic_report();
+        assert!(Arc::ptr_eq(&mib.sources, report.shared_sources()));
+        drop(mib);
+
+        assert_eq!(report.get(0).unwrap().slice().unwrap(), Some(&b"test"[..]));
+    }
 
     fn make_mib_with_two_modules() -> Mib {
         let mut mib = Mib::new();
@@ -1345,6 +1412,7 @@ mod tests {
     #[test]
     fn available_symbols_with_imports() {
         let mut mib = Mib::new();
+        let range = test_range(&mut mib);
 
         // Source module with an object.
         let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
@@ -1362,7 +1430,7 @@ mod tests {
             module: "SOURCE-MIB".to_string(),
             symbols: vec![crate::mib::types::ImportSymbol {
                 name: "srcObj".to_string(),
-                span: crate::types::Span::SYNTHETIC,
+                range,
             }],
         });
         consumer
@@ -1379,6 +1447,7 @@ mod tests {
     #[test]
     fn available_symbols_dedup_own_over_import() {
         let mut mib = Mib::new();
+        let range = test_range(&mut mib);
 
         // Source module defines "shared".
         let mut source_mod = ModuleData::new("SOURCE-MIB".to_string());
@@ -1396,7 +1465,7 @@ mod tests {
             module: "SOURCE-MIB".to_string(),
             symbols: vec![crate::mib::types::ImportSymbol {
                 name: "shared".to_string(),
-                span: crate::types::Span::SYNTHETIC,
+                range,
             }],
         });
         consumer

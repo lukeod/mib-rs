@@ -4,7 +4,8 @@
 //! SMIv1 and SMIv2 forms are unified, and all string-valued clauses use
 //! `String` (empty for absent clauses) rather than `Option<QuotedString>`.
 
-use crate::types::{Access, AccessKeyword, BaseType, Span, Status};
+use crate::source::SourceRange;
+use crate::types::{Access, AccessKeyword, BaseType, Status};
 
 use super::oid::OidAssignment;
 use super::syntax::{DefVal, TypeSyntax};
@@ -54,19 +55,19 @@ impl Definition {
         }
     }
 
-    /// Returns the source span of this definition.
-    pub fn span(&self) -> Span {
+    /// Returns the source range of this definition.
+    pub fn range(&self) -> SourceRange {
         match self {
-            Definition::ObjectType(d) => d.span,
-            Definition::ModuleIdentity(d) => d.span,
-            Definition::ObjectIdentity(d) => d.span,
-            Definition::Notification(d) => d.span,
-            Definition::TypeDef(d) => d.span,
-            Definition::ValueAssignment(d) => d.span,
-            Definition::ObjectGroup(d) => d.span,
-            Definition::NotificationGroup(d) => d.span,
-            Definition::ModuleCompliance(d) => d.span,
-            Definition::AgentCapabilities(d) => d.span,
+            Definition::ObjectType(d) => d.range,
+            Definition::ModuleIdentity(d) => d.range,
+            Definition::ObjectIdentity(d) => d.range,
+            Definition::Notification(d) => d.range,
+            Definition::TypeDef(d) => d.range,
+            Definition::ValueAssignment(d) => d.range,
+            Definition::ObjectGroup(d) => d.range,
+            Definition::NotificationGroup(d) => d.range,
+            Definition::ModuleCompliance(d) => d.range,
+            Definition::AgentCapabilities(d) => d.range,
         }
     }
 
@@ -95,8 +96,8 @@ impl Definition {
 pub struct ObjectType {
     /// Object name (the identifier before `OBJECT-TYPE`).
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// The `SYNTAX` clause type expression.
     pub syntax: TypeSyntax,
     /// The `UNITS` clause value. Empty if not specified.
@@ -122,24 +123,24 @@ pub struct ObjectType {
     /// The OID value assignment (`::= { ... }`).
     pub oid: OidAssignment,
 
-    /// Source span of the `SYNTAX` clause.
-    pub syntax_span: Span,
-    /// Source span of the `ACCESS`/`MAX-ACCESS` clause.
-    pub access_span: Span,
-    /// Source span of the `STATUS` clause.
-    pub status_span: Span,
-    /// Source span of the `DESCRIPTION` clause.
-    pub description_span: Span,
-    /// Source span of the `UNITS` clause.
-    pub units_span: Span,
-    /// Source span of the `REFERENCE` clause.
-    pub reference_span: Span,
-    /// Source span of the `INDEX` clause.
-    pub index_span: Span,
-    /// Source span of the `AUGMENTS` clause.
-    pub augments_span: Span,
-    /// Source span of the `DEFVAL` clause.
-    pub defval_span: Span,
+    /// Source range of the `SYNTAX` clause, if present.
+    pub syntax_range: Option<SourceRange>,
+    /// Source range of the `ACCESS`/`MAX-ACCESS` clause, if present.
+    pub access_range: Option<SourceRange>,
+    /// Source range of the `STATUS` clause, if present.
+    pub status_range: Option<SourceRange>,
+    /// Source range of the `DESCRIPTION` clause, if present.
+    pub description_range: Option<SourceRange>,
+    /// Source range of the `UNITS` clause, if present.
+    pub units_range: Option<SourceRange>,
+    /// Source range of the `REFERENCE` clause, if present.
+    pub reference_range: Option<SourceRange>,
+    /// Source range of the `INDEX` clause, if present.
+    pub index_range: Option<SourceRange>,
+    /// Source range of the `AUGMENTS` clause, if present.
+    pub augments_range: Option<SourceRange>,
+    /// Source range of the `DEFVAL` clause, if present.
+    pub defval_range: Option<SourceRange>,
 }
 
 /// An entry in an `OBJECT-TYPE` `INDEX` clause.
@@ -149,8 +150,17 @@ pub struct IndexItem {
     pub implied: bool,
     /// Name of the index object.
     pub object: String,
-    /// Source span of this index entry.
-    pub span: Span,
+    /// Source range of this index entry.
+    pub range: SourceRange,
+}
+
+/// A named symbol reference with its source range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameRef {
+    /// Referenced symbol name.
+    pub name: String,
+    /// Source range of the identifier.
+    pub range: SourceRange,
 }
 
 /// `MODULE-IDENTITY` definition.
@@ -158,8 +168,8 @@ pub struct IndexItem {
 pub struct ModuleIdentity {
     /// Module identity name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// `LAST-UPDATED` date in ExtUTCTime format.
     pub last_updated: String,
     /// `ORGANIZATION` clause text.
@@ -181,8 +191,8 @@ pub struct Revision {
     pub date: String,
     /// Revision description text.
     pub description: String,
-    /// Source span of this revision clause.
-    pub span: Span,
+    /// Source range of this revision clause.
+    pub range: SourceRange,
 }
 
 /// `OBJECT-IDENTITY` definition.
@@ -190,8 +200,8 @@ pub struct Revision {
 pub struct ObjectIdentity {
     /// Object identity name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.
@@ -207,8 +217,8 @@ pub struct ObjectIdentity {
 pub struct Notification {
     /// Notification name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// `OBJECTS` (SMIv2) or `VARIABLES` (SMIv1) associated with this notification.
     pub objects: Vec<String>,
     /// `STATUS` clause value.
@@ -243,8 +253,8 @@ pub struct TrapInfo {
 pub struct TypeDef {
     /// Type name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// The type expression (`SYNTAX` clause for TCs, right-hand side for assignments).
     pub syntax: TypeSyntax,
     /// Overrides the base type derived from syntax. Some SMI base types
@@ -262,16 +272,16 @@ pub struct TypeDef {
     /// True if this was defined using the `TEXTUAL-CONVENTION` macro.
     pub is_textual_convention: bool,
 
-    /// Source span of the `SYNTAX` clause.
-    pub syntax_span: Span,
-    /// Source span of the `STATUS` clause.
-    pub status_span: Span,
-    /// Source span of the `DESCRIPTION` clause.
-    pub description_span: Span,
-    /// Source span of the `REFERENCE` clause.
-    pub reference_span: Span,
-    /// Source span of the `DISPLAY-HINT` clause.
-    pub display_hint_span: Span,
+    /// Source range of the `SYNTAX` clause.
+    pub syntax_range: SourceRange,
+    /// Source range of the `STATUS` clause, if present.
+    pub status_range: Option<SourceRange>,
+    /// Source range of the `DESCRIPTION` clause, if present.
+    pub description_range: Option<SourceRange>,
+    /// Source range of the `REFERENCE` clause, if present.
+    pub reference_range: Option<SourceRange>,
+    /// Source range of the `DISPLAY-HINT` clause, if present.
+    pub display_hint_range: Option<SourceRange>,
 }
 
 /// Plain OID value assignment (`name OBJECT IDENTIFIER ::= { ... }`).
@@ -279,15 +289,13 @@ pub struct TypeDef {
 pub struct ValueAssignment {
     /// Object name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// The OID value assignment.
     pub oid: OidAssignment,
-    /// Description text. Empty if not specified. Only populated for
-    /// synthetic base module definitions.
+    /// Description text. Empty if not supplied by programmatic IR.
     pub description: String,
-    /// Reference text. Empty if not specified. Only populated for
-    /// synthetic base module definitions.
+    /// Reference text. Empty if not supplied by programmatic IR.
     pub reference: String,
 }
 
@@ -296,10 +304,10 @@ pub struct ValueAssignment {
 pub struct ObjectGroup {
     /// Group name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
-    /// Names of objects in this group.
-    pub objects: Vec<String>,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
+    /// Object references in this group.
+    pub objects: Vec<NameRef>,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.
@@ -315,10 +323,10 @@ pub struct ObjectGroup {
 pub struct NotificationGroup {
     /// Group name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
-    /// Names of notifications in this group.
-    pub notifications: Vec<String>,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
+    /// Notification references in this group.
+    pub notifications: Vec<NameRef>,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.
@@ -334,8 +342,8 @@ pub struct NotificationGroup {
 pub struct ModuleCompliance {
     /// Compliance name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// `STATUS` clause value.
     pub status: Status,
     /// `DESCRIPTION` clause text.
@@ -359,8 +367,8 @@ pub struct ComplianceModule {
     pub groups: Vec<ComplianceGroup>,
     /// `OBJECT` refinement clauses.
     pub objects: Vec<ComplianceObject>,
-    /// Source span of this `MODULE` clause.
-    pub span: Span,
+    /// Source range of this `MODULE` clause.
+    pub range: SourceRange,
 }
 
 /// `GROUP` clause within [`ModuleCompliance`].
@@ -370,8 +378,8 @@ pub struct ComplianceGroup {
     pub group: String,
     /// `DESCRIPTION` clause text explaining the condition.
     pub description: String,
-    /// Source span of this `GROUP` clause.
-    pub span: Span,
+    /// Source range of this `GROUP` clause.
+    pub range: SourceRange,
 }
 
 /// `OBJECT` refinement within [`ModuleCompliance`].
@@ -387,8 +395,8 @@ pub struct ComplianceObject {
     pub min_access: Option<Access>,
     /// `DESCRIPTION` clause text.
     pub description: String,
-    /// Source span of this `OBJECT` clause.
-    pub span: Span,
+    /// Source range of this `OBJECT` clause.
+    pub range: SourceRange,
 }
 
 /// `AGENT-CAPABILITIES` definition.
@@ -396,8 +404,8 @@ pub struct ComplianceObject {
 pub struct AgentCapabilities {
     /// Agent capabilities name.
     pub name: String,
-    /// Source span of the entire definition.
-    pub span: Span,
+    /// Source range of the entire definition.
+    pub range: SourceRange,
     /// `PRODUCT-RELEASE` clause text.
     pub product_release: String,
     /// `STATUS` clause value.
@@ -417,12 +425,12 @@ pub struct AgentCapabilities {
 pub struct SupportsModule {
     /// Name of the supported module.
     pub module_name: String,
-    /// Names of included conformance groups.
-    pub includes: Vec<String>,
+    /// Included conformance group references.
+    pub includes: Vec<NameRef>,
     /// Object/notification variations.
     pub variations: Vec<Variation>,
-    /// Source span of this `SUPPORTS` clause.
-    pub span: Span,
+    /// Source range of this `SUPPORTS` clause.
+    pub range: SourceRange,
 }
 
 /// A `VARIATION` clause in [`AgentCapabilities`].
@@ -437,11 +445,11 @@ pub struct Variation {
     /// Restricted access level, if specified.
     pub access: Option<Access>,
     /// Objects required for row creation.
-    pub creation_requires: Vec<String>,
+    pub creation_requires: Vec<NameRef>,
     /// Default value override, if specified.
     pub defval: Option<DefVal>,
     /// `DESCRIPTION` clause text.
     pub description: String,
-    /// Source span of this `VARIATION` clause.
-    pub span: Span,
+    /// Source range of this `VARIATION` clause.
+    pub range: SourceRange,
 }

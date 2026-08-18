@@ -1,13 +1,17 @@
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::Parser;
 
+use mib_rs::LoadError;
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::Mib;
-use mib_rs::source::dir;
+use mib_rs::source::{SourceRange, dir};
 use mib_rs::types::{
-    DiagnosticConfig, Kind, ReportingLevel, ResolverStrictness, Severity, Span,
+    DiagnosticConfig, DiagnosticEntry, Kind, ReportingLevel, ResolverStrictness, Severity,
     all_diagnostic_codes,
 };
 
@@ -17,6 +21,48 @@ enum CliReportingLevel {
     Quiet,
     Default,
     Verbose,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliResolverStrictness {
+    Strict,
+    Normal,
+    Permissive,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliResolutionDomain {
+    Type,
+    Oid,
+    Object,
+    GroupMember,
+    Index,
+    NotificationObject,
+    Conformance,
+}
+
+impl From<CliResolutionDomain> for mib_rs::types::ResolutionDomain {
+    fn from(domain: CliResolutionDomain) -> Self {
+        match domain {
+            CliResolutionDomain::Type => Self::Type,
+            CliResolutionDomain::Oid => Self::Oid,
+            CliResolutionDomain::Object => Self::Object,
+            CliResolutionDomain::GroupMember => Self::GroupMember,
+            CliResolutionDomain::Index => Self::Index,
+            CliResolutionDomain::NotificationObject => Self::NotificationObject,
+            CliResolutionDomain::Conformance => Self::Conformance,
+        }
+    }
+}
+
+impl From<CliResolverStrictness> for ResolverStrictness {
+    fn from(strictness: CliResolverStrictness) -> Self {
+        match strictness {
+            CliResolverStrictness::Strict => ResolverStrictness::Strict,
+            CliResolverStrictness::Normal => ResolverStrictness::Normal,
+            CliResolverStrictness::Permissive => ResolverStrictness::Permissive,
+        }
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -205,6 +251,20 @@ enum Command {
         #[arg(long, conflicts_with = "strict")]
         permissive: bool,
     },
+    /// Explain how one symbol resolves
+    Trace {
+        /// Symbol name or MODULE::symbol query
+        query: String,
+        /// Resolver reference domain to explain
+        #[arg(long, value_enum)]
+        domain: CliResolutionDomain,
+        /// Resolve an unqualified symbol from this module's scope
+        #[arg(short = 'm', long = "module", value_name = "MODULE")]
+        module: Option<String>,
+        /// Resolver strictness used for loading and fallback decisions
+        #[arg(long, value_enum, default_value = "normal")]
+        strictness: CliResolverStrictness,
+    },
     /// Export resolved MIB data as JSON
     Dump {
         /// Module names to load (omit to load all available modules)
@@ -227,6 +287,36 @@ enum Command {
         /// Strip description fields from output
         #[arg(long)]
         no_descriptions: bool,
+    },
+    /// Emit canonical SMIv2 text for resolved modules
+    #[command(
+        long_about = "Emit canonical SMIv2 text for resolved modules.\n\nWithout --output-dir, exactly one module must be selected and is written to stdout. Directory mode sorts modules by name, renders all output before touching files, then atomically replaces <MODULE>.mib files in that order. If a later filesystem operation fails, files completed earlier remain replaced."
+    )]
+    Normalize {
+        /// Module names to normalize (omit to select all available modules)
+        modules: Vec<String>,
+        /// Write atomically replaced <MODULE>.mib files to this directory.
+        /// If a later file fails, files completed earlier remain replaced.
+        #[arg(short = 'o', long = "output-dir", value_name = "DIR")]
+        output_dir: Option<PathBuf>,
+        /// Omit DESCRIPTION clauses
+        #[arg(long)]
+        no_descriptions: bool,
+        /// Omit conformance definitions
+        #[arg(long)]
+        no_conformance: bool,
+        /// Omit reconstructed SEQUENCE definitions
+        #[arg(long)]
+        no_sequences: bool,
+        /// Use strict resolver mode
+        #[arg(long, conflicts_with = "permissive")]
+        strict: bool,
+        /// Use permissive resolver mode
+        #[arg(long, conflicts_with = "strict")]
+        permissive: bool,
+        /// Reporting level
+        #[arg(long, default_value = "default")]
+        report: CliReportingLevel,
     },
 }
 
@@ -321,6 +411,18 @@ fn main() {
             strict,
             permissive,
         } => cmd_inspect(&cli.paths, &query, modules, strict, permissive),
+        Command::Trace {
+            query,
+            domain,
+            module,
+            strictness,
+        } => cmd_trace(
+            &cli.paths,
+            &query,
+            module.as_deref(),
+            domain.into(),
+            strictness.into(),
+        ),
         Command::Dump {
             modules,
             strict,
@@ -338,6 +440,26 @@ fn main() {
             oid,
             compact,
             no_descriptions,
+        ),
+        Command::Normalize {
+            modules,
+            output_dir,
+            no_descriptions,
+            no_conformance,
+            no_sequences,
+            strict,
+            permissive,
+            report,
+        } => cmd_normalize(
+            &cli.paths,
+            modules,
+            output_dir.as_deref(),
+            no_descriptions,
+            no_conformance,
+            no_sequences,
+            strict,
+            permissive,
+            report,
         ),
     };
 
@@ -379,11 +501,24 @@ fn load_mib(
 
     match load(opts) {
         Ok(mib) => Ok(mib),
+        Err(LoadError::DiagnosticThreshold { report }) => {
+            eprintln!("error: diagnostic threshold exceeded");
+            for entry in report.iter() {
+                eprintln!("  {}", render_diagnostic(entry));
+            }
+            Err(2)
+        }
         Err(e) => {
             eprintln!("error: {e}");
             Err(2)
         }
     }
+}
+
+fn render_diagnostic(entry: DiagnosticEntry<'_>) -> String {
+    entry
+        .render()
+        .unwrap_or_else(|error| format!("{} [location unavailable: {error}]", entry.diagnostic()))
 }
 
 fn resolve_strictness(
@@ -464,12 +599,12 @@ fn cmd_load(
     }
 
     // Diagnostics
-    let diags = mib.diagnostics();
-    if !diags.is_empty() {
+    let report = mib.diagnostic_report();
+    if !report.is_empty() {
         eprintln!();
         eprintln!("Diagnostics:");
-        for d in diags {
-            eprintln!("  {d}");
+        for entry in report.iter() {
+            eprintln!("  {}", render_diagnostic(entry));
         }
     }
 
@@ -501,7 +636,9 @@ fn cmd_load(
         }
     }
 
-    let has_violations = diags.iter().any(|d| d.severity <= Severity::Error);
+    let has_violations = report
+        .iter()
+        .any(|entry| entry.diagnostic().severity <= Severity::Error);
     if mib.has_errors() {
         2
     } else if has_violations {
@@ -1053,6 +1190,204 @@ fn non_empty(s: &str) -> Option<String> {
     }
 }
 
+// --- trace ---
+
+fn cmd_trace(
+    paths: &[String],
+    query: &str,
+    module_scope: Option<&str>,
+    domain: mib_rs::types::ResolutionDomain,
+    strictness: ResolverStrictness,
+) -> i32 {
+    let mib = match load_mib(paths, Vec::new(), strictness, DiagnosticConfig::silent()) {
+        Ok(mib) => mib,
+        Err(code) => return code,
+    };
+    let trace = match mib.trace_symbol(query, module_scope, domain) {
+        Ok(trace) => trace,
+        Err(mib_rs::mib::ResolutionTraceError::AmbiguousModuleScope { module, candidates }) => {
+            eprintln!("error: module scope {module:?} is ambiguous across loaded sources");
+            for candidate in candidates {
+                eprintln!("  {}", format_trace_scope(&candidate));
+            }
+            return 2;
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+
+    println!("Query: {}", trace.query);
+    println!("Symbol: {}", trace.symbol);
+    println!("Domain: {}", trace.domain);
+    println!("Strictness: {}", trace.strictness);
+    println!(
+        "Module scope: {}",
+        trace
+            .scope
+            .as_ref()
+            .map(format_trace_scope)
+            .unwrap_or_else(|| "(unscoped)".to_owned())
+    );
+    println!("Fallbacks:");
+    println!(
+        "  intrinsic: {}",
+        if trace.fallbacks.intrinsic {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  constrained: {}",
+        if trace.fallbacks.constrained {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  global: {}",
+        if trace.fallbacks.global {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+
+    println!("Candidates:");
+    if trace.candidates.is_empty() {
+        println!("  (none)");
+    } else {
+        for candidate in &trace.candidates {
+            let oid = candidate
+                .oid
+                .as_ref()
+                .map(|oid| format!(", oid {oid}"))
+                .unwrap_or_default();
+            let revision = if candidate.last_updated.is_empty() {
+                String::new()
+            } else {
+                format!(", revision {}", candidate.last_updated)
+            };
+            let source = candidate
+                .source_label
+                .as_ref()
+                .map(|source| format!(", source {source}"))
+                .unwrap_or_default();
+            let applicability = if candidate.applicable {
+                "applicable"
+            } else {
+                "other domain"
+            };
+            println!(
+                "  {}::{} ({kind}{oid}{revision}{source}, {applicability})",
+                candidate.module_name,
+                trace.symbol,
+                kind = candidate.kind
+            );
+        }
+    }
+
+    println!("Import resolution:");
+    if let Some(import) = &trace.import {
+        println!("  declared module: {}", import.declared_module);
+        println!("  mode: {}", import.mode);
+        println!("  selected path:");
+        if import.selected_path.is_empty() {
+            println!("    (none)");
+        } else {
+            println!(
+                "    {}",
+                format_trace_module_path(&mib, &import.selected_path)
+            );
+        }
+        println!("  attempts:");
+        for attempt in &import.attempts {
+            let mut path = format_trace_module_path(&mib, &attempt.path);
+            if let Some(missing) = &attempt.missing_module {
+                if !path.is_empty() {
+                    path.push_str(" -> ");
+                }
+                path.push_str(missing);
+            }
+            if path.is_empty() {
+                path.push_str("(none)");
+            }
+            let selected = if attempt.selected { ", selected" } else { "" };
+            println!(
+                "    [{}] {path}: {}{selected}",
+                attempt.stage, attempt.outcome
+            );
+        }
+    } else {
+        println!("  (none)");
+    }
+
+    println!("Resolved target:");
+    if let Some(target) = &trace.target {
+        println!(
+            "  {}::{} ({}, via {})",
+            target.candidate.module_name, trace.symbol, target.candidate.kind, target.strategy
+        );
+    } else {
+        match trace.outcome {
+            mib_rs::mib::ResolutionOutcome::Ambiguous => println!("  (ambiguous)"),
+            mib_rs::mib::ResolutionOutcome::Missing => println!("  (not found)"),
+            mib_rs::mib::ResolutionOutcome::Resolved => unreachable!(),
+        }
+    }
+
+    println!("Related unresolved references:");
+    if trace.unresolved.is_empty() {
+        println!("  (none)");
+    } else {
+        for unresolved in &trace.unresolved {
+            println!(
+                "  [{}] {} in {}: {}",
+                unresolved.kind, unresolved.symbol, unresolved.module, unresolved.reason
+            );
+        }
+    }
+
+    match trace.outcome {
+        mib_rs::mib::ResolutionOutcome::Resolved => 0,
+        mib_rs::mib::ResolutionOutcome::Ambiguous | mib_rs::mib::ResolutionOutcome::Missing => 1,
+    }
+}
+
+fn format_trace_scope(scope: &mib_rs::mib::ResolutionScope) -> String {
+    let source = scope.source_label.as_deref().unwrap_or("<no source>");
+    if scope.last_updated.is_empty() {
+        format!("{} [source {source}]", scope.module_name)
+    } else {
+        format!(
+            "{} [source {source}, revision {}]",
+            scope.module_name, scope.last_updated
+        )
+    }
+}
+
+fn format_trace_module_path(mib: &Mib, path: &[mib_rs::mib::ModuleId]) -> String {
+    path.iter()
+        .map(|module| {
+            let module = mib.module_by_id(*module);
+            let source = module.source_label().unwrap_or("<no source>");
+            if module.last_updated().is_empty() {
+                format!("{} [source {source}]", module.name())
+            } else {
+                format!(
+                    "{} [source {source}, revision {}]",
+                    module.name(),
+                    module.last_updated()
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
+
 // --- inspect ---
 
 fn cmd_inspect(
@@ -1223,10 +1558,12 @@ fn inspect_object(mib: &Mib, obj: mib_rs::mib::Object<'_>) {
     print_provenance(obj.name(), obj.module(), obj.ty());
 
     // Group membership.
-    print_group_membership(mib, obj.node());
+    if let Some(node) = obj.node() {
+        print_group_membership(mib, node);
+    }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, obj.module(), obj.span());
+    print_scoped_diagnostics(mib, obj.module(), obj.range());
     print_related_unresolved(mib, obj.name());
 
     // Description / Reference.
@@ -1249,7 +1586,11 @@ fn inspect_notification(mib: &Mib, notif: mib_rs::mib::Notification<'_>) {
                 .module()
                 .map(|m| format!("{}::", m.name()))
                 .unwrap_or_default();
-            println!("  {mod_prefix}{}  {}", obj.name(), obj.node().oid());
+            let oid = obj
+                .node()
+                .map(|node| node.oid().to_string())
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            println!("  {mod_prefix}{}  {oid}", obj.name());
         }
     }
 
@@ -1259,7 +1600,7 @@ fn inspect_notification(mib: &Mib, notif: mib_rs::mib::Notification<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, notif.module(), notif.span());
+    print_scoped_diagnostics(mib, notif.module(), notif.range());
     print_related_unresolved(mib, notif.name());
 
     print_description_reference(notif.description(), notif.reference());
@@ -1289,7 +1630,7 @@ fn inspect_group(mib: &Mib, g: mib_rs::mib::Group<'_>) {
     print_compliance_references(mib, g.name());
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, g.module(), g.span());
+    print_scoped_diagnostics(mib, g.module(), g.range());
     print_related_unresolved(mib, g.name());
 
     print_description_reference(g.description(), g.reference());
@@ -1326,7 +1667,7 @@ fn inspect_compliance(mib: &Mib, c: mib_rs::mib::Compliance<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, c.module(), c.span());
+    print_scoped_diagnostics(mib, c.module(), c.range());
     print_related_unresolved(mib, c.name());
 
     print_description_reference(c.description(), c.reference());
@@ -1365,7 +1706,7 @@ fn inspect_capability(mib: &Mib, cap: mib_rs::mib::Capability<'_>) {
     }
 
     // Diagnostics.
-    print_scoped_diagnostics(mib, cap.module(), cap.span());
+    print_scoped_diagnostics(mib, cap.module(), cap.range());
     print_related_unresolved(mib, cap.name());
 
     print_description_reference(cap.description(), cap.reference());
@@ -1379,7 +1720,7 @@ fn inspect_bare_node(mib: &Mib, node: mib_rs::mib::Node<'_>) {
         println!("Macro:   OBJECT-IDENTITY");
     }
 
-    print_scoped_diagnostics(mib, node.module(), node.span());
+    print_scoped_diagnostics(mib, node.module(), node.range());
     print_related_unresolved(mib, node.name());
 
     print_description_reference(node.description(), node.reference());
@@ -1402,7 +1743,7 @@ fn inspect_standalone_type(mib: &Mib, ty: mib_rs::mib::Type<'_>) {
 
     print_type_chain(ty);
 
-    print_scoped_diagnostics(mib, ty.module(), ty.span());
+    print_scoped_diagnostics(mib, ty.module(), ty.range());
     print_related_unresolved(mib, ty.name());
 
     print_description_reference(ty.description(), ty.reference());
@@ -1610,35 +1951,53 @@ fn print_compliance_references(mib: &Mib, group_name: &str) {
     }
 }
 
-fn print_scoped_diagnostics(mib: &Mib, module: Option<mib_rs::mib::Module<'_>>, span: Span) {
+fn print_scoped_diagnostics(
+    mib: &Mib,
+    module: Option<mib_rs::mib::Module<'_>>,
+    range: Option<SourceRange>,
+) {
     let module = match module {
         Some(m) => m,
         None => return,
     };
-    if span == Span::ZERO || span == Span::SYNTHETIC {
+    let Some(range) = range else {
+        return;
+    };
+    if module.source_id() != Some(range.source()) {
         return;
     }
-
-    let (start_line, _) = module.line_col(span.start);
-    let (end_line, _) = module.line_col(span.end);
-    if start_line == 0 {
+    let report = mib.diagnostic_report();
+    let Some(source) = module.source() else {
+        return;
+    };
+    if source.slice(range).is_err() {
         return;
     }
 
     let module_name = module.name();
-    let scoped: Vec<_> = mib
-        .diagnostics()
+    let scoped: Vec<_> = report
         .iter()
-        .filter(|d| {
-            d.module.as_deref() == Some(module_name)
-                && d.line.is_some_and(|l| l >= start_line && l <= end_line)
+        .filter(|entry| {
+            let d = entry.diagnostic();
+            if d.module.as_deref() != Some(module_name) {
+                return false;
+            }
+            match entry.range() {
+                Ok(Some((_, diagnostic_range))) => {
+                    diagnostic_range.source() == range.source()
+                        && diagnostic_range.start() >= range.start()
+                        && diagnostic_range.start() <= range.end()
+                }
+                Ok(None) => false,
+                Err(_) => true,
+            }
         })
         .collect();
 
     if !scoped.is_empty() {
         println!("\nDiagnostics:");
-        for d in &scoped {
-            println!("  [{}] {}: {}", d.severity, d.code, d.message);
+        for entry in scoped {
+            println!("  {}", render_diagnostic(entry));
         }
     }
 }
@@ -1798,8 +2157,18 @@ struct LintDiagnostic {
     code: String,
     message: String,
     module: String,
-    line: usize,
-    column: usize,
+    location: Option<LintLocation>,
+    location_error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LintLocation {
+    source: String,
+    start_line: u64,
+    start_column: u64,
+    end_line: u64,
+    end_column: u64,
 }
 
 struct LintSummary {
@@ -1844,7 +2213,7 @@ fn cmd_lint(
     };
 
     let mod_count = mib.user_modules().count();
-    let diags = mib.diagnostics();
+    let report = mib.diagnostic_report();
 
     // Filter diagnostics
     let level_sev = Severity::from(level);
@@ -1861,7 +2230,8 @@ fn cmd_lint(
         exit_code: 0,
     };
 
-    for d in diags {
+    for entry in report.iter() {
+        let d = entry.diagnostic();
         // Filter by level
         if d.severity > level_sev {
             continue;
@@ -1897,14 +2267,15 @@ fn cmd_lint(
             result.exit_code = 1;
         }
 
+        let (location, location_error) = lint_location(entry);
         result.diagnostics.push(LintDiagnostic {
             severity: sev_str,
             severity_num: d.severity as u8,
             code: code_str.to_string(),
             message: d.message.clone(),
             module: d.module.clone().unwrap_or_default(),
-            line: d.line.unwrap_or(0),
-            column: d.column.unwrap_or(0),
+            location,
+            location_error,
         });
     }
 
@@ -1920,6 +2291,31 @@ fn cmd_lint(
     }
 
     result.exit_code
+}
+
+fn lint_location(entry: DiagnosticEntry<'_>) -> (Option<LintLocation>, Option<String>) {
+    let source = match entry.range() {
+        Ok(Some((source, _))) => source,
+        Ok(None) => return (None, None),
+        Err(error) => return (None, Some(error.to_string())),
+    };
+    match entry.byte_positions() {
+        Ok(Some((start, end))) => (
+            Some(LintLocation {
+                source: source.label().to_string(),
+                start_line: u64::from(start.line()) + 1,
+                start_column: u64::from(start.column()) + 1,
+                end_line: u64::from(end.line()) + 1,
+                end_column: u64::from(end.column()) + 1,
+            }),
+            None,
+        ),
+        Ok(None) => (
+            None,
+            Some("source range unexpectedly produced no positions".to_string()),
+        ),
+        Err(error) => (None, Some(error.to_string())),
+    }
 }
 
 const SEVERITY_ORDER: &[&str] = &[
@@ -2004,18 +2400,25 @@ fn print_lint_text(result: &LintResult, group_by: Option<GroupBy>, summary_only:
 }
 
 fn format_lint_location(d: &LintDiagnostic) -> String {
-    if d.module.is_empty() {
-        return String::new();
+    if let Some(location) = &d.location {
+        return format!(
+            "{}:{}:{}-{}:{}",
+            location.source,
+            location.start_line,
+            location.start_column,
+            location.end_line,
+            location.end_column
+        );
     }
-    if d.line > 0 {
-        if d.column > 0 {
-            format!("{}:{}:{}", d.module, d.line, d.column)
+    if let Some(error) = &d.location_error {
+        let prefix = if d.module.is_empty() {
+            String::new()
         } else {
-            format!("{}:{}", d.module, d.line)
-        }
-    } else {
-        d.module.clone()
+            format!("{} ", d.module)
+        };
+        return format!("{prefix}[location unavailable: {error}]");
     }
+    d.module.clone()
 }
 
 fn print_lint_summary(result: &LintResult) {
@@ -2059,15 +2462,7 @@ fn print_lint_compact(result: &LintResult, summary_only: bool) {
     }
 
     for d in &result.diagnostics {
-        let loc = if d.module.is_empty() {
-            String::new()
-        } else if d.line > 0 && d.column > 0 {
-            format!("{}:{}:{}", d.module, d.line, d.column)
-        } else if d.line > 0 {
-            format!("{}:{}", d.module, d.line)
-        } else {
-            d.module.clone()
-        };
+        let loc = format_lint_location(d);
         println!("{loc}: {} [{}] {}", d.severity, d.code, d.message);
     }
 }
@@ -2087,10 +2482,10 @@ fn print_lint_json(result: &LintResult) {
         message: String,
         #[serde(skip_serializing_if = "String::is_empty")]
         module: String,
-        #[serde(skip_serializing_if = "is_zero")]
-        line: usize,
-        #[serde(skip_serializing_if = "is_zero")]
-        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location: Option<LintLocation>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location_error: Option<String>,
         rule_id: String,
     }
 
@@ -2112,8 +2507,14 @@ fn print_lint_json(result: &LintResult) {
                 code: d.code.clone(),
                 message: d.message.clone(),
                 module: d.module.clone(),
-                line: d.line,
-                column: d.column,
+                location: d.location.as_ref().map(|location| LintLocation {
+                    source: location.source.clone(),
+                    start_line: location.start_line,
+                    start_column: location.start_column,
+                    end_line: location.end_line,
+                    end_column: location.end_column,
+                }),
+                location_error: d.location_error.clone(),
                 rule_id: d.code.clone(),
             })
             .collect(),
@@ -2126,10 +2527,6 @@ fn print_lint_json(result: &LintResult) {
     };
 
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
-}
-
-fn is_zero(v: &usize) -> bool {
-    *v == 0
 }
 
 fn print_lint_sarif(result: &LintResult) {
@@ -2211,9 +2608,10 @@ fn print_lint_sarif(result: &LintResult) {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct SarifRegion {
-        start_line: usize,
-        #[serde(skip_serializing_if = "is_zero")]
-        start_column: usize,
+        start_line: u64,
+        start_column: u64,
+        end_line: u64,
+        end_column: u64,
     }
 
     fn severity_to_sarif(sev: &str) -> &str {
@@ -2246,31 +2644,32 @@ fn print_lint_sarif(result: &LintResult) {
         .diagnostics
         .iter()
         .map(|d| {
-            let locations = if !d.module.is_empty() {
+            let locations = if let Some(location) = &d.location {
                 vec![SarifLocation {
                     physical_location: SarifPhysicalLocation {
                         artifact_location: SarifArtifactLocation {
-                            uri: d.module.clone(),
+                            uri: location.source.clone(),
                         },
-                        region: if d.line > 0 {
-                            Some(SarifRegion {
-                                start_line: d.line,
-                                start_column: d.column,
-                            })
-                        } else {
-                            None
-                        },
+                        region: Some(SarifRegion {
+                            start_line: location.start_line,
+                            start_column: location.start_column,
+                            end_line: location.end_line,
+                            end_column: location.end_column,
+                        }),
                     },
                 }]
             } else {
                 Vec::new()
             };
+            let message = if let Some(error) = &d.location_error {
+                format!("{} [location unavailable: {error}]", d.message)
+            } else {
+                d.message.clone()
+            };
             SarifResult {
                 rule_id: d.code.clone(),
                 level: severity_to_sarif(&d.severity).to_string(),
-                message: SarifMessage {
-                    text: d.message.clone(),
-                },
+                message: SarifMessage { text: message },
                 locations,
             }
         })
@@ -2346,7 +2745,9 @@ fn cmd_find(
         if !glob_match(pattern, obj.name()) {
             continue;
         }
-        let node = obj.node();
+        let Some(node) = obj.node() else {
+            continue;
+        };
         let node_id = node.id();
         if !seen.insert(node_id) {
             continue;
@@ -2534,6 +2935,211 @@ fn match_base_type_obj(obj: &mib_rs::mib::Object<'_>, base_lower: &str) -> bool 
     }
 }
 
+// --- normalize ---
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_normalize(
+    paths: &[String],
+    mut modules: Vec<String>,
+    output_dir: Option<&Path>,
+    no_descriptions: bool,
+    no_conformance: bool,
+    no_sequences: bool,
+    strict: bool,
+    permissive: bool,
+    report: CliReportingLevel,
+) -> i32 {
+    modules.sort();
+    modules.dedup();
+    if output_dir.is_none() && modules.len() > 1 {
+        eprintln!(
+            "error: stdout normalization requires exactly one module; use --output-dir for multiple modules"
+        );
+        return 2;
+    }
+
+    let requested = modules.clone();
+    let strictness = resolve_strictness(strict, permissive, ResolverStrictness::Normal);
+    let mib = match load_mib(
+        paths,
+        modules,
+        strictness,
+        DiagnosticConfig::for_reporting(report.into()),
+    ) {
+        Ok(mib) => mib,
+        Err(code) => return code,
+    };
+
+    for entry in mib.diagnostic_report().iter() {
+        eprintln!("{}", render_diagnostic(entry));
+    }
+
+    for name in &requested {
+        if mib.module(name).is_none() {
+            eprintln!("error: module not found after loading: {name}");
+            return 2;
+        }
+    }
+
+    let mut selected = if requested.is_empty() {
+        mib.user_modules()
+            .map(|module| module.name().to_owned())
+            .collect::<Vec<_>>()
+    } else {
+        requested
+            .iter()
+            .filter_map(|name| mib.module(name).map(|module| module.name().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    selected.sort();
+    selected.dedup();
+
+    if selected.is_empty() {
+        eprintln!("error: no modules selected for normalization");
+        return 2;
+    }
+    if output_dir.is_none() && selected.len() != 1 {
+        eprintln!(
+            "error: stdout normalization selected {} modules; specify one module or use --output-dir",
+            selected.len()
+        );
+        return 2;
+    }
+
+    let options = mib_rs::writer::Options::default()
+        .with_descriptions(!no_descriptions)
+        .with_conformance(!no_conformance)
+        .with_reconstructed_sequences(!no_sequences);
+    let mut rendered = Vec::with_capacity(selected.len());
+    for name in selected {
+        let mut bytes = Vec::new();
+        if let Err(error) = mib_rs::writer::write_with_options(&mut bytes, &mib, &name, options) {
+            eprintln!("error: failed to normalize {name}: {error}");
+            return 2;
+        }
+        rendered.push((name, bytes));
+    }
+
+    let output_status = match output_dir {
+        Some(directory) => write_normalized_directory(directory, &rendered),
+        None => {
+            let (_, bytes) = &rendered[0];
+            let stdout = io::stdout();
+            let mut destination = stdout.lock();
+            if let Err(error) = destination
+                .write_all(bytes)
+                .and_then(|()| destination.flush())
+            {
+                eprintln!("error: failed to write normalized module to stdout: {error}");
+                2
+            } else {
+                0
+            }
+        }
+    };
+
+    if output_status == 0 && mib.has_errors() {
+        1
+    } else {
+        output_status
+    }
+}
+
+fn write_normalized_directory(directory: &Path, rendered: &[(String, Vec<u8>)]) -> i32 {
+    let mut targets = Vec::with_capacity(rendered.len());
+    let mut collision_keys = HashMap::new();
+    for (name, bytes) in rendered {
+        let filename = match normalized_filename(name) {
+            Ok(filename) => filename,
+            Err(error) => {
+                eprintln!("error: cannot derive output filename for module {name:?}: {error}");
+                return 2;
+            }
+        };
+        let collision_key = filename.to_ascii_lowercase();
+        if let Some(previous) = collision_keys.insert(collision_key, name) {
+            eprintln!(
+                "error: module names {previous:?} and {name:?} map to colliding output filenames"
+            );
+            return 2;
+        }
+        targets.push((name, bytes, directory.join(filename)));
+    }
+
+    if let Err(error) = fs::create_dir_all(directory) {
+        eprintln!(
+            "error: failed to create output directory {}: {error}",
+            directory.display()
+        );
+        return 2;
+    }
+
+    for (name, bytes, target) in targets {
+        if let Err(error) = atomic_replace(&target, bytes) {
+            eprintln!(
+                "error: failed to write normalized module {name} to {}: {error}",
+                target.display()
+            );
+            return 2;
+        }
+    }
+    0
+}
+
+fn normalized_filename(module_name: &str) -> Result<String, &'static str> {
+    if module_name.is_empty() {
+        return Err("module name is empty");
+    }
+    if matches!(module_name, "." | "..")
+        || module_name
+            .bytes()
+            .any(|byte| matches!(byte, b'/' | b'\\' | 0))
+    {
+        return Err("module name contains a path component");
+    }
+    Ok(format!("{module_name}.mib"))
+}
+
+fn atomic_replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "output path has no parent"))?;
+    let filename = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid output filename"))?;
+
+    let mut attempt = 0_u32;
+    let (temporary, mut file) = loop {
+        let temporary = parent.join(format!(".{filename}.tmp-{}-{attempt}", process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                attempt = attempt.checked_add(1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::AlreadyExists, "temporary filename exhausted")
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+
+    let write_result = file.write_all(contents).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary, target) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum CliKind {
     Node,
@@ -2593,8 +3199,9 @@ fn cmd_dump(
         Err(code) => return code,
     };
 
-    for d in mib.diagnostics() {
-        eprintln!("{d}");
+    let report = mib.diagnostic_report();
+    for entry in report.iter() {
+        eprintln!("{}", render_diagnostic(entry));
     }
 
     let mut payload = mib_rs::export::export_payload(&mib, strictness);

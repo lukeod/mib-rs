@@ -7,10 +7,9 @@
 use std::borrow::Cow;
 
 use crate::ast::*;
-use crate::lexer::{Lexer, Token, TokenKind};
-use crate::types::{
-    Access, AccessKeyword, ByteOffset, DiagCode, DiagnosticConfig, Span, SpanDiagnostic, Status,
-};
+use crate::lexer::{Lexer, SyntaxKind, Token};
+use crate::source::{ByteOffset, SourceDocument, SourceRange};
+use crate::types::{Access, AccessKeyword, DiagCode, Diagnostic, DiagnosticConfig, Status};
 use tracing::{debug, debug_span, info_span, trace};
 
 type TcBody = (
@@ -21,6 +20,10 @@ type TcBody = (
     SyntaxClause,
 );
 
+fn cover(first: SourceRange, last: SourceRange) -> SourceRange {
+    SourceRange::cover(first, last).expect("parser ranges belong to one source document")
+}
+
 /// Recursive descent parser for SMI MIB modules.
 ///
 /// Consumes tokens from a lexer and produces [`Module`] AST nodes
@@ -30,12 +33,12 @@ type TcBody = (
 /// Uses a 3-token lookahead buffer and recovers from parse errors by
 /// scanning forward to the next definition boundary.
 pub struct Parser<'src, 'cfg> {
-    source: &'src [u8],
+    document: &'src SourceDocument,
     lexer: Lexer<'src, 'cfg>,
     buf: [Token; 3],
-    last_end: ByteOffset,
+    last_span: SourceRange,
     lexer_diagnostic_cursor: usize,
-    diagnostics: Vec<SpanDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
     diag_config: &'cfg DiagnosticConfig,
     eof_token: Token,
 }
@@ -43,21 +46,23 @@ pub struct Parser<'src, 'cfg> {
 fn next_non_comment(lexer: &mut Lexer<'_, '_>) -> Token {
     loop {
         let tok = lexer.next_token();
-        if tok.kind != TokenKind::Comment {
+        if tok.kind != SyntaxKind::Comment {
             return tok;
         }
     }
 }
 
 impl<'src, 'cfg> Parser<'src, 'cfg> {
-    /// Create a new parser over the given source bytes.
+    /// Create a new parser over a retained source document.
     ///
     /// Internally constructs a lexer and primes the lookahead buffer.
-    pub fn new(source: &'src [u8], diag_config: &'cfg DiagnosticConfig) -> Self {
-        let mut lexer = Lexer::new(source, diag_config);
-        let eof_span = Span::from_usize_offsets(source.len(), source.len());
+    pub fn new(document: &'src SourceDocument, diag_config: &'cfg DiagnosticConfig) -> Self {
+        let mut lexer = Lexer::new(document, diag_config);
+        let eof_span = document
+            .empty_range(document.bytes().len())
+            .expect("the document EOF is a valid source position");
         let eof_token = Token {
-            kind: TokenKind::Eof,
+            kind: SyntaxKind::EofToken,
             span: eof_span,
         };
 
@@ -74,10 +79,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         );
 
         Parser {
-            source,
+            document,
             lexer,
             buf,
-            last_end: ByteOffset(0),
+            last_span: document
+                .empty_range(0)
+                .expect("the document start is a valid source position"),
             lexer_diagnostic_cursor: 0,
             diagnostics: Vec::new(),
             diag_config,
@@ -104,15 +111,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.buf[0] = self.buf[1];
         self.buf[1] = self.buf[2];
         self.buf[2] = next_non_comment(&mut self.lexer);
-        self.last_end = tok.span.end;
+        self.last_span = tok.span;
         tok
     }
 
-    fn check(&self, kind: TokenKind) -> bool {
+    fn check(&self, kind: SyntaxKind) -> bool {
         self.peek().kind == kind
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token, SpanDiagnostic> {
+    fn expect(&mut self, kind: SyntaxKind) -> Result<Token, Diagnostic> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
@@ -120,28 +127,42 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn current_span(&self) -> Span {
+    fn current_span(&self) -> SourceRange {
         self.peek().span
     }
 
+    fn range_to_current_start(&self, start: SourceRange) -> SourceRange {
+        let current = self.current_span();
+        assert_eq!(start.source(), self.document.id());
+        assert_eq!(current.source(), self.document.id());
+        self.document
+            .range(start.start().as_usize()..current.start().as_usize())
+            .expect("parser range endpoints are ordered within its source document")
+    }
+
     fn is_eof(&self) -> bool {
-        self.peek().kind == TokenKind::Eof
+        self.peek().kind == SyntaxKind::EofToken
     }
 
-    fn text(&self, span: Span) -> Cow<'src, str> {
-        String::from_utf8_lossy(&self.source[span.start.0 as usize..span.end.0 as usize])
+    fn text(&self, span: SourceRange) -> Cow<'src, str> {
+        String::from_utf8_lossy(
+            self.document
+                .slice(span)
+                .expect("parser ranges belong to its source document"),
+        )
     }
 
-    fn make_error(&self, message: String) -> SpanDiagnostic {
-        SpanDiagnostic {
+    fn make_error(&self, message: String) -> Diagnostic {
+        Diagnostic {
             severity: self.diag_config.effective_severity(DiagCode::ParseError),
             code: DiagCode::ParseError,
-            span: self.current_span(),
             message,
+            module: None,
+            range: Some(self.current_span()),
         }
     }
 
-    fn record_parse_error(&mut self, mut diag: SpanDiagnostic) {
+    fn record_parse_error(&mut self, mut diag: Diagnostic) {
         if !self.diag_config.should_collect(diag.code) {
             return;
         }
@@ -149,30 +170,32 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.diagnostics.push(diag);
     }
 
-    fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: impl Into<String>) {
+    fn emit_diagnostic(&mut self, code: DiagCode, span: SourceRange, message: impl Into<String>) {
         if !self.diag_config.should_collect(code) {
             return;
         }
-        self.diagnostics.push(SpanDiagnostic {
+        self.diagnostics.push(Diagnostic {
             severity: self.diag_config.effective_severity(code),
             code,
-            span,
             message: message.into(),
+            module: None,
+            range: Some(span),
         });
     }
 
-    fn emit_diagnostic_with<F>(&mut self, code: DiagCode, span: Span, message: F)
+    fn emit_diagnostic_with<F>(&mut self, code: DiagCode, span: SourceRange, message: F)
     where
         F: FnOnce() -> String,
     {
         if !self.diag_config.should_collect(code) {
             return;
         }
-        self.diagnostics.push(SpanDiagnostic {
+        self.diagnostics.push(Diagnostic {
             severity: self.diag_config.effective_severity(code),
             code,
-            span,
             message: message(),
+            module: None,
+            range: Some(span),
         });
     }
 
@@ -194,7 +217,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn validate_identifier(&mut self, name: &str, span: Span) {
+    fn validate_identifier(&mut self, name: &str, span: SourceRange) {
         if name.contains('_') {
             self.emit_diagnostic_with(DiagCode::IdentifierUnderscore, span, || {
                 format!("identifier {:?} contains underscore (RFC violation)", name)
@@ -224,7 +247,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn validate_value_reference(&mut self, name: &str, span: Span) {
+    fn validate_value_reference(&mut self, name: &str, span: SourceRange) {
         if let Some(first) = name.bytes().next()
             && first.is_ascii_uppercase()
         {
@@ -234,11 +257,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn expect_identifier(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_identifier(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() {
             return Ok(self.advance());
         }
-        if self.check(TokenKind::ForbiddenKeyword) {
+        if self.check(SyntaxKind::ForbiddenKeyword) {
             let token = self.advance();
             let name = self.text(token.span).to_string();
             self.emit_diagnostic_with(DiagCode::KeywordReserved, token.span, || {
@@ -249,78 +272,88 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Err(self.make_error("expected identifier".to_string()))
     }
 
-    fn expect_index_object(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_index_object(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() || self.peek().kind.is_type_keyword() {
             return Ok(self.advance());
         }
         Err(self.make_error("expected index object".to_string()))
     }
 
-    fn expect_enum_label(&mut self) -> Result<Token, SpanDiagnostic> {
+    fn expect_enum_label(&mut self) -> Result<Token, Diagnostic> {
         if self.peek().kind.is_identifier() || self.peek().kind.is_keyword() {
             return Ok(self.advance());
         }
         Err(self.make_error("expected enum label".to_string()))
     }
 
-    fn parse_identifier_as_ident(&mut self) -> Result<Ident, SpanDiagnostic> {
+    fn parse_identifier_as_ident(&mut self) -> Result<Ident, Diagnostic> {
         let token = self.expect_identifier()?;
         Ok(self.make_ident(token))
     }
 
-    fn parse_quoted_string(&mut self) -> Result<QuotedString, SpanDiagnostic> {
-        if !self.check(TokenKind::QuotedString) {
+    fn parse_quoted_string(&mut self) -> Result<QuotedString, Diagnostic> {
+        if !self.check(SyntaxKind::QuotedString) {
             return Err(self.make_error("expected quoted string".to_string()));
         }
         let token = self.advance();
         let full_text = self.text(token.span);
-        let value = if full_text.len() >= 2 && full_text.ends_with('"') {
-            full_text[1..full_text.len() - 1].to_string()
+        let content = if full_text.len() >= 2 && full_text.ends_with('"') {
+            &full_text[1..full_text.len() - 1]
         } else if !full_text.is_empty() {
-            full_text[1..].to_string()
+            &full_text[1..]
         } else {
-            String::new()
+            ""
         };
+        let value = content.replace("\"\"", "\"");
         Ok(QuotedString {
             value,
             span: token.span,
         })
     }
 
-    fn parse_optional_reference(&mut self) -> Result<Option<QuotedString>, SpanDiagnostic> {
-        if !self.check(TokenKind::KwReference) {
+    fn parse_optional_reference(&mut self) -> Result<Option<QuotedString>, Diagnostic> {
+        if !self.check(SyntaxKind::KwReference) {
             return Ok(None);
         }
         self.advance();
         Ok(Some(self.parse_quoted_string()?))
     }
 
-    fn parse_u32(&mut self, span: Span, context: &str) -> Result<u32, SpanDiagnostic> {
+    /// Convert an unsigned integral token without turning conversion failure
+    /// into a structural parse failure.
+    ///
+    /// Zero is the retained placeholder for an out-of-range value. The exact
+    /// token range remains available through the emitted `invalid-u32`
+    /// diagnostic, while retaining a plain `u32` keeps the AST and lowering
+    /// representation aligned with valid integral values.
+    fn parse_u32(&mut self, span: SourceRange, context: &str) -> u32 {
         let text = self.text(span);
         match text.parse::<u32>() {
-            Ok(v) => Ok(v),
+            Ok(v) => v,
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidU32,
                     span,
                     format!("invalid {} (not a valid u32)", context),
                 );
-                Err(self.make_error(format!("invalid {} (not a valid u32)", context)))
+                0
             }
         }
     }
 
-    fn parse_i64(&mut self, span: Span, context: &str) -> Result<i64, SpanDiagnostic> {
+    /// Convert a signed integral token, retaining zero after conversion
+    /// failure so the containing definition can still be represented.
+    fn parse_i64(&mut self, span: SourceRange, context: &str) -> i64 {
         let text = self.text(span);
         match text.parse::<i64>() {
-            Ok(v) => Ok(v),
+            Ok(v) => v,
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidI64,
                     span,
                     format!("invalid {} (not a valid i64)", context),
                 );
-                Err(self.make_error(format!("invalid {} (not a valid i64)", context)))
+                0
             }
         }
     }
@@ -329,11 +362,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let mut depth: u32 = 1;
         while depth > 0 && !self.is_eof() {
             match self.peek().kind {
-                TokenKind::LBrace => {
+                SyntaxKind::LBrace => {
                     depth += 1;
                     self.advance();
                 }
-                TokenKind::RBrace => {
+                SyntaxKind::RBrace => {
                     depth -= 1;
                     if depth > 0 || consume_close {
                         self.advance();
@@ -346,11 +379,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn collect_module_diagnostics(&mut self, ownership_end: ByteOffset) -> Vec<SpanDiagnostic> {
+    fn collect_module_diagnostics(
+        &mut self,
+        ownership_end: ByteOffset,
+        module_name: Option<&str>,
+    ) -> Vec<Diagnostic> {
         let lexer_diagnostics = self.lexer.diagnostics();
         let owned_count = lexer_diagnostics[self.lexer_diagnostic_cursor..]
             .iter()
-            .take_while(|diag| diag.span.start < ownership_end)
+            .take_while(|diag| {
+                diag.range
+                    .is_some_and(|range| range.start() < ownership_end)
+            })
             .count();
         let owned_end = self.lexer_diagnostic_cursor + owned_count;
 
@@ -358,20 +398,25 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         combined.extend_from_slice(&lexer_diagnostics[self.lexer_diagnostic_cursor..owned_end]);
         self.lexer_diagnostic_cursor = owned_end;
         combined.append(&mut self.diagnostics);
+        if let Some(module_name) = module_name {
+            for diagnostic in &mut combined {
+                diagnostic.module = Some(module_name.to_owned());
+            }
+        }
         combined
     }
 
     // ---- List helpers ----
 
-    fn parse_identifier_list(&mut self) -> Result<Vec<Ident>, SpanDiagnostic> {
+    fn parse_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
         let mut idents = Vec::new();
         loop {
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
             let token = self.expect_identifier()?;
             idents.push(self.make_ident(token));
-            if !self.check(TokenKind::Comma) {
+            if !self.check(SyntaxKind::Comma) {
                 break;
             }
             self.advance(); // consume comma
@@ -379,27 +424,28 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(idents)
     }
 
-    fn parse_braced_identifier_list(&mut self) -> Result<Vec<Ident>, SpanDiagnostic> {
-        self.expect(TokenKind::LBrace)?;
+    fn parse_braced_identifier_list(&mut self) -> Result<Vec<Ident>, Diagnostic> {
+        self.expect(SyntaxKind::LBrace)?;
         let idents = self.parse_identifier_list()?;
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
         Ok(idents)
     }
 
     // ---- Error recovery ----
 
     fn recover_to_definition(&mut self) {
-        while !self.is_eof() && !self.check(TokenKind::KwEnd) {
+        while !self.is_eof() && !self.check(SyntaxKind::KwEnd) {
             let current = self.peek().kind;
             let next = self.peek_nth(1).kind;
 
             if (current.is_identifier() && next.is_macro_keyword())
-                || (current.is_identifier() && next == TokenKind::ColonColonEqual)
-                || (current == TokenKind::UppercaseIdent && next == TokenKind::KwTextualConvention)
-                || (current == TokenKind::UppercaseIdent && next == TokenKind::KwMacro)
+                || (current.is_identifier() && next == SyntaxKind::ColonColonEqual)
+                || (current == SyntaxKind::UppercaseIdent
+                    && next == SyntaxKind::KwTextualConvention)
+                || (current == SyntaxKind::UppercaseIdent && next == SyntaxKind::KwMacro)
                 || (current.is_identifier()
-                    && next == TokenKind::KwObject
-                    && self.peek_nth(2).kind == TokenKind::KwIdentifier)
+                    && next == SyntaxKind::KwObject
+                    && self.peek_nth(2).kind == SyntaxKind::KwIdentifier)
             {
                 break;
             }
@@ -438,7 +484,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn parse_one_module(&mut self) -> Module {
         self.diagnostics.clear();
 
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name = match self.parse_module_header() {
             Ok(name) => name,
@@ -450,13 +496,13 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     reason = "module_header_parse_failed",
                     "failed to parse module header",
                 );
-                let span = Span::new(start, self.current_span().end);
+                let span = cover(start, self.current_span());
                 return Module {
                     name: None,
                     imports: Vec::new(),
                     body: Vec::new(),
                     span,
-                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end),
+                    diagnostics: self.collect_module_diagnostics(self.eof_token.span.end(), None),
                 };
             }
         };
@@ -478,7 +524,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         );
 
         let mut imports = Vec::new();
-        if self.check(TokenKind::KwImports) {
+        if self.check(SyntaxKind::KwImports) {
             match self.parse_imports() {
                 Ok(imp) => {
                     debug!(
@@ -504,27 +550,27 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         let mut body: Vec<Definition> = Vec::new();
-        while !self.check(TokenKind::KwEnd) && !self.is_eof() {
+        while !self.check(SyntaxKind::KwEnd) && !self.is_eof() {
             // The lexer consumes each EXPORTS body, leaving the keyword and
             // optional semicolon. Skip consecutive clauses here so their count
             // does not add recursion depth to definition parsing.
-            while self.check(TokenKind::KwExports) {
+            while self.check(SyntaxKind::KwExports) {
                 self.advance();
-                if self.check(TokenKind::Semicolon) {
+                if self.check(SyntaxKind::Semicolon) {
                     self.advance();
                 }
             }
 
-            if self.check(TokenKind::KwEnd) || self.is_eof() {
+            if self.check(SyntaxKind::KwEnd) || self.is_eof() {
                 break;
             }
 
-            let pos_before = self.current_span().start;
+            let pos_before = self.current_span();
             trace!(
                 target: "mib_rs::parser",
                 component = "parser",
                 phase = "definitions",
-                offset = pos_before.0,
+                offset = pos_before.start().get(),
                 first = %self.peek().kind.display_name(),
                 second = %self.peek_nth(1).kind.display_name(),
                 "parsing definition",
@@ -534,26 +580,26 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 Err(diag) => {
                     self.record_parse_error(diag);
                     self.recover_to_definition();
-                    if self.current_span().start == pos_before {
+                    if self.current_span() == pos_before {
                         self.advance();
                     }
                 }
             }
         }
 
-        if self.check(TokenKind::KwEnd) {
+        if self.check(SyntaxKind::KwEnd) {
             self.advance();
         } else {
             self.record_parse_error(self.make_error("expected END".to_string()));
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         let ownership_end = if self.is_eof() {
-            self.eof_token.span.end
+            self.eof_token.span.end()
         } else {
-            self.last_end
+            self.last_span.end()
         };
-        let diagnostics = self.collect_module_diagnostics(ownership_end);
+        let diagnostics = self.collect_module_diagnostics(ownership_end, Some(&module_name));
 
         debug!(
             target: "mib_rs::parser",
@@ -573,41 +619,42 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
     }
 
-    fn parse_module_header(&mut self) -> Result<Ident, SpanDiagnostic> {
+    fn parse_module_header(&mut self) -> Result<Ident, Diagnostic> {
         let name_token = self.expect_identifier()?;
         let name = self.make_ident_with_validation(name_token);
 
         // Skip obsolete module OID before DEFINITIONS
-        if self.check(TokenKind::LBrace) {
+        if self.check(SyntaxKind::LBrace) {
             self.advance();
             self.skip_braced_content(true);
         }
 
-        self.expect(TokenKind::KwDefinitions)?;
-        self.expect(TokenKind::ColonColonEqual)?;
-        self.expect(TokenKind::KwBegin)?;
+        self.expect(SyntaxKind::KwDefinitions)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwBegin)?;
 
         Ok(name)
     }
 
     // ---- Import parsing ----
 
-    fn parse_imports(&mut self) -> Result<Vec<ImportClause>, SpanDiagnostic> {
-        self.expect(TokenKind::KwImports)?;
+    fn parse_imports(&mut self) -> Result<Vec<ImportClause>, Diagnostic> {
+        self.expect(SyntaxKind::KwImports)?;
 
         let mut clauses = Vec::new();
 
-        while !self.check(TokenKind::Semicolon) && !self.check(TokenKind::KwEnd) && !self.is_eof() {
-            let start = self.current_span().start;
+        while !self.check(SyntaxKind::Semicolon) && !self.check(SyntaxKind::KwEnd) && !self.is_eof()
+        {
+            let start = self.current_span();
             let mut symbols = Vec::new();
 
             // Collect symbols until FROM
             loop {
                 let kind = self.peek().kind;
-                if kind == TokenKind::KwFrom
-                    || kind == TokenKind::Semicolon
-                    || kind == TokenKind::KwEnd
-                    || kind == TokenKind::Eof
+                if kind == SyntaxKind::KwFrom
+                    || kind == SyntaxKind::Semicolon
+                    || kind == SyntaxKind::KwEnd
+                    || kind == SyntaxKind::EofToken
                 {
                     break;
                 }
@@ -619,17 +666,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     return Err(self.make_error("expected symbol or FROM".to_string()));
                 }
 
-                if self.check(TokenKind::Comma) {
+                if self.check(SyntaxKind::Comma) {
                     self.advance();
                 }
             }
 
-            self.expect(TokenKind::KwFrom)?;
+            self.expect(SyntaxKind::KwFrom)?;
 
-            let module_token = self.expect(TokenKind::UppercaseIdent)?;
+            let module_token = self.expect(SyntaxKind::UppercaseIdent)?;
             let from_module = self.make_ident(module_token);
 
-            let span = Span::new(start, self.last_end);
+            let span = cover(start, self.last_span);
             clauses.push(ImportClause {
                 symbols,
                 from_module,
@@ -637,7 +684,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             });
         }
 
-        if self.check(TokenKind::Semicolon) {
+        if self.check(SyntaxKind::Semicolon) {
             self.advance();
         } else {
             self.record_parse_error(self.make_error("unexpected end of imports".to_string()));
@@ -648,52 +695,52 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Definition dispatch ----
 
-    fn parse_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_definition(&mut self) -> Result<Definition, Diagnostic> {
         let first = self.peek().kind;
         let second = self.peek_nth(1).kind;
 
         match second {
             // Value assignment: name OBJECT IDENTIFIER ::=
-            TokenKind::KwObject
-                if first.is_identifier() && self.peek_nth(2).kind == TokenKind::KwIdentifier =>
+            SyntaxKind::KwObject
+                if first.is_identifier() && self.peek_nth(2).kind == SyntaxKind::KwIdentifier =>
             {
                 self.parse_value_assignment()
             }
 
             // SMI macro definitions dispatched by keyword
-            TokenKind::KwObjectType if first.is_identifier() => self.parse_object_type(),
-            TokenKind::KwModuleIdentity if first.is_identifier() => self.parse_module_identity(),
-            TokenKind::KwObjectIdentity if first.is_identifier() => self.parse_object_identity(),
-            TokenKind::KwNotificationType if first.is_identifier() => {
+            SyntaxKind::KwObjectType if first.is_identifier() => self.parse_object_type(),
+            SyntaxKind::KwModuleIdentity if first.is_identifier() => self.parse_module_identity(),
+            SyntaxKind::KwObjectIdentity if first.is_identifier() => self.parse_object_identity(),
+            SyntaxKind::KwNotificationType if first.is_identifier() => {
                 self.parse_notification_type()
             }
-            TokenKind::KwTrapType if first.is_identifier() => self.parse_trap_type(),
-            TokenKind::KwTextualConvention if first == TokenKind::UppercaseIdent => {
+            SyntaxKind::KwTrapType if first.is_identifier() => self.parse_trap_type(),
+            SyntaxKind::KwTextualConvention if first == SyntaxKind::UppercaseIdent => {
                 self.parse_textual_convention()
             }
-            TokenKind::KwObjectGroup if first.is_identifier() => self.parse_object_group(),
-            TokenKind::KwNotificationGroup if first.is_identifier() => {
+            SyntaxKind::KwObjectGroup if first.is_identifier() => self.parse_object_group(),
+            SyntaxKind::KwNotificationGroup if first.is_identifier() => {
                 self.parse_notification_group()
             }
-            TokenKind::KwModuleCompliance if first.is_identifier() => {
+            SyntaxKind::KwModuleCompliance if first.is_identifier() => {
                 self.parse_module_compliance()
             }
-            TokenKind::KwAgentCapabilities if first.is_identifier() => {
+            SyntaxKind::KwAgentCapabilities if first.is_identifier() => {
                 self.parse_agent_capabilities()
             }
 
             // Type assignment or assignment-style TC: TypeName ::= ...
             // Type keywords (IpAddress, Counter32, etc.) can appear on LHS in base
             // module definitions like SNMPv2-SMI.
-            TokenKind::ColonColonEqual
-                if first == TokenKind::UppercaseIdent
-                    || first == TokenKind::LowercaseIdent
+            SyntaxKind::ColonColonEqual
+                if first == SyntaxKind::UppercaseIdent
+                    || first == SyntaxKind::LowercaseIdent
                     || first.is_type_keyword() =>
             {
-                if self.peek_nth(2).kind == TokenKind::KwTextualConvention {
+                if self.peek_nth(2).kind == SyntaxKind::KwTextualConvention {
                     return self.parse_textual_convention_with_assignment();
                 }
-                if first == TokenKind::LowercaseIdent {
+                if first == SyntaxKind::LowercaseIdent {
                     let name = self.text(self.peek().span).to_string();
                     self.emit_diagnostic_with(
                         DiagCode::BadIdentifierCase,
@@ -710,8 +757,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             // MACRO definition (name can be a macro keyword like OBJECT-TYPE)
-            TokenKind::KwMacro
-                if first == TokenKind::UppercaseIdent || first.is_macro_keyword() =>
+            SyntaxKind::KwMacro
+                if first == SyntaxKind::UppercaseIdent || first.is_macro_keyword() =>
             {
                 self.parse_macro_definition()
             }
@@ -725,21 +772,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Definition parsers ----
 
-    fn parse_object_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_object_type(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObjectType)?;
+        self.expect(SyntaxKind::KwObjectType)?;
 
         // SYNTAX (required)
-        self.expect(TokenKind::KwSyntax)?;
+        self.expect(SyntaxKind::KwSyntax)?;
         let syntax = self.parse_syntax_clause()?;
 
         // UNITS (optional)
-        let units = if self.check(TokenKind::KwUnits) {
+        let units = if self.check(SyntaxKind::KwUnits) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -750,14 +797,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let access = self.parse_access_clause()?;
 
         // STATUS
-        let status = if self.check(TokenKind::KwStatus) {
+        let status = if self.check(SyntaxKind::KwStatus) {
             Some(self.parse_status_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION (optional)
-        let description = if self.check(TokenKind::KwDescription) {
+        let description = if self.check(SyntaxKind::KwDescription) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -771,18 +818,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (index, augments) = self.parse_index_or_augments()?;
 
         // DEFVAL (optional)
-        let defval = if self.check(TokenKind::KwDefval) {
+        let defval = if self.check(SyntaxKind::KwDefval) {
             Some(self.parse_defval_clause()?)
         } else {
             None
         };
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
-        Ok(Definition::ObjectType(ObjectTypeDef {
+        let span = cover(start, oid.span);
+        Ok(Definition::ObjectType(Box::new(ObjectTypeDef {
             name,
             syntax: Some(syntax),
             units,
@@ -795,43 +842,43 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             defval,
             oid,
             span,
-        }))
+        })))
     }
 
-    fn parse_module_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_module_identity(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwModuleIdentity)?;
+        self.expect(SyntaxKind::KwModuleIdentity)?;
 
         // LAST-UPDATED
-        self.expect(TokenKind::KwLastUpdated)?;
+        self.expect(SyntaxKind::KwLastUpdated)?;
         let last_updated = self.parse_quoted_string()?;
 
         // ORGANIZATION
-        self.expect(TokenKind::KwOrganization)?;
+        self.expect(SyntaxKind::KwOrganization)?;
         let organization = self.parse_quoted_string()?;
 
         // CONTACT-INFO
-        self.expect(TokenKind::KwContactInfo)?;
+        self.expect(SyntaxKind::KwContactInfo)?;
         let contact_info = self.parse_quoted_string()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REVISION clauses (0+)
         let mut revisions = Vec::new();
-        while self.check(TokenKind::KwRevision) {
-            let rev_start = self.current_span().start;
+        while self.check(SyntaxKind::KwRevision) {
+            let rev_start = self.current_span();
             self.advance();
             let date = self.parse_quoted_string()?;
-            self.expect(TokenKind::KwDescription)?;
+            self.expect(SyntaxKind::KwDescription)?;
             let rev_desc = self.parse_quoted_string()?;
-            let rev_span = Span::new(rev_start, rev_desc.span.end);
+            let rev_span = cover(rev_start, rev_desc.span);
             revisions.push(RevisionClause {
                 date,
                 description: rev_desc,
@@ -840,10 +887,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ModuleIdentity(ModuleIdentityDef {
             name,
             last_updated,
@@ -856,30 +903,30 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_object_identity(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_object_identity(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObjectIdentity)?;
+        self.expect(SyntaxKind::KwObjectIdentity)?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ObjectIdentity(ObjectIdentityDef {
             name,
             status,
@@ -890,17 +937,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_notification_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_notification_type(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwNotificationType)?;
+        self.expect(SyntaxKind::KwNotificationType)?;
 
         // OBJECTS (optional)
-        let objects = if self.check(TokenKind::KwObjects) {
+        let objects = if self.check(SyntaxKind::KwObjects) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -911,17 +958,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::NotificationType(NotificationTypeDef {
             name,
             objects,
@@ -933,21 +980,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_trap_type(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_trap_type(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::KwTrapType)?;
+        self.expect(SyntaxKind::KwTrapType)?;
 
         // ENTERPRISE
-        self.expect(TokenKind::KwEnterprise)?;
+        self.expect(SyntaxKind::KwEnterprise)?;
         let enterprise_token = self.expect_identifier()?;
         let enterprise = self.make_ident(enterprise_token);
 
         // VARIABLES (optional)
-        let variables = if self.check(TokenKind::KwVariables) {
+        let variables = if self.check(SyntaxKind::KwVariables) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -955,7 +1002,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // DESCRIPTION (optional)
-        let description = if self.check(TokenKind::KwDescription) {
+        let description = if self.check(SyntaxKind::KwDescription) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -966,11 +1013,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let reference = self.parse_optional_reference()?;
 
         // ::= number
-        self.expect(TokenKind::ColonColonEqual)?;
-        let num_token = self.expect(TokenKind::Number)?;
-        let trap_number = self.parse_u32(num_token.span, "trap number")?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        let num_token = self.expect(SyntaxKind::Number)?;
+        let trap_number = self.parse_u32(num_token.span, "trap number");
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(Definition::TrapType(TrapTypeDef {
             name,
             enterprise,
@@ -982,18 +1029,18 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_textual_convention(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::KwTextualConvention)?;
+        self.expect(SyntaxKind::KwTextualConvention)?;
 
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
 
-        let span = Span::new(start, syntax.span.end);
+        let span = cover(start, syntax.span);
         Ok(Definition::TextualConvention(TextualConventionDef {
             name,
             display_hint,
@@ -1005,19 +1052,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention_with_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_textual_convention_with_assignment(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::ColonColonEqual)?;
-        self.expect(TokenKind::KwTextualConvention)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwTextualConvention)?;
 
         let (display_hint, status, description, reference, syntax) =
             self.parse_textual_convention_body()?;
 
-        let span = Span::new(start, syntax.span.end);
+        let span = cover(start, syntax.span);
         Ok(Definition::TextualConvention(TextualConventionDef {
             name,
             display_hint,
@@ -1029,9 +1076,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_textual_convention_body(&mut self) -> Result<TcBody, SpanDiagnostic> {
+    fn parse_textual_convention_body(&mut self) -> Result<TcBody, Diagnostic> {
         // DISPLAY-HINT (optional)
-        let display_hint = if self.check(TokenKind::KwDisplayHint) {
+        let display_hint = if self.check(SyntaxKind::KwDisplayHint) {
             self.advance();
             Some(self.parse_quoted_string()?)
         } else {
@@ -1042,29 +1089,29 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // SYNTAX
-        self.expect(TokenKind::KwSyntax)?;
+        self.expect(SyntaxKind::KwSyntax)?;
         let syntax = self.parse_syntax_clause()?;
 
         Ok((display_hint, status, description, reference, syntax))
     }
 
-    fn parse_type_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_type_assignment(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
 
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let syntax = self.parse_type_syntax()?;
 
-        let span = Span::new(start, syntax.span().end);
+        let span = cover(start, syntax.span());
         Ok(Definition::TypeAssignment(TypeAssignmentDef {
             name,
             syntax,
@@ -1072,19 +1119,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_value_assignment(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_value_assignment(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwObject)?;
-        self.expect(TokenKind::KwIdentifier)?;
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::KwObject)?;
+        self.expect(SyntaxKind::KwIdentifier)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ValueAssignment(ValueAssignmentDef {
             name,
             oid,
@@ -1092,10 +1139,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_object_group(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_object_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
-            TokenKind::KwObjectGroup,
-            TokenKind::KwObjects,
+            SyntaxKind::KwObjectGroup,
+            SyntaxKind::KwObjects,
             |name, objects, status, description, reference, oid, span| {
                 Definition::ObjectGroup(ObjectGroupDef {
                     name,
@@ -1110,10 +1157,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         )
     }
 
-    fn parse_notification_group(&mut self) -> Result<Definition, SpanDiagnostic> {
+    fn parse_notification_group(&mut self) -> Result<Definition, Diagnostic> {
         self.parse_group_def(
-            TokenKind::KwNotificationGroup,
-            TokenKind::KwNotifications,
+            SyntaxKind::KwNotificationGroup,
+            SyntaxKind::KwNotifications,
             |name, notifications, status, description, reference, oid, span| {
                 Definition::NotificationGroup(NotificationGroupDef {
                     name,
@@ -1130,10 +1177,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_group_def<F>(
         &mut self,
-        macro_kw: TokenKind,
-        members_kw: TokenKind,
+        macro_kw: SyntaxKind,
+        members_kw: SyntaxKind,
         build: F,
-    ) -> Result<Definition, SpanDiagnostic>
+    ) -> Result<Definition, Diagnostic>
     where
         F: FnOnce(
             Ident,
@@ -1142,10 +1189,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             QuotedString,
             Option<QuotedString>,
             OidAssignment,
-            Span,
+            SourceRange,
         ) -> Definition,
     {
-        let start = self.current_span().start;
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
@@ -1161,17 +1208,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
         let reference = self.parse_optional_reference()?;
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(build(
             name,
             members,
@@ -1183,20 +1230,20 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         ))
     }
 
-    fn parse_module_compliance(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_module_compliance(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwModuleCompliance)?;
+        self.expect(SyntaxKind::KwModuleCompliance)?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
@@ -1204,15 +1251,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // MODULE clauses (0+)
         let mut modules = Vec::new();
-        while self.check(TokenKind::KwModule) {
+        while self.check(SyntaxKind::KwModule) {
             modules.push(self.parse_compliance_module()?);
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::ModuleCompliance(ModuleComplianceDef {
             name,
             status,
@@ -1224,12 +1271,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_compliance_module(&mut self) -> Result<ComplianceModule, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwModule)?;
+    fn parse_compliance_module(&mut self) -> Result<ComplianceModule, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwModule)?;
 
         // Optional module name
-        let module_name = if self.check(TokenKind::UppercaseIdent) {
+        let module_name = if self.check(SyntaxKind::UppercaseIdent) {
             let token = self.advance();
             Some(self.make_ident(token))
         } else {
@@ -1237,14 +1284,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Optional module OID
-        let module_oid = if self.check(TokenKind::LBrace) {
+        let module_oid = if self.check(SyntaxKind::LBrace) {
             Some(self.parse_oid_assignment()?)
         } else {
             None
         };
 
         // Optional MANDATORY-GROUPS
-        let mandatory_groups = if self.check(TokenKind::KwMandatoryGroups) {
+        let mandatory_groups = if self.check(SyntaxKind::KwMandatoryGroups) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -1253,15 +1300,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // GROUP and OBJECT refinements
         let mut compliances = Vec::new();
-        while self.check(TokenKind::KwGroup) || self.check(TokenKind::KwObject) {
-            if self.check(TokenKind::KwGroup) {
+        while self.check(SyntaxKind::KwGroup) || self.check(SyntaxKind::KwObject) {
+            if self.check(SyntaxKind::KwGroup) {
                 compliances.push(Compliance::Group(self.parse_compliance_group()?));
             } else {
-                compliances.push(Compliance::Object(self.parse_compliance_object()?));
+                compliances.push(Compliance::Object(Box::new(
+                    self.parse_compliance_object()?,
+                )));
             }
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(ComplianceModule {
             module_name,
             module_oid,
@@ -1271,16 +1320,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwGroup)?;
+    fn parse_compliance_group(&mut self) -> Result<ComplianceGroup, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwGroup)?;
 
         let group = self.parse_identifier_as_ident()?;
 
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(ComplianceGroup {
             group,
             description,
@@ -1288,9 +1337,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_compliance_object(&mut self) -> Result<ComplianceObject, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwObject)?;
+    fn parse_compliance_object(&mut self) -> Result<ComplianceObject, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwObject)?;
 
         let object = self.parse_identifier_as_ident()?;
 
@@ -1298,17 +1347,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (syntax, write_syntax) = self.parse_optional_syntax_clauses()?;
 
         // Optional MIN-ACCESS
-        let min_access = if self.check(TokenKind::KwMinAccess) {
+        let min_access = if self.check(SyntaxKind::KwMinAccess) {
             Some(self.parse_access_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(ComplianceObject {
             object,
             syntax,
@@ -1321,15 +1370,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     fn parse_optional_syntax_clauses(
         &mut self,
-    ) -> Result<(Option<SyntaxClause>, Option<SyntaxClause>), SpanDiagnostic> {
-        let syntax = if self.check(TokenKind::KwSyntax) {
+    ) -> Result<(Option<SyntaxClause>, Option<SyntaxClause>), Diagnostic> {
+        let syntax = if self.check(SyntaxKind::KwSyntax) {
             self.advance();
             Some(self.parse_syntax_clause()?)
         } else {
             None
         };
 
-        let write_syntax = if self.check(TokenKind::KwWriteSyntax) {
+        let write_syntax = if self.check(SyntaxKind::KwWriteSyntax) {
             self.advance();
             Some(self.parse_syntax_clause()?)
         } else {
@@ -1339,24 +1388,24 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok((syntax, write_syntax))
     }
 
-    fn parse_agent_capabilities(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_agent_capabilities(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident_with_validation(name_token);
         self.validate_value_reference(&name.name, name_token.span);
 
-        self.expect(TokenKind::KwAgentCapabilities)?;
+        self.expect(SyntaxKind::KwAgentCapabilities)?;
 
         // PRODUCT-RELEASE
-        self.expect(TokenKind::KwProductRelease)?;
+        self.expect(SyntaxKind::KwProductRelease)?;
         let product_release = self.parse_quoted_string()?;
 
         // STATUS
         let status = self.parse_status_clause()?;
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
         // REFERENCE (optional)
@@ -1364,15 +1413,15 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         // SUPPORTS clauses (0+)
         let mut supports = Vec::new();
-        while self.check(TokenKind::KwSupports) {
+        while self.check(SyntaxKind::KwSupports) {
             supports.push(self.parse_supports_module()?);
         }
 
         // ::= { oid }
-        self.expect(TokenKind::ColonColonEqual)?;
+        self.expect(SyntaxKind::ColonColonEqual)?;
         let oid = self.parse_oid_assignment()?;
 
-        let span = Span::new(start, oid.span.end);
+        let span = cover(start, oid.span);
         Ok(Definition::AgentCapabilities(AgentCapabilitiesDef {
             name,
             product_release,
@@ -1385,30 +1434,30 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }))
     }
 
-    fn parse_supports_module(&mut self) -> Result<SupportsModule, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwSupports)?;
+    fn parse_supports_module(&mut self) -> Result<SupportsModule, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwSupports)?;
 
         let module_name = self.parse_identifier_as_ident()?;
 
         // Optional module OID
-        let module_oid = if self.check(TokenKind::LBrace) {
+        let module_oid = if self.check(SyntaxKind::LBrace) {
             Some(self.parse_oid_assignment()?)
         } else {
             None
         };
 
         // INCLUDES
-        self.expect(TokenKind::KwIncludes)?;
+        self.expect(SyntaxKind::KwIncludes)?;
         let includes = self.parse_braced_identifier_list()?;
 
         // VARIATION clauses (0+)
         let mut variations = Vec::new();
-        while self.check(TokenKind::KwVariation) {
+        while self.check(SyntaxKind::KwVariation) {
             variations.push(self.parse_variation_clause()?);
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(SupportsModule {
             module_name,
             module_oid,
@@ -1418,9 +1467,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_variation_clause(&mut self) -> Result<Variation, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwVariation)?;
+    fn parse_variation_clause(&mut self) -> Result<Variation, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwVariation)?;
 
         let name = self.parse_identifier_as_ident()?;
 
@@ -1428,14 +1477,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let (syntax, write_syntax) = self.parse_optional_syntax_clauses()?;
 
         // Optional ACCESS
-        let access = if self.check(TokenKind::KwAccess) {
+        let access = if self.check(SyntaxKind::KwAccess) {
             Some(self.parse_access_clause()?)
         } else {
             None
         };
 
         // Optional CREATION-REQUIRES
-        let creation_requires = if self.check(TokenKind::KwCreationRequires) {
+        let creation_requires = if self.check(SyntaxKind::KwCreationRequires) {
             self.advance();
             self.parse_braced_identifier_list()?
         } else {
@@ -1443,17 +1492,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Optional DEFVAL
-        let defval = if self.check(TokenKind::KwDefval) {
+        let defval = if self.check(SyntaxKind::KwDefval) {
             Some(self.parse_defval_clause()?)
         } else {
             None
         };
 
         // DESCRIPTION
-        self.expect(TokenKind::KwDescription)?;
+        self.expect(SyntaxKind::KwDescription)?;
         let description = self.parse_quoted_string()?;
 
-        let span = Span::new(start, description.span.end);
+        let span = cover(start, description.span);
         Ok(Variation {
             name,
             syntax,
@@ -1466,8 +1515,8 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_macro_definition(&mut self) -> Result<Definition, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_macro_definition(&mut self) -> Result<Definition, Diagnostic> {
+        let start = self.current_span();
 
         let name_token = self.advance();
         let name = self.make_ident(name_token);
@@ -1481,14 +1530,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // Actually the lexer transitions to InMacro when it sees the MACRO keyword.
         // So after our advance() of the name, the MACRO keyword is in buf[0].
         // We consume it, then the lexer has entered InMacro and will emit KwEnd.
-        self.expect(TokenKind::KwMacro)?;
+        self.expect(SyntaxKind::KwMacro)?;
         // Now the lexer is in InMacro mode. The next non-comment token from
         // the buffer will be KwEnd (or Eof if malformed).
-        if self.check(TokenKind::KwEnd) {
+        if self.check(SyntaxKind::KwEnd) {
             self.advance();
         }
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(Definition::MacroDefinition(MacroDefinitionDef {
             name,
             span,
@@ -1497,16 +1546,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Clause parsers ----
 
-    fn parse_access_clause(&mut self) -> Result<AccessClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_access_clause(&mut self) -> Result<AccessClause, Diagnostic> {
+        let start = self.current_span();
 
-        let keyword = if self.check(TokenKind::KwMaxAccess) {
+        let keyword = if self.check(SyntaxKind::KwMaxAccess) {
             self.advance();
             AccessKeyword::MaxAccess
-        } else if self.check(TokenKind::KwAccess) {
+        } else if self.check(SyntaxKind::KwAccess) {
             self.advance();
             AccessKeyword::Access
-        } else if self.check(TokenKind::KwMinAccess) {
+        } else if self.check(SyntaxKind::KwMinAccess) {
             self.advance();
             AccessKeyword::MinAccess
         } else {
@@ -1514,38 +1563,38 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         let value = match self.peek().kind {
-            TokenKind::KwReadOnly => {
+            SyntaxKind::KwReadOnly => {
                 self.advance();
                 Access::ReadOnly
             }
-            TokenKind::KwReadWrite => {
+            SyntaxKind::KwReadWrite => {
                 self.advance();
                 Access::ReadWrite
             }
-            TokenKind::KwReadCreate => {
+            SyntaxKind::KwReadCreate => {
                 self.advance();
                 Access::ReadCreate
             }
-            TokenKind::KwNotAccessible => {
+            SyntaxKind::KwNotAccessible => {
                 self.advance();
                 Access::NotAccessible
             }
-            TokenKind::KwAccessibleForNotify => {
+            SyntaxKind::KwAccessibleForNotify => {
                 self.advance();
                 Access::AccessibleForNotify
             }
-            TokenKind::KwWriteOnly => {
+            SyntaxKind::KwWriteOnly => {
                 self.advance();
                 Access::WriteOnly
             }
-            TokenKind::KwNotImplemented => {
+            SyntaxKind::KwNotImplemented => {
                 self.advance();
                 Access::NotImplemented
             }
             _ => return Err(self.make_error("expected access value".to_string())),
         };
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(AccessClause {
             keyword,
             value,
@@ -1553,54 +1602,54 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         })
     }
 
-    fn parse_status_clause(&mut self) -> Result<StatusClause, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwStatus)?;
+    fn parse_status_clause(&mut self) -> Result<StatusClause, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwStatus)?;
 
         let value = match self.peek().kind {
-            TokenKind::KwCurrent => {
+            SyntaxKind::KwCurrent => {
                 self.advance();
                 Status::Current
             }
-            TokenKind::KwDeprecated => {
+            SyntaxKind::KwDeprecated => {
                 self.advance();
                 Status::Deprecated
             }
-            TokenKind::KwObsolete => {
+            SyntaxKind::KwObsolete => {
                 self.advance();
                 Status::Obsolete
             }
-            TokenKind::KwMandatory => {
+            SyntaxKind::KwMandatory => {
                 self.advance();
                 Status::Mandatory
             }
-            TokenKind::KwOptional => {
+            SyntaxKind::KwOptional => {
                 self.advance();
                 Status::Optional
             }
             _ => return Err(self.make_error("expected status value".to_string())),
         };
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(StatusClause { value, span })
     }
 
     fn parse_index_or_augments(
         &mut self,
-    ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), SpanDiagnostic> {
-        if self.check(TokenKind::KwIndex) {
-            let start = self.current_span().start;
+    ) -> Result<(Option<IndexClause>, Option<AugmentsClause>), Diagnostic> {
+        if self.check(SyntaxKind::KwIndex) {
+            let start = self.current_span();
             self.advance();
-            self.expect(TokenKind::LBrace)?;
+            self.expect(SyntaxKind::LBrace)?;
 
             let mut items = Vec::new();
             loop {
-                if self.check(TokenKind::RBrace) || self.is_eof() {
+                if self.check(SyntaxKind::RBrace) || self.is_eof() {
                     break;
                 }
 
-                let item_start = self.current_span().start;
-                let implied = if self.check(TokenKind::KwImplied) {
+                let item_start = self.current_span();
+                let implied = if self.check(SyntaxKind::KwImplied) {
                     self.advance();
                     true
                 } else {
@@ -1611,64 +1660,64 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
                 // Special case: merge OCTET STRING into single identifier
                 let object =
-                    if obj_token.kind == TokenKind::KwOctet && self.check(TokenKind::KwString) {
+                    if obj_token.kind == SyntaxKind::KwOctet && self.check(SyntaxKind::KwString) {
                         let string_token = self.advance();
                         Ident {
                             name: "OCTET STRING".to_string(),
-                            span: Span::new(obj_token.span.start, string_token.span.end),
+                            span: cover(obj_token.span, string_token.span),
                         }
                     } else {
                         self.make_ident(obj_token)
                     };
 
-                let item_span = Span::new(item_start, self.last_end);
+                let item_span = cover(item_start, self.last_span);
                 items.push(IndexItem {
                     implied,
                     object,
                     span: item_span,
                 });
 
-                if self.check(TokenKind::Comma) {
+                if self.check(SyntaxKind::Comma) {
                     self.advance();
                 } else {
                     break;
                 }
             }
 
-            self.expect(TokenKind::RBrace)?;
-            let span = Span::new(start, self.last_end);
+            self.expect(SyntaxKind::RBrace)?;
+            let span = cover(start, self.last_span);
             return Ok((Some(IndexClause { items, span }), None));
         }
 
-        if self.check(TokenKind::KwAugments) {
-            let start = self.current_span().start;
+        if self.check(SyntaxKind::KwAugments) {
+            let start = self.current_span();
             self.advance();
-            self.expect(TokenKind::LBrace)?;
+            self.expect(SyntaxKind::LBrace)?;
             let target_token = self.expect_identifier()?;
             let target = self.make_ident(target_token);
-            self.expect(TokenKind::RBrace)?;
-            let span = Span::new(start, self.last_end);
+            self.expect(SyntaxKind::RBrace)?;
+            let span = cover(start, self.last_span);
             return Ok((None, Some(AugmentsClause { target, span })));
         }
 
         Ok((None, None))
     }
 
-    fn parse_defval_clause(&mut self) -> Result<DefValClause, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::KwDefval)?;
-        self.expect(TokenKind::LBrace)?;
+    fn parse_defval_clause(&mut self) -> Result<DefValClause, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::KwDefval)?;
+        self.expect(SyntaxKind::LBrace)?;
 
         let value = self.parse_defval()?;
 
-        self.expect(TokenKind::RBrace)?;
-        let span = Span::new(start, self.last_end);
+        self.expect(SyntaxKind::RBrace)?;
+        let span = cover(start, self.last_span);
         Ok(DefValClause { value, span })
     }
 
-    fn parse_defval(&mut self) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval(&mut self) -> Result<DefVal, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
                 let text = self.text(token.span);
                 // Try i64 first, then u64
@@ -1681,16 +1730,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     Ok(DefVal::Integer(0))
                 }
             }
-            TokenKind::NegativeNumber => {
+            SyntaxKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "DEFVAL number")?;
+                let v = self.parse_i64(token.span, "DEFVAL number");
                 Ok(DefVal::Integer(v))
             }
-            TokenKind::QuotedString => {
+            SyntaxKind::QuotedString => {
                 let qs = self.parse_quoted_string()?;
                 Ok(DefVal::String(qs))
             }
-            TokenKind::HexString => {
+            SyntaxKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let content = strip_string_literal(&full_text);
@@ -1699,7 +1748,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: token.span,
                 })
             }
-            TokenKind::BinString => {
+            SyntaxKind::BinString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let content = strip_string_literal(&full_text);
@@ -1708,11 +1757,11 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     span: token.span,
                 })
             }
-            TokenKind::LowercaseIdent | TokenKind::UppercaseIdent => {
+            SyntaxKind::LowercaseIdent | SyntaxKind::UppercaseIdent => {
                 let token = self.advance();
                 Ok(DefVal::Identifier(self.make_ident(token)))
             }
-            TokenKind::LBrace => {
+            SyntaxKind::LBrace => {
                 self.advance(); // consume opening brace
                 self.parse_defval_braced_content()
             }
@@ -1723,21 +1772,21 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
             _ => {
                 // Unknown - skip to matching brace
-                let start = self.current_span().start;
+                let start = self.current_span();
                 // We're inside DEFVAL { ... }, just skip unknown content
                 Ok(DefVal::Unparsed {
-                    span: Span::new(start, self.current_span().end),
+                    span: cover(start, self.current_span()),
                 })
             }
         }
     }
 
-    fn parse_defval_braced_content(&mut self) -> Result<DefVal, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_defval_braced_content(&mut self) -> Result<DefVal, Diagnostic> {
+        let start = self.current_span();
 
         // Empty braces: BITS {}
-        if self.check(TokenKind::RBrace) {
-            let span = Span::new(start, self.current_span().end);
+        if self.check(SyntaxKind::RBrace) {
+            let span = cover(start, self.current_span());
             self.advance(); // consume inner closing brace
             return Ok(DefVal::Bits {
                 labels: Vec::new(),
@@ -1748,10 +1797,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // First token determines interpretation
         let kind = self.peek().kind;
 
-        if kind == TokenKind::Number {
+        if kind == SyntaxKind::Number {
             // OID numeric: { 1 3 6 1 }
             let result = self.parse_defval_oid_components(start)?;
-            self.expect(TokenKind::RBrace)?; // consume inner closing brace
+            self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
             return Ok(result);
         }
 
@@ -1760,35 +1809,35 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             let first_ident = self.make_ident(first_token);
 
             // If next is comma or RBrace, this is BITS labels
-            if self.check(TokenKind::Comma) || self.check(TokenKind::RBrace) {
+            if self.check(SyntaxKind::Comma) || self.check(SyntaxKind::RBrace) {
                 let result = self.parse_defval_bits_labels(start, first_ident)?;
-                self.expect(TokenKind::RBrace)?; // consume inner closing brace
+                self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
                 return Ok(result);
             }
 
             // Otherwise this is OID starting with a name
             let result = self.parse_defval_oid_with_first_ident(start, first_ident)?;
-            self.expect(TokenKind::RBrace)?; // consume inner closing brace
+            self.expect(SyntaxKind::RBrace)?; // consume inner closing brace
             return Ok(result);
         }
 
         // Unknown content - skip
         self.skip_braced_content(true); // consume inner closing brace
         Ok(DefVal::Unparsed {
-            span: Span::new(start, self.current_span().end),
+            span: cover(start, self.current_span()),
         })
     }
 
     fn parse_defval_bits_labels(
         &mut self,
-        start: ByteOffset,
+        start: SourceRange,
         first: Ident,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    ) -> Result<DefVal, Diagnostic> {
         let mut labels = vec![first];
 
-        while self.check(TokenKind::Comma) {
+        while self.check(SyntaxKind::Comma) {
             self.advance(); // consume comma
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
             let token = self.expect_enum_label()?;
@@ -1796,24 +1845,24 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
 
         Ok(DefVal::Bits {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             labels,
         })
     }
 
     fn parse_defval_oid_with_first_ident(
         &mut self,
-        start: ByteOffset,
+        start: SourceRange,
         first: Ident,
-    ) -> Result<DefVal, SpanDiagnostic> {
+    ) -> Result<DefVal, Diagnostic> {
         // First component might be name(number)
-        let first_component = if self.check(TokenKind::LParen) {
+        let first_component = if self.check(SyntaxKind::LParen) {
             self.advance();
-            let num_token = self.expect(TokenKind::Number)?;
-            let num = self.parse_u32(num_token.span, "OID component")?;
-            self.expect(TokenKind::RParen)?;
+            let num_token = self.expect(SyntaxKind::Number)?;
+            let num = self.parse_u32(num_token.span, "OID component");
+            self.expect(SyntaxKind::RParen)?;
             OidComponent::NamedNumber {
-                span: Span::new(first.span.start, self.last_end),
+                span: cover(first.span, self.last_span),
                 name: first,
                 num,
             }
@@ -1825,17 +1874,17 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         self.collect_defval_oid_components(&mut components)?;
 
         Ok(DefVal::ObjectIdentifier {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             components,
         })
     }
 
-    fn parse_defval_oid_components(&mut self, start: ByteOffset) -> Result<DefVal, SpanDiagnostic> {
+    fn parse_defval_oid_components(&mut self, start: SourceRange) -> Result<DefVal, Diagnostic> {
         let mut components = Vec::new();
         self.collect_defval_oid_components(&mut components)?;
 
         Ok(DefVal::ObjectIdentifier {
-            span: Span::new(start, self.current_span().start),
+            span: self.range_to_current_start(start),
             components,
         })
     }
@@ -1843,14 +1892,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
     fn collect_defval_oid_components(
         &mut self,
         components: &mut Vec<OidComponent>,
-    ) -> Result<(), SpanDiagnostic> {
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
+    ) -> Result<(), Diagnostic> {
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
             let kind = self.peek().kind;
-            if kind == TokenKind::Number
-                || kind == TokenKind::LowercaseIdent
-                || kind == TokenKind::UppercaseIdent
+            if kind == SyntaxKind::Number
+                || kind == SyntaxKind::LowercaseIdent
+                || kind == SyntaxKind::UppercaseIdent
             {
-                let comp = self.parse_oid_component()?;
+                let comp = self.parse_oid_component("OID component number")?;
                 components.push(comp);
             } else {
                 break;
@@ -1861,23 +1910,23 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Type syntax parsing ----
 
-    fn parse_syntax_clause(&mut self) -> Result<SyntaxClause, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_syntax_clause(&mut self) -> Result<SyntaxClause, Diagnostic> {
+        let start = self.current_span();
         let syntax = self.parse_type_syntax()?;
-        let span = Span::new(start, syntax.span().end);
+        let span = cover(start, syntax.span());
         Ok(SyntaxClause { syntax, span })
     }
 
-    fn parse_type_syntax(&mut self) -> Result<TypeSyntax, SpanDiagnostic> {
-        let start = self.current_span().start;
+    fn parse_type_syntax(&mut self) -> Result<TypeSyntax, Diagnostic> {
+        let start = self.current_span();
 
         let base = match self.peek().kind {
-            TokenKind::KwInteger => {
+            SyntaxKind::KwInteger => {
                 self.advance();
-                if self.check(TokenKind::LBrace) {
+                if self.check(SyntaxKind::LBrace) {
                     // INTEGER { enum-values }
                     let named_numbers = self.parse_named_numbers()?;
-                    let span = Span::new(start, self.last_end);
+                    let span = cover(start, self.last_span);
                     TypeSyntax::IntegerEnum {
                         base: None,
                         named_numbers,
@@ -1886,100 +1935,100 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 } else {
                     TypeSyntax::TypeRef(Ident {
                         name: "INTEGER".to_string(),
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     })
                 }
             }
 
-            TokenKind::KwBits => {
+            SyntaxKind::KwBits => {
                 self.advance();
-                if self.check(TokenKind::LBrace) {
-                    self.expect(TokenKind::LBrace)?;
+                if self.check(SyntaxKind::LBrace) {
+                    self.expect(SyntaxKind::LBrace)?;
                     let named_bits = self.parse_named_number_list()?;
-                    self.expect(TokenKind::RBrace)?;
-                    let span = Span::new(start, self.last_end);
+                    self.expect(SyntaxKind::RBrace)?;
+                    let span = cover(start, self.last_span);
                     TypeSyntax::Bits { named_bits, span }
                 } else {
                     TypeSyntax::TypeRef(Ident {
                         name: "BITS".to_string(),
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     })
                 }
             }
 
-            TokenKind::KwOctet => {
+            SyntaxKind::KwOctet => {
                 self.advance();
-                self.expect(TokenKind::KwString)?;
-                if self.check(TokenKind::LParen) {
+                self.expect(SyntaxKind::KwString)?;
+                if self.check(SyntaxKind::LParen) {
                     let constraint = self.parse_constraint()?;
-                    let span = Span::new(start, constraint.span().end);
+                    let span = cover(start, constraint.span());
                     TypeSyntax::Constrained {
                         base: Box::new(TypeSyntax::OctetString {
-                            span: Span::new(start, self.last_end),
+                            span: cover(start, self.last_span),
                         }),
                         constraint,
                         span,
                     }
                 } else {
                     TypeSyntax::OctetString {
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 }
             }
 
-            TokenKind::KwObject => {
+            SyntaxKind::KwObject => {
                 self.advance();
-                self.expect(TokenKind::KwIdentifier)?;
+                self.expect(SyntaxKind::KwIdentifier)?;
                 TypeSyntax::ObjectIdentifier {
-                    span: Span::new(start, self.last_end),
+                    span: cover(start, self.last_span),
                 }
             }
 
-            TokenKind::KwSequence => {
+            SyntaxKind::KwSequence => {
                 self.advance();
-                if self.check(TokenKind::KwOf) {
+                if self.check(SyntaxKind::KwOf) {
                     // SEQUENCE OF EntryType
                     self.advance();
                     let entry_token = self.expect_identifier()?;
                     let entry_type = self.make_ident(entry_token);
                     TypeSyntax::SequenceOf {
                         entry_type,
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 } else {
                     // SEQUENCE { fields }
-                    self.expect(TokenKind::LBrace)?;
+                    self.expect(SyntaxKind::LBrace)?;
                     let fields = self.parse_sequence_fields()?;
-                    self.expect(TokenKind::RBrace)?;
+                    self.expect(SyntaxKind::RBrace)?;
                     TypeSyntax::Sequence {
                         fields,
-                        span: Span::new(start, self.last_end),
+                        span: cover(start, self.last_span),
                     }
                 }
             }
 
-            TokenKind::KwChoice => {
+            SyntaxKind::KwChoice => {
                 self.advance();
-                self.expect(TokenKind::LBrace)?;
+                self.expect(SyntaxKind::LBrace)?;
                 let alternatives = self.parse_sequence_fields()?;
-                self.expect(TokenKind::RBrace)?;
+                self.expect(SyntaxKind::RBrace)?;
                 TypeSyntax::Choice {
                     alternatives,
-                    span: Span::new(start, self.last_end),
+                    span: cover(start, self.last_span),
                 }
             }
 
             // Application type keywords
-            TokenKind::KwCounter32
-            | TokenKind::KwCounter64
-            | TokenKind::KwGauge32
-            | TokenKind::KwUnsigned32
-            | TokenKind::KwTimeTicks
-            | TokenKind::KwIpAddress
-            | TokenKind::KwOpaque
-            | TokenKind::KwCounter
-            | TokenKind::KwGauge
-            | TokenKind::KwNetworkAddress => {
+            SyntaxKind::KwCounter32
+            | SyntaxKind::KwCounter64
+            | SyntaxKind::KwGauge32
+            | SyntaxKind::KwUnsigned32
+            | SyntaxKind::KwTimeTicks
+            | SyntaxKind::KwIpAddress
+            | SyntaxKind::KwOpaque
+            | SyntaxKind::KwCounter
+            | SyntaxKind::KwGauge
+            | SyntaxKind::KwNetworkAddress => {
                 let token = self.advance();
                 let name = self.text(token.span).to_string();
                 TypeSyntax::TypeRef(Ident {
@@ -1988,12 +2037,22 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 })
             }
 
+            // NULL occurs as an unsupported alternative in the legacy
+            // SimpleSyntax CHOICE from RFC 1065 and RFC 1155. Preserve it as
+            // an opaque type reference so those foundation modules can pass
+            // through the ordinary parser without admitting other reserved
+            // ASN.1 keywords as type names.
+            SyntaxKind::ForbiddenKeyword if self.text(self.peek().span) == "NULL" => {
+                let token = self.advance();
+                TypeSyntax::TypeRef(self.make_ident(token))
+            }
+
             // Named type reference (identifier)
-            TokenKind::UppercaseIdent | TokenKind::LowercaseIdent => {
+            SyntaxKind::UppercaseIdent | SyntaxKind::LowercaseIdent => {
                 let token = self.advance();
                 let ident = self.make_ident(token);
 
-                if token.kind == TokenKind::LowercaseIdent {
+                if token.kind == SyntaxKind::LowercaseIdent {
                     self.emit_diagnostic_with(DiagCode::BadIdentifierCase, token.span, || {
                         format!(
                             "type reference {:?} should start with an uppercase letter",
@@ -2002,19 +2061,19 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     });
                 }
 
-                if self.check(TokenKind::LParen) {
+                if self.check(SyntaxKind::LParen) {
                     // Type with constraint
                     let constraint = self.parse_constraint()?;
-                    let span = Span::new(start, constraint.span().end);
+                    let span = cover(start, constraint.span());
                     TypeSyntax::Constrained {
                         base: Box::new(TypeSyntax::TypeRef(ident)),
                         constraint,
                         span,
                     }
-                } else if self.check(TokenKind::LBrace) {
+                } else if self.check(SyntaxKind::LBrace) {
                     // Restricted integer enum: TypeName { val1(1), val2(2) }
                     let named_numbers = self.parse_named_numbers()?;
-                    let span = Span::new(start, self.last_end);
+                    let span = cover(start, self.last_span);
                     TypeSyntax::IntegerEnum {
                         base: Some(ident),
                         named_numbers,
@@ -2026,23 +2085,23 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
 
             // Tagged type: [APPLICATION n] IMPLICIT Type
-            TokenKind::LBracket => {
+            SyntaxKind::LBracket => {
                 self.advance();
                 // Skip tag class keyword if present
-                if self.check(TokenKind::KwApplication) || self.check(TokenKind::KwUniversal) {
+                if self.check(SyntaxKind::KwApplication) || self.check(SyntaxKind::KwUniversal) {
                     self.advance();
                 }
                 // Skip tag number
-                if self.check(TokenKind::Number) {
+                if self.check(SyntaxKind::Number) {
                     self.advance();
                 }
-                self.expect(TokenKind::RBracket)?;
+                self.expect(SyntaxKind::RBracket)?;
                 // Skip IMPLICIT if present
-                if self.check(TokenKind::KwImplicit) {
+                if self.check(SyntaxKind::KwImplicit) {
                     self.advance();
                 }
                 let underlying = self.parse_type_syntax()?;
-                let span = Span::new(start, underlying.span().end);
+                let span = cover(start, underlying.span());
                 TypeSyntax::Tagged {
                     underlying: Box::new(underlying),
                     span,
@@ -2055,9 +2114,9 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         };
 
         // Post-processing: check for trailing constraint on non-constrained base
-        if self.check(TokenKind::LParen) && !matches!(base, TypeSyntax::Constrained { .. }) {
+        if self.check(SyntaxKind::LParen) && !matches!(base, TypeSyntax::Constrained { .. }) {
             let constraint = self.parse_constraint()?;
-            let span = Span::new(start, constraint.span().end);
+            let span = cover(start, constraint.span());
             return Ok(TypeSyntax::Constrained {
                 base: Box::new(base),
                 constraint,
@@ -2070,50 +2129,50 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Constraint parsing ----
 
-    fn parse_constraint(&mut self) -> Result<Constraint, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::LParen)?;
+    fn parse_constraint(&mut self) -> Result<Constraint, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::LParen)?;
 
-        if self.check(TokenKind::KwSize) {
+        if self.check(SyntaxKind::KwSize) {
             // SIZE constraint
             self.advance();
-            self.expect(TokenKind::LParen)?;
+            self.expect(SyntaxKind::LParen)?;
             let ranges = self.parse_range_list()?;
-            self.expect(TokenKind::RParen)?;
-            self.expect(TokenKind::RParen)?;
-            let span = Span::new(start, self.last_end);
+            self.expect(SyntaxKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
+            let span = cover(start, self.last_span);
             Ok(Constraint::Size { ranges, span })
         } else {
             // Value range constraint
             let ranges = self.parse_range_list()?;
-            self.expect(TokenKind::RParen)?;
-            let span = Span::new(start, self.last_end);
+            self.expect(SyntaxKind::RParen)?;
+            let span = cover(start, self.last_span);
             Ok(Constraint::Range { ranges, span })
         }
     }
 
-    fn parse_range_list(&mut self) -> Result<Vec<Range>, SpanDiagnostic> {
+    fn parse_range_list(&mut self) -> Result<Vec<Range>, Diagnostic> {
         let mut ranges = Vec::new();
 
         loop {
-            let range_start = self.current_span().start;
+            let range_start = self.current_span();
             let min = self.parse_range_value()?;
 
-            let max = if self.check(TokenKind::DotDot) {
+            let max = if self.check(SyntaxKind::DotDot) {
                 self.advance();
                 Some(self.parse_range_value()?)
             } else {
                 None
             };
 
-            let range_span = Span::new(range_start, self.last_end);
+            let range_span = cover(range_start, self.last_span);
             ranges.push(Range {
                 min,
                 max,
                 span: range_span,
             });
 
-            if self.check(TokenKind::Pipe) {
+            if self.check(SyntaxKind::Pipe) {
                 self.advance();
             } else {
                 break;
@@ -2123,24 +2182,37 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(ranges)
     }
 
-    fn parse_range_value(&mut self) -> Result<RangeValue, SpanDiagnostic> {
+    fn parse_range_value(&mut self) -> Result<RangeValue, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
                 let text = self.text(token.span);
                 if let Ok(v) = text.parse::<u64>() {
                     Ok(RangeValue::Unsigned(v))
                 } else {
-                    let v = self.parse_i64(token.span, "range value")?;
-                    Ok(RangeValue::Signed(v))
+                    self.emit_diagnostic(
+                        DiagCode::UnknownRangeValue,
+                        token.span,
+                        format!("range value {text:?} is outside the supported integer range"),
+                    );
+                    Ok(RangeValue::Raw(text.into_owned()))
                 }
             }
-            TokenKind::NegativeNumber => {
+            SyntaxKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "range value")?;
-                Ok(RangeValue::Signed(v))
+                let text = self.text(token.span);
+                if let Ok(v) = text.parse::<i64>() {
+                    Ok(RangeValue::Signed(v))
+                } else {
+                    self.emit_diagnostic(
+                        DiagCode::UnknownRangeValue,
+                        token.span,
+                        format!("range value {text:?} is outside the supported integer range"),
+                    );
+                    Ok(RangeValue::Raw(text.into_owned()))
+                }
             }
-            TokenKind::HexString => {
+            SyntaxKind::HexString => {
                 let token = self.advance();
                 let full_text = self.text(token.span);
                 let hex_part = strip_string_literal(&full_text);
@@ -2160,7 +2232,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                     }
                 }
             }
-            TokenKind::UppercaseIdent | TokenKind::ForbiddenKeyword => {
+            SyntaxKind::UppercaseIdent | SyntaxKind::ForbiddenKeyword => {
                 let token = self.advance();
                 Ok(RangeValue::Named(self.make_ident(token)))
             }
@@ -2170,47 +2242,47 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- Named numbers and sequence fields ----
 
-    fn parse_named_numbers(&mut self) -> Result<Vec<NamedNumber>, SpanDiagnostic> {
-        self.expect(TokenKind::LBrace)?;
+    fn parse_named_numbers(&mut self) -> Result<Vec<NamedNumber>, Diagnostic> {
+        self.expect(SyntaxKind::LBrace)?;
         let list = self.parse_named_number_list()?;
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
         Ok(list)
     }
 
-    fn parse_named_number_list(&mut self) -> Result<Vec<NamedNumber>, SpanDiagnostic> {
+    fn parse_named_number_list(&mut self) -> Result<Vec<NamedNumber>, Diagnostic> {
         let mut items = Vec::new();
 
         loop {
-            if self.check(TokenKind::RBrace) || self.is_eof() {
+            if self.check(SyntaxKind::RBrace) || self.is_eof() {
                 break;
             }
 
-            let nn_start = self.current_span().start;
+            let nn_start = self.current_span();
             let label_token = self.expect_enum_label()?;
             let label = self.make_ident(label_token);
 
-            self.expect(TokenKind::LParen)?;
+            self.expect(SyntaxKind::LParen)?;
 
-            let value = if self.check(TokenKind::NegativeNumber) {
+            let value = if self.check(SyntaxKind::NegativeNumber) {
                 let num_token = self.advance();
-                self.parse_i64(num_token.span, "named number")?
+                self.parse_i64(num_token.span, "named number")
             } else {
-                let num_token = self.expect(TokenKind::Number)?;
-                self.parse_i64(num_token.span, "named number")?
+                let num_token = self.expect(SyntaxKind::Number)?;
+                self.parse_i64(num_token.span, "named number")
             };
 
-            self.expect(TokenKind::RParen)?;
+            self.expect(SyntaxKind::RParen)?;
 
-            let nn_span = Span::new(nn_start, self.last_end);
+            let nn_span = cover(nn_start, self.last_span);
             items.push(NamedNumber {
                 name: label,
                 value,
                 span: nn_span,
             });
 
-            if self.check(TokenKind::Comma) {
+            if self.check(SyntaxKind::Comma) {
                 self.advance();
-            } else if !self.check(TokenKind::RBrace) && !self.is_eof() {
+            } else if !self.check(SyntaxKind::RBrace) && !self.is_eof() {
                 // Recovery: missing comma before another named number.
                 self.emit_diagnostic(
                     DiagCode::MissingComma,
@@ -2223,16 +2295,16 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(items)
     }
 
-    fn parse_sequence_fields(&mut self) -> Result<Vec<SequenceField>, SpanDiagnostic> {
+    fn parse_sequence_fields(&mut self) -> Result<Vec<SequenceField>, Diagnostic> {
         let mut fields = Vec::new();
 
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
-            let field_start = self.current_span().start;
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
+            let field_start = self.current_span();
             let name_token = self.expect_identifier()?;
             let name = self.make_ident(name_token);
 
             let syntax = self.parse_type_syntax()?;
-            let field_span = Span::new(field_start, syntax.span().end);
+            let field_span = cover(field_start, syntax.span());
 
             fields.push(SequenceField {
                 name,
@@ -2241,7 +2313,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             });
 
             // Consume comma if present, but tolerate missing commas
-            if self.check(TokenKind::Comma) {
+            if self.check(SyntaxKind::Comma) {
                 self.advance();
             }
         }
@@ -2251,51 +2323,54 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
     // ---- OID assignment parsing ----
 
-    fn parse_oid_assignment(&mut self) -> Result<OidAssignment, SpanDiagnostic> {
-        let start = self.current_span().start;
-        self.expect(TokenKind::LBrace)?;
+    fn parse_oid_assignment(&mut self) -> Result<OidAssignment, Diagnostic> {
+        let start = self.current_span();
+        self.expect(SyntaxKind::LBrace)?;
 
         let mut components = Vec::new();
-        while !self.check(TokenKind::RBrace) && !self.is_eof() {
-            let comp = self.parse_oid_component()?;
+        while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
+            let comp = self.parse_oid_component("OID component")?;
             components.push(comp);
         }
 
-        self.expect(TokenKind::RBrace)?;
+        self.expect(SyntaxKind::RBrace)?;
 
-        let span = Span::new(start, self.last_end);
+        let span = cover(start, self.last_span);
         Ok(OidAssignment { components, span })
     }
 
-    fn parse_oid_component(&mut self) -> Result<OidComponent, SpanDiagnostic> {
+    fn parse_oid_component(
+        &mut self,
+        named_number_context: &str,
+    ) -> Result<OidComponent, Diagnostic> {
         match self.peek().kind {
-            TokenKind::Number => {
+            SyntaxKind::Number => {
                 let token = self.advance();
-                let value = self.parse_u32(token.span, "OID component")?;
+                let value = self.parse_u32(token.span, "OID component");
                 Ok(OidComponent::Number {
                     value,
                     span: token.span,
                 })
             }
-            TokenKind::LowercaseIdent | TokenKind::UppercaseIdent => {
+            SyntaxKind::LowercaseIdent | SyntaxKind::UppercaseIdent => {
                 let token = self.advance();
                 let ident = self.make_ident(token);
 
                 // Check for qualified name: Module.name
-                if self.check(TokenKind::Dot) && token.kind == TokenKind::UppercaseIdent {
+                if self.check(SyntaxKind::Dot) && token.kind == SyntaxKind::UppercaseIdent {
                     let next = self.peek_nth(1).kind;
-                    if next == TokenKind::LowercaseIdent || next == TokenKind::UppercaseIdent {
+                    if next == SyntaxKind::LowercaseIdent || next == SyntaxKind::UppercaseIdent {
                         self.advance(); // consume dot
                         let name_token = self.advance();
                         let name_ident = self.make_ident(name_token);
 
                         // Check for qualified named number: Module.name(number)
-                        if self.check(TokenKind::LParen) {
+                        if self.check(SyntaxKind::LParen) {
                             self.advance();
-                            let num_token = self.expect(TokenKind::Number)?;
-                            let num = self.parse_u32(num_token.span, "OID component number")?;
-                            self.expect(TokenKind::RParen)?;
-                            let span = Span::new(ident.span.start, self.last_end);
+                            let num_token = self.expect(SyntaxKind::Number)?;
+                            let num = self.parse_u32(num_token.span, named_number_context);
+                            self.expect(SyntaxKind::RParen)?;
+                            let span = cover(ident.span, self.last_span);
                             return Ok(OidComponent::QualifiedNamedNumber {
                                 module_name: ident,
                                 name: name_ident,
@@ -2304,7 +2379,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                             });
                         }
 
-                        let span = Span::new(ident.span.start, name_ident.span.end);
+                        let span = cover(ident.span, name_ident.span);
                         return Ok(OidComponent::QualifiedName {
                             module_name: ident,
                             name: name_ident,
@@ -2314,12 +2389,12 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 }
 
                 // Check for named number: name(number)
-                if self.check(TokenKind::LParen) {
+                if self.check(SyntaxKind::LParen) {
                     self.advance();
-                    let num_token = self.expect(TokenKind::Number)?;
-                    let num = self.parse_u32(num_token.span, "OID component number")?;
-                    self.expect(TokenKind::RParen)?;
-                    let span = Span::new(ident.span.start, self.last_end);
+                    let num_token = self.expect(SyntaxKind::Number)?;
+                    let num = self.parse_u32(num_token.span, named_number_context);
+                    self.expect(SyntaxKind::RParen)?;
+                    let span = cover(ident.span, self.last_span);
                     return Ok(OidComponent::NamedNumber {
                         name: ident,
                         num,
@@ -2351,17 +2426,18 @@ fn strip_string_literal(s: &str) -> &str {
 /// This is the main entry point for parsing. A single source file may
 /// contain multiple concatenated MIB modules (common in RFC files).
 /// Each returned [`Module`] carries its own diagnostics.
-pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
+pub fn parse(document: &SourceDocument, diag_config: &DiagnosticConfig) -> Vec<Module> {
     let span = info_span!(
         target: "mib_rs::parser",
         "parse",
         component = "parser",
-        byte_count = source.len(),
+        source = document.label(),
+        byte_count = document.bytes().len(),
         reporting = ?diag_config.reporting,
     );
     let _guard = span.enter();
 
-    let mut parser = Parser::new(source, diag_config);
+    let mut parser = Parser::new(document, diag_config);
     let modules = parser.parse_modules();
     debug!(
         target: "mib_rs::parser",
@@ -2375,13 +2451,28 @@ pub fn parse(source: &[u8], diag_config: &DiagnosticConfig) -> Vec<Module> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::{SourceOrigin, SourceSet};
+    use crate::types::Severity;
+    use std::sync::Arc;
+
+    fn parse_with_config(input: &str, config: &DiagnosticConfig) -> Vec<Module> {
+        let mut sources = SourceSet::new();
+        let id = sources
+            .insert(
+                SourceOrigin::memory("parser-test"),
+                "parser-test",
+                Arc::from(input.as_bytes()),
+            )
+            .unwrap();
+        parse(sources.get(id).unwrap(), config)
+    }
 
     fn parse_str(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), &DiagnosticConfig::default())
+        parse_with_config(input, &DiagnosticConfig::default())
     }
 
     fn parse_strict(input: &str) -> Vec<Module> {
-        parse(input.as_bytes(), &DiagnosticConfig::verbose())
+        parse_with_config(input, &DiagnosticConfig::verbose())
     }
 
     #[test]
@@ -2389,6 +2480,7 @@ mod tests {
         let modules = parse_str("");
         assert_eq!(modules.len(), 1);
         assert!(modules[0].name.is_none());
+        assert_eq!(modules[0].span.byte_range(), 0..0);
     }
 
     #[test]
@@ -2413,7 +2505,12 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(11, 13));
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 11..13);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
+        assert_eq!(diagnostics[0].module.as_deref(), Some("TEST-MIB"));
     }
 
     #[test]
@@ -2429,7 +2526,11 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::NumberLeadingZero)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(8, 10));
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 8..10);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
     }
 
     #[test]
@@ -2444,7 +2545,11 @@ mod tests {
             .filter(|diag| diag.code == DiagCode::UnexpectedCharacter)
             .collect();
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(0, 1));
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 0..1);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
     }
 
     #[test]
@@ -2460,7 +2565,11 @@ mod tests {
             .collect();
         assert_eq!(diagnostics.len(), 1);
         let at = input.find('@').unwrap();
-        assert_eq!(diagnostics[0].span, Span::from_usize_offsets(at, at + 1));
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), at..at + 1);
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[0].span.source()
+        );
         assert!(
             modules[0]
                 .diagnostics
@@ -2492,8 +2601,12 @@ SECOND-MIB { 02 } DEFINITIONS ::= BEGIN\nEND\n";
         assert_eq!(diagnostics.len(), 1);
         let number_start = input.find("02").unwrap();
         assert_eq!(
-            diagnostics[0].span,
-            Span::from_usize_offsets(number_start, number_start + 2)
+            diagnostics[0].range.unwrap().byte_range(),
+            number_start..number_start + 2
+        );
+        assert_eq!(
+            diagnostics[0].range.unwrap().source(),
+            modules[1].span.source()
         );
     }
 
@@ -2621,6 +2734,29 @@ END
             }
             other => panic!("expected ModuleIdentity, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn quoted_string_decodes_doubled_quotes_but_retains_raw_range() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+testMIB MODULE-IDENTITY
+    LAST-UPDATED "200606140000Z"
+    ORGANIZATION "The ""quoted"" organization"
+    CONTACT-INFO "test@test"
+    DESCRIPTION "A test MIB."
+    ::= { enterprises 1 }
+END
+"#;
+        let modules = parse_str(input);
+        let Definition::ModuleIdentity(identity) = &modules[0].body[0] else {
+            panic!("expected module identity");
+        };
+        assert_eq!(identity.organization.value, "The \"quoted\" organization");
+        assert_eq!(
+            &input[identity.organization.span.byte_range()],
+            r#""The ""quoted"" organization""#
+        );
+        assert!(modules[0].diagnostics.is_empty());
     }
 
     #[test]
@@ -2922,9 +3058,13 @@ END
             Definition::ObjectType(d) => {
                 assert!(d.defval.is_some());
                 match &d.defval.as_ref().unwrap().value {
-                    DefVal::Bits { labels, .. } => {
+                    DefVal::Bits { labels, span } => {
                         assert_eq!(labels.len(), 1);
                         assert_eq!(labels[0].name, "flag1");
+                        let start = input.rfind("flag1 }").unwrap();
+                        let end = start + "flag1 ".len();
+                        assert_eq!(span.byte_range(), start..end);
+                        assert_eq!(&input[span.byte_range()], "flag1 ");
                     }
                     other => panic!("expected Bits DEFVAL, got {:?}", other),
                 }
@@ -3125,6 +3265,36 @@ END
             },
             other => panic!("expected TypeAssignment, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn null_type_does_not_admit_other_forbidden_keywords() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+SimpleSyntax ::= CHOICE { number INTEGER, empty NULL }
+RejectedSyntax ::= TRUE
+END
+"#;
+        let modules = parse_strict(input);
+
+        assert!(matches!(
+            &modules[0].body[0],
+            Definition::TypeAssignment(d)
+                if matches!(
+                    &d.syntax,
+                    TypeSyntax::Choice { alternatives, .. }
+                        if matches!(
+                            &alternatives[1].syntax,
+                            TypeSyntax::TypeRef(ident) if ident.name == "NULL"
+                        )
+                )
+        ));
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagCode::ParseError),
+            "other reserved ASN.1 words must not be accepted as named types"
+        );
     }
 
     #[test]
@@ -3391,8 +3561,51 @@ END
         );
         match &modules[0].body[0] {
             Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
-                DefVal::ObjectIdentifier { components, .. } => {
+                DefVal::ObjectIdentifier { components, span } => {
                     assert_eq!(components.len(), 4);
+                    let start = input.find("1 3 6 1 }").unwrap();
+                    let end = start + "1 3 6 1 ".len();
+                    assert_eq!(span.byte_range(), start..end);
+                    assert_eq!(&input[span.byte_range()], "1 3 6 1 ");
+                }
+                other => panic!("expected OID DEFVAL, got {:?}", other),
+            },
+            other => panic!("expected ObjectType, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defval_oid_first_ident_and_qualified_component_range() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+testObj OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "test"
+    DEFVAL { { iso(1) SNMPv2-SMI.enterprises 7 } }
+    ::= { test 1 }
+END
+"#;
+        let modules = parse_str(input);
+        assert!(
+            modules[0]
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::ParseError)
+        );
+        match &modules[0].body[0] {
+            Definition::ObjectType(d) => match &d.defval.as_ref().unwrap().value {
+                DefVal::ObjectIdentifier { components, span } => {
+                    assert_eq!(components.len(), 3);
+                    assert!(matches!(components[0], OidComponent::NamedNumber { .. }));
+                    assert!(matches!(components[1], OidComponent::QualifiedName { .. }));
+                    let start = input.find("iso(1) SNMPv2-SMI.enterprises 7 }").unwrap();
+                    let end = start + "iso(1) SNMPv2-SMI.enterprises 7 ".len();
+                    assert_eq!(span.byte_range(), start..end);
+                    assert_eq!(
+                        &input[span.byte_range()],
+                        "iso(1) SNMPv2-SMI.enterprises 7 "
+                    );
                 }
                 other => panic!("expected OID DEFVAL, got {:?}", other),
             },
@@ -3508,12 +3721,56 @@ END\n";
 
         let mut ignored = DiagnosticConfig::verbose();
         ignored.ignore.push("invalid-hex-range".to_string());
-        let ignored_modules = parse(input.as_bytes(), &ignored);
+        let ignored_modules = parse_with_config(input, &ignored);
         assert!(
             ignored_modules[0]
                 .diagnostics
                 .iter()
                 .all(|d| d.code != DiagCode::InvalidHexRange)
+        );
+    }
+
+    #[test]
+    fn overflowing_decimal_range_values_preserve_raw_source() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+Overflow ::= INTEGER (18446744073709551616)
+Underflow ::= INTEGER (-9223372036854775809)
+END
+"#;
+        let modules = parse_strict(input);
+        let module = &modules[0];
+
+        let raw_values: Vec<&str> = module
+            .body
+            .iter()
+            .map(|definition| match definition {
+                Definition::TypeAssignment(d) => match &d.syntax {
+                    TypeSyntax::Constrained {
+                        constraint: Constraint::Range { ranges, .. },
+                        ..
+                    } => match &ranges[0].min {
+                        RangeValue::Raw(raw) => raw.as_str(),
+                        other => panic!("expected raw range value, got {other:?}"),
+                    },
+                    other => panic!("expected constrained range, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(raw_values, ["18446744073709551616", "-9223372036854775809"]);
+        assert_eq!(
+            module
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagCode::UnknownRangeValue)
+                .count(),
+            2
+        );
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|d| d.code != DiagCode::InvalidI64)
         );
     }
 
@@ -3614,5 +3871,394 @@ END
             }
             other => panic!("expected ObjectType, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn integral_overflow_retains_zero_and_following_definitions() {
+        let input = r#"OVERFLOW-MIB DEFINITIONS ::= BEGIN
+OverflowEnum ::= INTEGER { high(9223372036854775808), low(-9223372036854775809), ok(1) }
+OverflowBits ::= BITS { high(9223372036854775809), low(-9223372036854775810), ok(2) }
+overflowOid OBJECT IDENTIFIER ::= { 4294967296 named(4294967297) REMOTE-MIB.qualified(4294967298) }
+positiveDefault OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "positive"
+    DEFVAL { 18446744073709551616 }
+    ::= { overflowOid 1 }
+validUnsignedDefault OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "valid unsigned"
+    DEFVAL { 18446744073709551615 }
+    ::= { overflowOid 4 }
+negativeDefault OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "negative"
+    DEFVAL { -9223372036854775811 }
+    ::= { overflowOid 2 }
+oidDefault OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "OID"
+    DEFVAL { { first(4294967299) 4294967300 REMOTE-MIB.qualified(4294967301) later(4294967302) } }
+    ::= { overflowOid 3 }
+numericFirstDefault OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "numeric-first OID"
+    DEFVAL { { 4294967304 later(4294967305) } }
+    ::= { overflowOid 5 }
+overflowTrap TRAP-TYPE
+    ENTERPRISE overflowOid
+    DESCRIPTION "trap"
+    ::= 4294967303
+after OBJECT IDENTIFIER ::= { overflowOid 7 }
+END
+"#;
+
+        let modules = parse_strict(input);
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.body.len(), 10);
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != DiagCode::ParseError)
+        );
+
+        let definition = |name: &str| {
+            module
+                .body
+                .iter()
+                .find(|definition| definition.name().is_some_and(|ident| ident.name == name))
+                .unwrap_or_else(|| panic!("missing definition {name}"))
+        };
+
+        for name in ["OverflowEnum", "OverflowBits"] {
+            let numbers = match definition(name) {
+                Definition::TypeAssignment(definition) => match &definition.syntax {
+                    TypeSyntax::IntegerEnum { named_numbers, .. }
+                    | TypeSyntax::Bits {
+                        named_bits: named_numbers,
+                        ..
+                    } => named_numbers,
+                    other => panic!("expected named-number syntax, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            };
+            assert_eq!(numbers.len(), 3);
+            assert_eq!(numbers[0].value, 0);
+            assert_eq!(numbers[1].value, 0);
+            assert_eq!(numbers[2].value, if name == "OverflowEnum" { 1 } else { 2 });
+        }
+
+        let oid = match definition("overflowOid") {
+            Definition::ValueAssignment(definition) => &definition.oid.components,
+            other => panic!("expected value assignment, got {other:?}"),
+        };
+        assert!(matches!(oid[0], OidComponent::Number { value: 0, .. }));
+        assert!(matches!(oid[1], OidComponent::NamedNumber { num: 0, .. }));
+        assert!(matches!(
+            oid[2],
+            OidComponent::QualifiedNamedNumber { num: 0, .. }
+        ));
+
+        for name in ["positiveDefault", "negativeDefault"] {
+            let defval = match definition(name) {
+                Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+                other => panic!("expected object type, got {other:?}"),
+            };
+            assert_eq!(defval, &DefVal::Integer(0));
+        }
+        let unsigned_defval = match definition("validUnsignedDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        assert_eq!(unsigned_defval, &DefVal::Unsigned(u64::MAX));
+
+        let oid_defval = match definition("oidDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        let components = match oid_defval {
+            DefVal::ObjectIdentifier { components, .. } => components,
+            other => panic!("expected OID DEFVAL, got {other:?}"),
+        };
+        assert!(matches!(
+            components.as_slice(),
+            [
+                OidComponent::NamedNumber { num: 0, .. },
+                OidComponent::Number { value: 0, .. },
+                OidComponent::QualifiedNamedNumber { num: 0, .. },
+                OidComponent::NamedNumber { num: 0, .. }
+            ]
+        ));
+
+        let numeric_first_defval = match definition("numericFirstDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        assert!(matches!(
+            numeric_first_defval,
+            DefVal::ObjectIdentifier { components, .. }
+                if matches!(
+                    components.as_slice(),
+                    [
+                        OidComponent::Number { value: 0, .. },
+                        OidComponent::NamedNumber { num: 0, .. }
+                    ]
+                )
+        ));
+
+        match definition("overflowTrap") {
+            Definition::TrapType(definition) => assert_eq!(definition.trap_number, 0),
+            other => panic!("expected trap type, got {other:?}"),
+        }
+        assert!(matches!(
+            definition("after"),
+            Definition::ValueAssignment(_)
+        ));
+
+        let invalid_i64: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidI64)
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                &input[range]
+            })
+            .collect();
+        assert_eq!(
+            invalid_i64,
+            [
+                "9223372036854775808",
+                "-9223372036854775809",
+                "9223372036854775809",
+                "-9223372036854775810",
+                "18446744073709551616",
+                "-9223372036854775811",
+            ]
+        );
+        let valid_unsigned_start = input.find("18446744073709551615").unwrap();
+        assert!(module.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != DiagCode::InvalidI64
+                || diagnostic.range.unwrap().byte_range()
+                    != (valid_unsigned_start..valid_unsigned_start + 20)
+        }));
+        let invalid_u32: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidU32)
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                &input[range]
+            })
+            .collect();
+        assert_eq!(
+            invalid_u32,
+            [
+                "4294967296",
+                "4294967297",
+                "4294967298",
+                "4294967299",
+                "4294967300",
+                "4294967301",
+                "4294967302",
+                "4294967304",
+                "4294967305",
+                "4294967303",
+            ]
+        );
+
+        let overflow_diagnostics: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+            })
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                (
+                    diagnostic.code,
+                    &input[range],
+                    diagnostic.message.as_str(),
+                    diagnostic.severity,
+                )
+            })
+            .collect();
+        assert_eq!(
+            overflow_diagnostics,
+            [
+                (
+                    DiagCode::InvalidI64,
+                    "9223372036854775808",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775809",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "9223372036854775809",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775810",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967296",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967297",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967298",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "18446744073709551616",
+                    "invalid DEFVAL number",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775811",
+                    "invalid DEFVAL number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967299",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967300",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967301",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967302",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967304",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967305",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967303",
+                    "invalid trap number (not a valid u32)",
+                    Severity::Error
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn integral_overflow_recovery_respects_diagnostic_policy() {
+        let input = r#"POLICY-MIB DEFINITIONS ::= BEGIN
+PolicyEnum ::= INTEGER { huge(9223372036854775808) }
+policyOid OBJECT IDENTIFIER ::= { root 4294967296 }
+after OBJECT IDENTIFIER ::= { root 1 }
+END
+"#;
+
+        let assert_recovery = |module: &Module| {
+            assert_eq!(module.body.len(), 3);
+            match &module.body[0] {
+                Definition::TypeAssignment(definition) => match &definition.syntax {
+                    TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                        assert_eq!(named_numbers[0].value, 0);
+                    }
+                    other => panic!("expected enum, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            }
+            match &module.body[1] {
+                Definition::ValueAssignment(definition) => assert!(matches!(
+                    definition.oid.components.as_slice(),
+                    [OidComponent::Name(_), OidComponent::Number { value: 0, .. }]
+                )),
+                other => panic!("expected value assignment, got {other:?}"),
+            }
+            assert_eq!(module.body[2].name().unwrap().name, "after");
+        };
+
+        let mut ignored = DiagnosticConfig::verbose();
+        ignored
+            .ignore
+            .extend(["invalid-i64".to_string(), "invalid-u32".to_string()]);
+        let ignored_modules = parse_with_config(input, &ignored);
+        assert_recovery(&ignored_modules[0]);
+        assert!(ignored_modules[0].diagnostics.iter().all(|diagnostic| {
+            !matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+        }));
+
+        let mut overridden = DiagnosticConfig::verbose();
+        overridden
+            .overrides
+            .insert(DiagCode::InvalidI64, Severity::Minor);
+        overridden
+            .overrides
+            .insert(DiagCode::InvalidU32, Severity::Warning);
+        let overridden_modules = parse_with_config(input, &overridden);
+        assert_recovery(&overridden_modules[0]);
+        let diagnostics: Vec<_> = overridden_modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+            })
+            .map(|diagnostic| (diagnostic.code, diagnostic.severity))
+            .collect();
+        assert_eq!(
+            diagnostics,
+            [
+                (DiagCode::InvalidI64, Severity::Minor),
+                (DiagCode::InvalidU32, Severity::Warning),
+            ]
+        );
     }
 }

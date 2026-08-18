@@ -11,7 +11,8 @@
 //! For handle-oriented access with automatic arena threading, see
 //! [`Type`](super::handle::Type).
 
-use crate::types::{BaseType, Span, Status};
+use crate::source::SourceRange;
+use crate::types::{BaseType, Status};
 
 use super::types::*;
 
@@ -28,8 +29,8 @@ const MAX_TYPE_CHAIN_DEPTH: usize = 1000;
 #[derive(Debug, Clone)]
 pub struct TypeData {
     pub(crate) name: String,
-    pub(crate) span: Span,
-    pub(crate) syntax_span: Span,
+    pub(crate) range: Option<SourceRange>,
+    pub(crate) syntax_range: Option<SourceRange>,
     pub(crate) module: Option<ModuleId>,
     pub(crate) base: BaseType,
     pub(crate) parent: Option<TypeId>,
@@ -52,8 +53,8 @@ impl TypeData {
     pub(crate) fn new(name: String) -> Self {
         Self {
             name,
-            span: Span::SYNTHETIC,
-            syntax_span: Span::SYNTHETIC,
+            range: None,
+            syntax_range: None,
             module: None,
             base: BaseType::Unknown,
             parent: None,
@@ -80,14 +81,14 @@ impl TypeData {
         &self.name
     }
 
-    /// Return the source span.
-    pub fn span(&self) -> Span {
-        self.span
+    /// Return the source range, if this type came from source text.
+    pub fn range(&self) -> Option<SourceRange> {
+        self.range
     }
 
-    /// Return the source span of the SYNTAX clause.
-    pub fn syntax_span(&self) -> Span {
-        self.syntax_span
+    /// Return the source range of the SYNTAX clause, if present.
+    pub fn syntax_range(&self) -> Option<SourceRange> {
+        self.syntax_range
     }
 
     /// Return the defining module id.

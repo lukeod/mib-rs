@@ -4,13 +4,27 @@ mod common;
 
 use mib_rs::ast::Definition;
 use mib_rs::types::{DiagCode, DiagnosticConfig};
+use mib_rs::{SourceOrigin, SourceSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use common::{collect_mib_files, corpus_dir, problems_dir};
 
+fn parse_source(source: &[u8], config: &DiagnosticConfig) -> Vec<mib_rs::ast::Module> {
+    let mut sources = SourceSet::new();
+    let id = sources
+        .insert(
+            SourceOrigin::memory("parser-corpus"),
+            "parser-corpus",
+            Arc::from(source),
+        )
+        .unwrap();
+    mib_rs::parser::parse(sources.get(id).unwrap(), config)
+}
+
 fn parse_file(path: &Path) -> Vec<mib_rs::ast::Module> {
     let content = std::fs::read(path).unwrap();
-    mib_rs::parser::parse(&content, &DiagnosticConfig::default())
+    parse_source(&content, &DiagnosticConfig::default())
 }
 
 fn parse_errors(modules: &[mib_rs::ast::Module]) -> Vec<String> {
@@ -342,7 +356,7 @@ Counter64 ::= [APPLICATION 6] IMPLICIT INTEGER (0..18446744073709551615)
 Unsigned32 ::= [APPLICATION 2] IMPLICIT INTEGER (0..4294967295)
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
     assert_eq!(modules[0].body.len(), 7);
@@ -368,7 +382,7 @@ testObj OBJECT-TYPE
     ::= { test 1 }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -398,7 +412,7 @@ TestBits ::= TEXTUAL-CONVENTION
     SYNTAX BITS { alpha(0) beta(1) gamma(2) }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -419,7 +433,7 @@ fn tagged_type_with_constraint() {
 TestTagged ::= [APPLICATION 0] IMPLICIT OCTET STRING (SIZE (4))
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -461,7 +475,7 @@ testCompliance MODULE-COMPLIANCE
     ::= { test 1 }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -491,7 +505,7 @@ testAgent AGENT-CAPABILITIES
     ::= { test 1 }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
 
@@ -519,7 +533,7 @@ anotherGood OBJECT-TYPE
     ::= { test 2 }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
 
     // Should have recovered and parsed subsequent definitions
@@ -568,7 +582,7 @@ oidDef OBJECT-TYPE
     ::= { test 4 }
 END
 "#;
-    let modules = mib_rs::parser::parse(input, &DiagnosticConfig::default());
+    let modules = parse_source(input, &DiagnosticConfig::default());
     assert_eq!(modules.len(), 1);
     assert!(parse_errors(&modules).is_empty());
     assert_eq!(modules[0].body.len(), 4);

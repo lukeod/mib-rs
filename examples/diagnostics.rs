@@ -2,7 +2,8 @@
 //! and failure thresholds.
 
 use mib_rs::{
-    DiagCode, DiagnosticConfig, Loader, Mib, ReportingLevel, ResolverStrictness, Severity,
+    DiagCode, DiagnosticConfig, DiagnosticEntry, LoadError, Loader, Mib, ReportingLevel,
+    ResolverStrictness, Severity,
 };
 
 fn make_source() -> Box<dyn mib_rs::Source> {
@@ -46,15 +47,22 @@ fn load_with(
 
 fn print_summary(mib: &Mib) {
     println!("  Has errors: {}", mib.has_errors());
-    println!("  Diagnostics: {}", mib.diagnostics().len());
-    for diagnostic in mib.diagnostics() {
-        println!("    {diagnostic}");
+    let report = mib.diagnostic_report();
+    println!("  Diagnostics: {}", report.len());
+    for entry in report.iter() {
+        println!("    {}", render(entry));
     }
 
     println!("  Unresolved references: {}", mib.unresolved().len());
     for unresolved in mib.unresolved() {
         println!("    {unresolved:?}");
     }
+}
+
+fn render(entry: DiagnosticEntry<'_>) -> String {
+    entry
+        .render()
+        .unwrap_or_else(|error| format!("{} [location unavailable: {error}]", entry.diagnostic()))
 }
 
 fn main() {
@@ -115,25 +123,46 @@ fn main() {
     };
     match load_with(ResolverStrictness::Normal, config) {
         Ok(mib) => println!("  Loaded with {} diagnostics", mib.diagnostics().len()),
+        Err(LoadError::DiagnosticThreshold { report }) => {
+            println!("  Load failed with {} diagnostics:", report.len());
+            for entry in report.iter() {
+                println!("    {}", render(entry));
+            }
+        }
         Err(error) => println!("  Load failed: {error}"),
     }
 
     println!("\n=== Diagnostic fields ===");
     let mib =
         load_with(ResolverStrictness::Normal, DiagnosticConfig::verbose()).expect("should load");
-    for diagnostic in mib.diagnostics() {
+    let report = mib.diagnostic_report();
+    for entry in report.iter() {
+        let diagnostic = entry.diagnostic();
         println!("  Severity: {:?}", diagnostic.severity);
         println!("  Code:     {}", diagnostic.code);
         println!("  Message:  {}", diagnostic.message);
         if let Some(module) = &diagnostic.module {
             println!("  Module:   {module}");
         }
-        if let Some(line) = diagnostic.line {
-            print!("  Location: line {line}");
-            if let Some(column) = diagnostic.column {
-                print!(", col {column}");
+        match entry.range() {
+            Ok(Some((source, range))) => {
+                let (start, end) = entry
+                    .byte_positions()
+                    .expect("retained diagnostic range should convert")
+                    .expect("ranged diagnostic should have positions");
+                println!("  Source:   {} ({:?})", source.label(), source.origin());
+                println!(
+                    "  Range:    bytes {}..{}, {}:{}-{}:{}",
+                    range.start(),
+                    range.end(),
+                    u64::from(start.line()) + 1,
+                    u64::from(start.column()) + 1,
+                    u64::from(end.line()) + 1,
+                    u64::from(end.column()) + 1
+                );
             }
-            println!();
+            Ok(None) => println!("  Location: source-less"),
+            Err(error) => println!("  Location unavailable: {error}"),
         }
         println!();
     }

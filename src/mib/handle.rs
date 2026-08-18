@@ -12,7 +12,11 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ptr;
 
-use crate::types::{Access, BaseType, ByteOffset, Kind, Language, Span, Status};
+use crate::source::{
+    ByteOffset, Position, PositionEncoding, PositionError, SourceDocument, SourceId, SourceOrigin,
+    SourceRange,
+};
+use crate::types::{Access, BaseType, Kind, Language, Status};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -147,9 +151,9 @@ impl<'a> Node<'a> {
         self.data().kind()
     }
 
-    /// Return the source span of this node's definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this node's definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
     /// Return the node's full numeric OID.
@@ -309,9 +313,9 @@ impl<'a> Index<'a> {
         }
     }
 
-    /// Return the source span of this index component.
-    pub fn span(self) -> Span {
-        self.entry.span
+    /// Return the source range of this index component.
+    pub fn range(self) -> SourceRange {
+        self.entry.range
     }
 
     /// Return the underlying raw index entry.
@@ -336,9 +340,91 @@ impl<'a> Module<'a> {
         self.data().language()
     }
 
-    /// Return the file path this module was loaded from.
-    pub fn source_path(self) -> &'a str {
-        self.data().source_path()
+    /// Return the compilation-local source identity, if this module came from source text.
+    pub fn source_id(self) -> Option<SourceId> {
+        self.data().source_id()
+    }
+
+    /// Return the retained source document, if this module came from source text.
+    pub fn source(self) -> Option<&'a SourceDocument> {
+        self.source_id().and_then(|id| self.mib.source(id))
+    }
+
+    /// Return the source document's display label, if retained.
+    pub fn source_label(self) -> Option<&'a str> {
+        self.source().map(SourceDocument::label)
+    }
+
+    /// Return the source document's stable origin, if retained.
+    pub fn source_origin(self) -> Option<&'a SourceOrigin> {
+        self.source().map(SourceDocument::origin)
+    }
+
+    /// Return resolved semantic context at a byte offset in this module's source.
+    ///
+    /// Ranges are half-open: the start byte is included and the end byte is not.
+    /// References take precedence over containing definitions. Among overlapping
+    /// references, the narrowest range wins. Equal widths use import, OID, then
+    /// type/symbol-reference priority; equal-kind overlaps prefer the later start,
+    /// then retained-item order. Returns `None` for an out-of-bounds offset or a
+    /// module without retained source text.
+    pub fn semantic_at(self, offset: ByteOffset) -> Option<super::SemanticSpan<'a>> {
+        let source = self.source()?;
+        if offset >= source.len() {
+            return None;
+        }
+        self.data().semantic_spans.get(offset)
+    }
+
+    /// Return resolved semantic context after checking the source identity.
+    ///
+    /// This is useful when a caller has a source-qualified cursor. A source ID
+    /// from another document never falls back to interpreting the same numeric
+    /// offset in this module and instead returns `None`.
+    pub fn semantic_at_source(
+        self,
+        source_id: SourceId,
+        offset: ByteOffset,
+    ) -> Option<super::SemanticSpan<'a>> {
+        if self.data().semantic_spans.source_id() != Some(source_id) {
+            return None;
+        }
+        self.semantic_at(offset)
+    }
+
+    /// Return resolved semantic context at a zero-based editor position.
+    ///
+    /// Position conversion uses the requested UTF encoding and propagates
+    /// invalid-line, invalid-column, mid-code-point, and invalid-UTF-8 errors.
+    /// A module without retained source text returns `Ok(None)`.
+    pub fn semantic_at_position(
+        self,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<Option<super::SemanticSpan<'a>>, PositionError> {
+        super::navigation::at_position(
+            &self.data().semantic_spans,
+            self.source(),
+            position,
+            encoding,
+        )
+    }
+
+    /// Return resolved semantic context at a source-qualified editor position.
+    ///
+    /// A source-ID mismatch returns `Ok(None)` without converting the position;
+    /// otherwise this has the same conversion errors and result as
+    /// [`Module::semantic_at_position`].
+    pub fn semantic_at_source_position(
+        self,
+        source_id: SourceId,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<Option<super::SemanticSpan<'a>>, PositionError> {
+        if self.data().semantic_spans.source_id() != Some(source_id) {
+            return Ok(None);
+        }
+        self.semantic_at_position(position, encoding)
     }
 
     /// Return the ORGANIZATION clause text from MODULE-IDENTITY.
@@ -371,13 +457,19 @@ impl<'a> Module<'a> {
         self.data().imports()
     }
 
-    /// Return `true` if this is a synthetic base module (SNMPv2-SMI, etc.).
+    /// Return exact module-scoped OID identity declarations.
     ///
-    /// Base modules define the SMI language itself and are constructed
-    /// programmatically rather than parsed from files. They have no real
-    /// source text, so spans are [`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC)
-    /// and `source_path()` returns an empty string. See the crate-level
-    /// docs for the full list of base modules and their contents.
+    /// This preserves same-OID aliases and declarations hidden by the global
+    /// OID tree's winning name, kind, metadata, or module.
+    pub fn identities(self) -> &'a [super::module::ModuleIdentityData] {
+        self.data().identities()
+    }
+
+    /// Return `true` if this is an SMI foundation module (SNMPv2-SMI, etc.).
+    ///
+    /// Foundation modules define the SMI language itself. Their source may be
+    /// supplied by a configured source or by the parsed embedded fallback.
+    /// See the crate-level docs for the full list and source precedence.
     pub fn is_base(self) -> bool {
         self.data().is_base()
     }
@@ -385,11 +477,6 @@ impl<'a> Module<'a> {
     /// Return the module's registered OID from its MODULE-IDENTITY, if any.
     pub fn oid(self) -> Option<&'a super::oid::Oid> {
         self.data().oid()
-    }
-
-    /// Convert a byte offset within this module's source to a line and column number.
-    pub fn line_col(self, offset: ByteOffset) -> (usize, usize) {
-        self.data().line_col(offset)
     }
 
     /// Return `true` if this module imports a symbol with the given name.
@@ -402,6 +489,11 @@ impl<'a> Module<'a> {
         self.data()
             .import_source(name)
             .map(|id| Module::new(self.mib, id))
+    }
+
+    /// Return retained pre-collapse resolution provenance for an imported symbol.
+    pub fn import_resolution(self, name: &str) -> Option<&'a super::types::ImportResolution> {
+        self.data().import_resolution(name)
     }
 
     /// Look up an object defined by this module.
@@ -482,14 +574,19 @@ impl<'a> Module<'a> {
 }
 
 impl<'a> Object<'a> {
+    /// Return symbolic OID references with exact resolved provenance.
+    pub fn oid_refs(self) -> &'a [OidRef] {
+        self.data().oid_refs()
+    }
+
     /// Return the object name.
     pub fn name(self) -> &'a str {
         self.data().name()
     }
 
-    /// Return the source span of this object definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this object definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
     /// Return the module that defines this object.
@@ -497,17 +594,9 @@ impl<'a> Object<'a> {
         self.data().module().map(|id| Module::new(self.mib, id))
     }
 
-    /// Return the OID tree node for this object.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the object's OID was not resolved during loading. This should
-    /// not happen for objects obtained from a fully resolved [`Mib`].
-    pub fn node(self) -> Node<'a> {
-        Node::new(
-            self.mib,
-            self.data().node().expect("resolved object missing node"),
-        )
+    /// Return the OID tree node when the object's numeric identity resolved.
+    pub fn node(self) -> Option<Node<'a>> {
+        self.data().node().map(|id| Node::new(self.mib, id))
     }
 
     /// Return the status (current, deprecated, obsolete).
@@ -548,6 +637,15 @@ impl<'a> Object<'a> {
     /// Return the node kind (scalar, table, row, column).
     pub fn kind(self) -> Kind {
         self.data().kind(self.mib.tree())
+    }
+
+    /// Return this module declaration's exact structural kind.
+    ///
+    /// This remains stable when another module's declaration wins the same
+    /// OID in the global tree. [`Self::kind`] retains the legacy global-tree
+    /// behavior.
+    pub fn declared_kind(self) -> Kind {
+        self.data().declared_kind()
     }
 
     /// Return the effective display hint from the type chain.
@@ -603,6 +701,48 @@ impl<'a> Object<'a> {
     /// Return the effective BITS definitions from the type chain.
     pub fn effective_bits(self) -> &'a [NamedValue] {
         self.data().effective_bits()
+    }
+
+    /// Return enumeration values declared directly in this object's syntax.
+    pub fn declared_enums(self) -> &'a [NamedValue] {
+        self.data().declared_enums()
+    }
+
+    /// Return BITS values declared directly in this object's syntax.
+    pub fn declared_bits(self) -> &'a [NamedValue] {
+        self.data().declared_bits()
+    }
+
+    /// Return the declared entry type name from a table's `SEQUENCE OF`
+    /// syntax, or an empty string for other object kinds.
+    pub fn sequence_type_name(self) -> &'a str {
+        self.data().sequence_type_name()
+    }
+
+    /// Return the exact table declaration name associated with this row.
+    pub fn declared_table_name(self) -> &'a str {
+        self.data().declared_table_name()
+    }
+
+    /// Return the exact row declaration name associated with this table.
+    pub fn declared_row_name(self) -> &'a str {
+        self.data().declared_row_name()
+    }
+
+    /// Return the exact column declaration names associated with this row.
+    pub fn declared_column_names(self) -> &'a [String] {
+        self.data().declared_column_names()
+    }
+
+    /// Return the exact symbolic OID parent used by this declaration.
+    pub fn declared_oid_parent(self) -> Option<&'a OidRef> {
+        self.data().declared_oid_parent()
+    }
+
+    /// Return the exact symbolic OID parent name, or an empty string when the
+    /// assignment used no exact symbolic parent.
+    pub fn declared_oid_parent_name(self) -> &'a str {
+        self.data().declared_oid_parent_name()
     }
 
     /// Parse and validate this object's effective DISPLAY-HINT, returning a
@@ -770,14 +910,14 @@ impl<'a> Type<'a> {
         self.data().name()
     }
 
-    /// Return the source span of this type definition.
-    pub fn span(self) -> Span {
-        self.data().span()
+    /// Return the source range of this type definition, if present.
+    pub fn range(self) -> Option<SourceRange> {
+        self.data().range()
     }
 
-    /// Return the source span of the SYNTAX clause.
-    pub fn syntax_span(self) -> Span {
-        self.data().syntax_span()
+    /// Return the source range of the SYNTAX clause, if present.
+    pub fn syntax_range(self) -> Option<SourceRange> {
+        self.data().syntax_range()
     }
 
     /// Return the module that defines this type.
@@ -941,9 +1081,9 @@ macro_rules! entity_handle_impl {
                 self.data().name()
             }
 
-            /// Return the source span.
-            pub fn span(self) -> Span {
-                self.data().span()
+            /// Return the source range, if this definition came from source text.
+            pub fn range(self) -> Option<SourceRange> {
+                self.data().range()
             }
 
             /// Return the defining module.

@@ -146,7 +146,7 @@ diag_codes! {
     resolver,   MalformedBinDefval,         "malformed-bin-defval",                  Warning;
     resolver,   DefvalUnresolved,           "defval-unresolved",                     Warning;
     resolver,   VariationAccessNotifOnly,   "variation-access-notification-only",    Minor;
-    resolver,   GroupMemberUnresolved,       "group-member-unresolved",              Error;
+    resolver,   GroupMemberUnresolved,       "group-member-unresolved",              Minor;
     resolver,   IndexNotObject,             "index-not-object",                      Minor;
     resolver,   AugmentsNotObject,          "augments-not-object",                   Minor;
     resolver,   AugmentNested,              "augment-nested",                        Error;
@@ -206,8 +206,8 @@ diag_codes! {
     resolver,   TypeStatusObsolete,         "type-status-obsolete",                  Warning;
     resolver,   GroupMembership,            "group-membership",                      Minor;
     resolver,   GroupMemberMixed,           "group-member-mixed",                    Minor;
-    resolver,   GroupObjectsNotification,   "group-objects-notification",             Error;
-    resolver,   GroupNotificationsObject,   "group-notifications-object",             Error;
+    resolver,   GroupObjectsNotification,   "group-objects-notification",             Minor;
+    resolver,   GroupNotificationsObject,   "group-notifications-object",             Minor;
     resolver,   GroupObjectStatus,          "group-object-status",                   Warning;
     resolver,   ComplianceGroupStatus,      "compliance-group-status",               Warning;
     resolver,   ComplianceObjectStatus,     "compliance-object-status",              Warning;
@@ -254,6 +254,10 @@ diag_codes! {
     resolver,   TransportAddressPairing,    "transportaddress-transportaddresstype", Warning;
     resolver,   TransportAddressTypeSubtyped, "transportaddresstype-subtyped",       Warning;
     resolver,   TransportAddressSpecific,   "transportaddress-specific",             Style;
+    resolver,   IncludesUnresolved,         "includes-unresolved",                   Warning;
+    resolver,   IncludesDuplicate,          "includes-duplicate",                    Warning;
+    resolver,   CreationRequiresUnresolved, "creation-requires-unresolved",           Warning;
+    resolver,   CreationRequiresDuplicate,  "creation-requires-duplicate",            Warning;
 }
 
 impl std::fmt::Display for DiagCode {

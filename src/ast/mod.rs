@@ -14,7 +14,8 @@ pub use definition::*;
 pub use oid::{OidAssignment, OidComponent};
 pub use syntax::*;
 
-use crate::types::{Severity, Span, SpanDiagnostic};
+use crate::source::SourceRange;
+use crate::types::{Diagnostic, Severity};
 
 /// Top-level AST node for a parsed MIB module.
 ///
@@ -29,15 +30,15 @@ pub struct Module {
     pub imports: Vec<ImportClause>,
     /// Definitions in the module body, between `BEGIN` and `END`.
     pub body: Vec<Definition>,
-    /// Span covering the entire module source.
-    pub span: Span,
+    /// Source range covering the entire module.
+    pub span: SourceRange,
     /// Diagnostics collected during parsing.
-    pub diagnostics: Vec<SpanDiagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl Module {
     /// Creates a new module with the given name and span, and empty imports/body/diagnostics.
-    pub fn new(name: Ident, span: Span) -> Self {
+    pub fn new(name: Ident, span: SourceRange) -> Self {
         Module {
             name: Some(name),
             imports: Vec::new(),
@@ -65,6 +66,6 @@ pub struct ImportClause {
     pub symbols: Vec<Ident>,
     /// Source module name (the `FROM` target).
     pub from_module: Ident,
-    /// Span covering the entire clause.
-    pub span: Span,
+    /// Source range covering the entire clause.
+    pub span: SourceRange,
 }

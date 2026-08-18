@@ -1,4 +1,5 @@
-use mib_rs::{DiagCode, DiagnosticConfig, LoadError, Loader, Severity};
+use mib_rs::{DiagCode, DiagnosticConfig, LoadError, Loader, Severity, SourceOrigin, SourceSet};
+use std::sync::Arc;
 
 const SOURCE: &[u8] = br#"DIAGNOSTIC-POLICY-MIB { 01 } DEFINITIONS ::= BEGIN
 IMPORTS
@@ -9,6 +10,31 @@ bad_name OBJECT IDENTIFIER ::= { iso 99999 }
 END
 "#;
 
+const EMPTY_DESCRIPTIONS_SOURCE: &[u8] = br#"EMPTY-DESCRIPTIONS-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+emptyDescriptionsMIB MODULE-IDENTITY
+    LAST-UPDATED "200001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION ""
+    REVISION "200001010000Z"
+    DESCRIPTION ""
+    ::= { enterprises 99999 }
+
+emptyDescriptionObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION ""
+    ::= { emptyDescriptionsMIB 1 }
+END
+"#;
+
+const REVISION_CLAUSE: &[u8] = b"REVISION \"200001010000Z\"\n    DESCRIPTION \"\"";
+
 fn source() -> Box<dyn mib_rs::Source> {
     mib_rs::source::memory("DIAGNOSTIC-POLICY-MIB", SOURCE)
 }
@@ -17,6 +43,68 @@ fn config_with_override(code: DiagCode, severity: Severity) -> DiagnosticConfig 
     let mut config = DiagnosticConfig::default();
     config.overrides.insert(code, severity);
     config
+}
+
+fn load_empty_descriptions(config: DiagnosticConfig) -> mib_rs::Mib {
+    Loader::new()
+        .source(mib_rs::source::memory(
+            "EMPTY-DESCRIPTIONS-MIB",
+            EMPTY_DESCRIPTIONS_SOURCE,
+        ))
+        .modules(["EMPTY-DESCRIPTIONS-MIB"])
+        .diagnostic_config(config)
+        .load()
+        .expect("empty-description diagnostics should not fail loading")
+}
+
+#[test]
+fn revision_description_override_uses_dedicated_code_and_full_clause_range() {
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    config
+        .overrides
+        .insert(DiagCode::EmptyRevisionDescription, Severity::Severe);
+
+    let mib = load_empty_descriptions(config);
+    let report = mib.diagnostic_report();
+    let revision = report
+        .iter()
+        .find(|entry| entry.diagnostic().code == DiagCode::EmptyRevisionDescription)
+        .expect("expected dedicated revision-description diagnostic");
+    assert_eq!(revision.diagnostic().severity, Severity::Severe);
+    assert_eq!(revision.slice().unwrap(), Some(REVISION_CLAUSE));
+
+    let ordinary_descriptions: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::EmptyDescription)
+        .collect();
+    assert_eq!(ordinary_descriptions.len(), 2);
+    assert!(
+        ordinary_descriptions
+            .iter()
+            .all(|entry| entry.diagnostic().severity == Severity::Style)
+    );
+}
+
+#[test]
+fn revision_description_ignore_does_not_hide_other_empty_descriptions() {
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    config.ignore.push("empty-revision-description".to_string());
+
+    let mib = load_empty_descriptions(config);
+    assert!(
+        mib.diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::EmptyRevisionDescription)
+    );
+    assert_eq!(
+        mib.diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::EmptyDescription)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -29,7 +117,70 @@ fn promoted_diagnostic_uses_effective_severity_and_fails_load() {
         .diagnostic_config(config)
         .load();
 
-    assert!(matches!(result, Err(LoadError::DiagnosticThreshold)));
+    assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DiagnosticKey {
+    phase: &'static str,
+    code: &'static str,
+    severity: Severity,
+    module: Option<String>,
+    location: Option<(String, std::ops::Range<usize>)>,
+    message: String,
+}
+
+fn diagnostic_key(entry: mib_rs::DiagnosticEntry<'_>) -> DiagnosticKey {
+    let diagnostic = entry.diagnostic();
+    let location = entry
+        .range()
+        .expect("diagnostic range should resolve")
+        .map(|(source, range)| (source.label().to_string(), range.byte_range()));
+    DiagnosticKey {
+        phase: diagnostic.code.phase(),
+        code: diagnostic.code.as_code(),
+        severity: diagnostic.severity,
+        module: diagnostic.module.clone(),
+        location,
+        message: diagnostic.message.clone(),
+    }
+}
+
+#[test]
+fn threshold_error_retains_all_diagnostics_in_canonical_order() {
+    let mut failing_config = DiagnosticConfig::verbose();
+    failing_config
+        .overrides
+        .insert(DiagCode::NumberLeadingZero, Severity::Severe);
+
+    let mut non_failing_config = failing_config.clone();
+    non_failing_config.fail_at = Severity::Fatal;
+    let expected_mib = Loader::new()
+        .source(source())
+        .modules(["DIAGNOSTIC-POLICY-MIB"])
+        .diagnostic_config(non_failing_config)
+        .load()
+        .expect("fatal-only threshold should permit this MIB");
+    let expected_report = expected_mib.diagnostic_report();
+    let expected_keys: Vec<_> = expected_report.iter().map(diagnostic_key).collect();
+
+    let error = Loader::new()
+        .source(source())
+        .modules(["DIAGNOSTIC-POLICY-MIB"])
+        .diagnostic_config(failing_config.clone())
+        .load()
+        .expect_err("promoted diagnostic should fail loading");
+    let LoadError::DiagnosticThreshold { report } = error else {
+        panic!("expected diagnostic threshold error");
+    };
+    let actual_keys: Vec<_> = report.iter().map(diagnostic_key).collect();
+
+    assert!(
+        report
+            .iter()
+            .any(|entry| !failing_config.should_fail(entry.diagnostic().severity))
+    );
+    assert_eq!(actual_keys, expected_keys);
 }
 
 #[test]
@@ -54,7 +205,16 @@ fn demoted_diagnostic_is_retained_with_effective_severity() {
 #[test]
 fn lowering_recomputes_parser_diagnostic_severity_with_its_own_config() {
     let parser_config = DiagnosticConfig::default();
-    let mut modules = mib_rs::parser::parse(SOURCE, &parser_config);
+    let mut sources = SourceSet::new();
+    let source_id = sources
+        .insert(
+            SourceOrigin::memory("diagnostic-policy"),
+            "diagnostic-policy",
+            Arc::from(SOURCE),
+        )
+        .unwrap();
+    let document = sources.get(source_id).unwrap();
+    let mut modules = mib_rs::parser::parse(document, &parser_config);
     let ast_module = modules.pop().expect("expected parsed module");
     let parsed_diagnostic = ast_module
         .diagnostics
@@ -64,7 +224,7 @@ fn lowering_recomputes_parser_diagnostic_severity_with_its_own_config() {
     assert_eq!(parsed_diagnostic.severity, Severity::Minor);
 
     let lower_config = config_with_override(DiagCode::NumberLeadingZero, Severity::Severe);
-    let ir_module = mib_rs::lower::lower(ast_module, SOURCE, &lower_config);
+    let ir_module = mib_rs::lower::lower(ast_module, document, &lower_config);
     let lowered_diagnostic = ir_module
         .diagnostics
         .iter()
@@ -105,6 +265,45 @@ fn emitters_store_effective_severity_across_pipeline_phases() {
             .find(|diagnostic| diagnostic.code == code)
             .unwrap_or_else(|| panic!("expected {code} diagnostic"));
         assert_eq!(diagnostic.severity, Severity::Info, "code {code}");
+    }
+}
+
+#[test]
+fn diagnostics_preserve_exact_ranges_across_all_pipeline_phases() {
+    const LEXER_SOURCE: &[u8] = b"LEXER-DIAGNOSTIC-MIB DEFINITIONS ::= BEGIN\n@\nEND\n";
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    let mib = Loader::new()
+        .source(mib_rs::source::memory_modules([
+            ("DIAGNOSTIC-POLICY-MIB", SOURCE),
+            ("LEXER-DIAGNOSTIC-MIB", LEXER_SOURCE),
+        ]))
+        .modules(["DIAGNOSTIC-POLICY-MIB", "LEXER-DIAGNOSTIC-MIB"])
+        .diagnostic_config(config)
+        .load()
+        .expect("fatal-only threshold should retain phase diagnostics");
+    let report = mib.diagnostic_report();
+
+    let expected = [
+        (DiagCode::UnexpectedCharacter, &b"@"[..]),
+        (DiagCode::IdentifierUnderscore, &b"bad_name"[..]),
+        (DiagCode::MissingModuleIdentity, &SOURCE[..SOURCE.len() - 1]),
+        (DiagCode::ImportUnused, &b"Integer32"[..]),
+    ];
+    for (code, bytes) in expected {
+        let entry = report
+            .iter()
+            .find(|entry| entry.diagnostic().code == code)
+            .unwrap_or_else(|| panic!("expected {code} diagnostic"));
+        assert_eq!(entry.slice().unwrap(), Some(bytes), "code {code}");
+        let range = entry
+            .diagnostic()
+            .range
+            .expect("phase diagnostic should be ranged");
+        assert_eq!(
+            range.end().as_usize() - range.start().as_usize(),
+            bytes.len()
+        );
     }
 }
 
@@ -168,5 +367,5 @@ fn fatal_override_is_collected_despite_silent_reporting_and_ignore() {
         .diagnostic_config(config)
         .load();
 
-    assert!(matches!(result, Err(LoadError::DiagnosticThreshold)));
+    assert!(matches!(result, Err(LoadError::DiagnosticThreshold { .. })));
 }

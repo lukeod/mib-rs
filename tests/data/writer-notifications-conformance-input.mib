@@ -1,0 +1,136 @@
+WRITER-CONFORMANCE-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC
+    OBJECT-GROUP, NOTIFICATION-GROUP, MODULE-COMPLIANCE, AGENT-CAPABILITIES
+        FROM SNMPv2-CONF;
+
+writerConformanceMib MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Writer tests"
+    CONTACT-INFO "Writer tests"
+    DESCRIPTION "Notification and conformance writer tests."
+    ::= { enterprises 424260 }
+
+WriterMode ::= TEXTUAL-CONVENTION
+    STATUS current
+    DESCRIPTION "A writer mode."
+    SYNTAX INTEGER { active(1), standby(2), disabled(3) }
+
+writerTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF WriterEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "A table."
+    ::= { writerConformanceMib 1 }
+
+writerEntry OBJECT-TYPE
+    SYNTAX WriterEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "A row."
+    INDEX { writerIndex }
+    ::= { writerTable 1 }
+
+writerIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..100)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "The index."
+    ::= { writerEntry 1 }
+
+writerMode OBJECT-TYPE
+    SYNTAX WriterMode
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "The mode."
+    DEFVAL { standby }
+    ::= { writerEntry 2 }
+
+writerName OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0..32))
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "The name."
+    ::= { writerEntry 3 }
+
+writerNotice NOTIFICATION-TYPE
+    OBJECTS { writerIndex, writerMode, writerName }
+    STATUS current
+    DESCRIPTION "A notice."
+    REFERENCE "Notification reference."
+    ::= { writerConformanceMib 2 }
+
+writerObjects OBJECT-GROUP
+    OBJECTS { writerIndex, writerMode, writerName }
+    STATUS current
+    DESCRIPTION "The object group."
+    REFERENCE "Object group reference."
+    ::= { writerConformanceMib 3 }
+
+writerNotifications NOTIFICATION-GROUP
+    NOTIFICATIONS { writerNotice }
+    STATUS current
+    DESCRIPTION "The notification group."
+    REFERENCE "Notification group reference."
+    ::= { writerConformanceMib 4 }
+
+writerCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "The compliance statement."
+    REFERENCE "Compliance reference."
+    MODULE
+        MANDATORY-GROUPS { writerObjects, writerNotifications }
+        GROUP writerNotifications
+        DESCRIPTION "Required when notifications are enabled."
+        OBJECT writerMode
+            SYNTAX WriterMode { active(1), standby(2) }
+            WRITE-SYNTAX WriterMode { active(1) }
+            MIN-ACCESS read-only
+            DESCRIPTION "The refined mode."
+        OBJECT writerName
+            SYNTAX OCTET STRING (SIZE (0..16))
+            WRITE-SYNTAX OCTET STRING (SIZE (1..8))
+            MIN-ACCESS read-only
+            DESCRIPTION "The refined name."
+    ::= { writerConformanceMib 5 }
+
+writerCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "Writer agent 1.0"
+    STATUS current
+    DESCRIPTION "The agent capabilities."
+    REFERENCE "Capabilities reference."
+    SUPPORTS WRITER-CONFORMANCE-MIB
+        INCLUDES { writerObjects, writerNotifications }
+        VARIATION writerMode
+            SYNTAX WriterMode { active(1), standby(2) }
+            WRITE-SYNTAX WriterMode { active(1) }
+            ACCESS write-only
+            DEFVAL { active }
+            DESCRIPTION "The mode variation."
+        VARIATION writerEntry
+            CREATION-REQUIRES { writerMode }
+            DESCRIPTION "The row variation."
+        VARIATION writerName
+            SYNTAX OCTET STRING (SIZE (0..12))
+            WRITE-SYNTAX OCTET STRING (SIZE (1..6))
+            ACCESS read-create
+            DEFVAL { "ready" }
+            DESCRIPTION "The name variation."
+        VARIATION writerNotice
+            ACCESS not-implemented
+            DESCRIPTION "The notification variation."
+    ::= { writerConformanceMib 6 }
+
+writerConformanceChild OBJECT IDENTIFIER ::= { writerCapabilities 1 }
+
+WriterEntry ::= SEQUENCE {
+    writerIndex Integer32,
+    writerMode WriterMode,
+    writerName OCTET STRING
+}
+
+END

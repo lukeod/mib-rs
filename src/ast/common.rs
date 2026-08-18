@@ -3,7 +3,7 @@
 //! These small types ([`Ident`], [`QuotedString`], [`NamedNumber`]) appear
 //! throughout the AST as building blocks for larger constructs.
 
-use crate::types::Span;
+use crate::source::SourceRange;
 
 /// A named reference in MIB source with its location span.
 ///
@@ -14,7 +14,7 @@ pub struct Ident {
     /// The identifier text.
     pub name: String,
     /// Source location of the identifier.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// A quoted string literal with its source span.
@@ -25,7 +25,7 @@ pub struct QuotedString {
     /// The string content (quotes stripped).
     pub value: String,
     /// Source location of the quoted string.
-    pub span: Span,
+    pub span: SourceRange,
 }
 
 /// A named number in an enumeration or BITS definition.
@@ -36,7 +36,10 @@ pub struct NamedNumber {
     /// The label, e.g. `up`.
     pub name: Ident,
     /// The numeric value, e.g. `1`.
+    ///
+    /// An overflowing source literal is retained as zero and accompanied by
+    /// an `invalid-i64` parser diagnostic over the literal.
     pub value: i64,
     /// Source location covering `name(value)`.
-    pub span: Span,
+    pub span: SourceRange,
 }

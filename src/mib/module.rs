@@ -9,10 +9,126 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mib::Oid;
-use crate::types::Language;
+use crate::source::{SourceId, SourceRange};
+use crate::types::{Language, Status};
 
+use super::navigation::SemanticSpanIndex;
 use super::symbol::Symbol;
 use super::types::*;
+
+/// The declared kind of a module-scoped OID identity.
+///
+/// Unlike the global OID tree's winning [`Kind`](crate::Kind), this value is
+/// retained independently for every declaration, including aliases and OID
+/// collisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModuleIdentityKind {
+    /// A `MODULE-IDENTITY` declaration.
+    ModuleIdentity,
+    /// An `OBJECT-IDENTITY` declaration.
+    ObjectIdentity,
+    /// A plain `OBJECT IDENTIFIER` value assignment.
+    ObjectIdentifier,
+}
+
+/// Exact module-scoped data for one resolved OID identity declaration.
+///
+/// Multiple records may have the same numeric OID. This preserves aliases and
+/// declarations that lost global OID-tree ownership to another module or to
+/// an object, group, notification, or conformance definition.
+#[derive(Debug, Clone)]
+pub struct ModuleIdentityData {
+    pub(crate) name: String,
+    pub(crate) kind: ModuleIdentityKind,
+    pub(crate) oid: Oid,
+    pub(crate) status: Option<Status>,
+    pub(crate) description: String,
+    pub(crate) reference: String,
+    pub(crate) last_updated: String,
+    pub(crate) organization: String,
+    pub(crate) contact_info: String,
+    pub(crate) revisions: Vec<Revision>,
+    pub(crate) oid_refs: Vec<OidRef>,
+    pub(crate) range: SourceRange,
+}
+
+impl ModuleIdentityData {
+    /// Return the name exactly as declared in this module.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return the declaration kind independently of global OID ownership.
+    pub fn kind(&self) -> ModuleIdentityKind {
+        self.kind
+    }
+
+    /// Return the resolved numeric OID.
+    pub fn oid(&self) -> &Oid {
+        &self.oid
+    }
+
+    /// Return the declared status for an `OBJECT-IDENTITY`.
+    pub fn status(&self) -> Option<Status> {
+        self.status
+    }
+
+    /// Return the declared description text.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Return the declared reference text.
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// Return the `LAST-UPDATED` value for a `MODULE-IDENTITY`.
+    pub fn last_updated(&self) -> &str {
+        &self.last_updated
+    }
+
+    /// Return the `ORGANIZATION` text for a `MODULE-IDENTITY`.
+    pub fn organization(&self) -> &str {
+        &self.organization
+    }
+
+    /// Return the `CONTACT-INFO` text for a `MODULE-IDENTITY`.
+    pub fn contact_info(&self) -> &str {
+        &self.contact_info
+    }
+
+    /// Return the revisions for a `MODULE-IDENTITY` in declaration order.
+    pub fn revisions(&self) -> &[Revision] {
+        &self.revisions
+    }
+
+    /// Return symbolic references with exact resolved module/version provenance.
+    pub fn oid_refs(&self) -> &[OidRef] {
+        &self.oid_refs
+    }
+
+    /// Return the exact symbolic parent reference used by this declaration.
+    pub fn declared_oid_parent(&self) -> Option<&OidRef> {
+        let parent = self.oid.parent()?;
+        self.oid_refs
+            .iter()
+            .rev()
+            .find(|reference| reference.oid() == Some(&parent))
+    }
+
+    /// Return the exact symbolic parent name, or an empty string when the
+    /// assignment used no exact symbolic parent.
+    pub fn declared_oid_parent_name(&self) -> &str {
+        self.declared_oid_parent()
+            .map_or("", |reference| reference.name.as_str())
+    }
+
+    /// Return the complete source range of the declaration.
+    pub fn range(&self) -> SourceRange {
+        self.range
+    }
+}
 
 /// A loaded and resolved MIB module.
 ///
@@ -22,7 +138,7 @@ use super::types::*;
 pub struct ModuleData {
     pub(crate) name: String,
     pub(crate) language: Language,
-    pub(crate) source_path: String,
+    pub(crate) source_id: Option<SourceId>,
     pub(crate) is_base: bool,
     pub(crate) oid: Option<Oid>,
     pub(crate) organization: String,
@@ -31,6 +147,7 @@ pub struct ModuleData {
     pub(crate) last_updated: String,
     pub(crate) revisions: Vec<Revision>,
     pub(crate) imports: Vec<Import>,
+    pub(crate) identities: Vec<ModuleIdentityData>,
 
     pub(crate) objects: Vec<ObjectId>,
     pub(crate) types: Vec<TypeId>,
@@ -40,10 +157,10 @@ pub struct ModuleData {
     pub(crate) capabilities: Vec<CapabilityId>,
     pub(crate) nodes: Vec<NodeId>,
 
-    pub(crate) line_table: Vec<usize>,
-
     pub(crate) used_import_names: HashSet<String>,
     pub(crate) resolved_imports: HashMap<String, ModuleId>,
+    pub(crate) import_resolutions: HashMap<String, ImportResolution>,
+    pub(crate) semantic_spans: SemanticSpanIndex,
 
     pub(crate) objects_by_name: HashMap<String, ObjectId>,
     pub(crate) types_by_name: HashMap<String, TypeId>,
@@ -59,7 +176,7 @@ impl ModuleData {
         Self {
             name,
             language: Language::Unknown,
-            source_path: String::new(),
+            source_id: None,
             is_base: false,
             oid: None,
             organization: String::new(),
@@ -68,6 +185,7 @@ impl ModuleData {
             last_updated: String::new(),
             revisions: Vec::new(),
             imports: Vec::new(),
+            identities: Vec::new(),
             objects: Vec::new(),
             types: Vec::new(),
             notifications: Vec::new(),
@@ -75,9 +193,10 @@ impl ModuleData {
             compliances: Vec::new(),
             capabilities: Vec::new(),
             nodes: Vec::new(),
-            line_table: Vec::new(),
             used_import_names: HashSet::new(),
             resolved_imports: HashMap::new(),
+            import_resolutions: HashMap::new(),
+            semantic_spans: SemanticSpanIndex::default(),
             objects_by_name: HashMap::new(),
             types_by_name: HashMap::new(),
             notifications_by_name: HashMap::new(),
@@ -98,21 +217,16 @@ impl ModuleData {
         self.language
     }
 
-    /// Return the file path this module was loaded from.
-    pub fn source_path(&self) -> &str {
-        &self.source_path
+    /// Return the compilation-local source identity, if this module came from source text.
+    pub fn source_id(&self) -> Option<SourceId> {
+        self.source_id
     }
 
-    /// Return `true` if this is a synthetic base module.
+    /// Return `true` if this is an SMI foundation module.
     ///
     /// See [`Module::is_base`](super::Module::is_base) for details.
     pub fn is_base(&self) -> bool {
         self.is_base
-    }
-
-    /// Convert a byte offset to a line and column number.
-    pub fn line_col(&self, offset: crate::types::ByteOffset) -> (usize, usize) {
-        crate::types::line_col_from_table(&self.line_table, offset)
     }
 
     /// Return the module's MODULE-IDENTITY OID, if any.
@@ -148,6 +262,14 @@ impl ModuleData {
     /// Return the IMPORTS declarations.
     pub fn imports(&self) -> &[Import] {
         &self.imports
+    }
+
+    /// Return exact module-scoped OID identity declarations.
+    ///
+    /// Records retain aliases and collisions independently of the global OID
+    /// tree's selected name, kind, metadata, and owning module.
+    pub fn identities(&self) -> &[ModuleIdentityData] {
+        &self.identities
     }
 
     /// Return the object ids defined by this module.
@@ -247,6 +369,38 @@ impl ModuleData {
         None
     }
 
+    /// Look up every distinct definition kind with this name in the module.
+    ///
+    /// An OID entity is returned instead of its attached plain node. A type
+    /// and an OID entity with the same name are both retained.
+    pub fn symbols(&self, name: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+        if let Some(&id) = self.objects_by_name.get(name) {
+            symbols.push(Symbol::Object(id));
+        }
+        if let Some(&id) = self.notifications_by_name.get(name) {
+            symbols.push(Symbol::Notification(id));
+        }
+        if let Some(&id) = self.groups_by_name.get(name) {
+            symbols.push(Symbol::Group(id));
+        }
+        if let Some(&id) = self.compliances_by_name.get(name) {
+            symbols.push(Symbol::Compliance(id));
+        }
+        if let Some(&id) = self.capabilities_by_name.get(name) {
+            symbols.push(Symbol::Capability(id));
+        }
+        if symbols.is_empty()
+            && let Some(&id) = self.nodes_by_name.get(name)
+        {
+            symbols.push(Symbol::Node(id));
+        }
+        if let Some(&id) = self.types_by_name.get(name) {
+            symbols.push(Symbol::Type(id));
+        }
+        symbols
+    }
+
     /// Return `true` if this module defines a symbol with the given name.
     pub fn defines_symbol(&self, name: &str) -> bool {
         self.symbol(name).is_some()
@@ -267,6 +421,11 @@ impl ModuleData {
     /// Return the resolved source module for an imported name.
     pub fn import_source(&self, name: &str) -> Option<ModuleId> {
         self.resolved_imports.get(name).copied()
+    }
+
+    /// Return retained pre-collapse resolution provenance for an imported symbol.
+    pub fn import_resolution(&self, name: &str) -> Option<&ImportResolution> {
+        self.import_resolutions.get(name)
     }
 
     // Builder methods used during resolution.
@@ -304,6 +463,10 @@ impl ModuleData {
     pub(crate) fn add_node(&mut self, name: impl Into<String>, id: NodeId) {
         self.nodes.push(id);
         self.nodes_by_name.entry(name.into()).or_insert(id);
+    }
+
+    pub(crate) fn add_identity(&mut self, identity: ModuleIdentityData) {
+        self.identities.push(identity);
     }
 
     /// Yield all definitions in this module as [`Symbol`] values.

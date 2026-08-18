@@ -3,7 +3,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use mib_rs::types::{DiagnosticConfig, ResolverStrictness};
-use mib_rs::{FindResult, Loader, Source, load};
+use mib_rs::{Loader, Source, SourceCandidate, SourceOrigin, load};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
@@ -97,10 +97,14 @@ struct MemorySource {
 }
 
 impl Source for MemorySource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        Ok(self.modules.get(name).map(|content| FindResult {
-            content: content.as_bytes().to_vec(),
-            path: format!("memory:{name}").into(),
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        Ok(self.modules.get(name).map(|content| {
+            SourceCandidate::new(
+                name,
+                SourceOrigin::memory(name),
+                format!("memory:{name}"),
+                content.as_bytes(),
+            )
         }))
     }
 

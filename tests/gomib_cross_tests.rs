@@ -6,9 +6,11 @@
 mod common;
 
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
@@ -16,7 +18,7 @@ use mib_rs::source::dir as dir_source;
 use mib_rs::types::{BaseType, DiagnosticConfig, ResolverStrictness, Severity};
 use serde::Deserialize;
 
-use common::{FixtureNode as CommonFixtureNode, RangeInfo, corpus_dir};
+use common::{FixtureNode as CommonFixtureNode, RangeInfo, corpus_dir, problems_dir};
 
 // -- Fixture schema (matches gomib-fixturegen JSON output) --
 type FixtureNode = CommonFixtureNode<FixtureComplianceModule, FixtureCapabilityModule>;
@@ -214,6 +216,29 @@ fn can_run_cross_tests() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+static NEXT_CROSS_CORPUS: AtomicU64 = AtomicU64::new(0);
+
+struct CrossCorpus(PathBuf);
+
+impl CrossCorpus {
+    fn with_mib(filename: &str, source: &[u8]) -> Self {
+        let sequence = NEXT_CROSS_CORPUS.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "mib-rs-cross-corpus-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("create cross-test corpus");
+        fs::write(path.join(filename), source).expect("write cross-test MIB");
+        Self(path)
+    }
+}
+
+impl Drop for CrossCorpus {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 // -- Build and run gomib-fixturegen --
 
 static FIXTUREGEN_BIN: OnceLock<PathBuf> = OnceLock::new();
@@ -245,8 +270,16 @@ fn fixturegen_bin() -> &'static PathBuf {
 }
 
 fn run_fixturegen(strictness: &str, include_diagnostics: bool) -> FixturePayload {
+    run_fixturegen_for(&corpus_dir(), strictness, include_diagnostics, &[])
+}
+
+fn run_fixturegen_for(
+    corpus: &Path,
+    strictness: &str,
+    include_diagnostics: bool,
+    modules: &[&str],
+) -> FixturePayload {
     let bin = fixturegen_bin();
-    let corpus = corpus_dir();
 
     let mut cmd = Command::new(bin);
     cmd.args([
@@ -259,6 +292,7 @@ fn run_fixturegen(strictness: &str, include_diagnostics: bool) -> FixturePayload
     if include_diagnostics {
         cmd.arg("-include-diagnostics");
     }
+    cmd.args(modules);
     let output = cmd
         .output()
         .unwrap_or_else(|e| panic!("failed to run gomib-fixturegen: {e}"));
@@ -662,7 +696,11 @@ fn extract_capability_module(
                     .as_ref()
                     .map(|sc| extract_syntax_constraints(mib, sc)),
                 access: variation.access.map(|a| a.to_string()).unwrap_or_default(),
-                creation_requires: variation.creation_requires.clone(),
+                creation_requires: variation
+                    .creation_requires
+                    .iter()
+                    .map(|reference| reference.name.clone())
+                    .collect(),
                 default_value: variation
                     .def_val
                     .as_ref()
@@ -1099,16 +1137,27 @@ fn compare_types(got: &ExtractedType, expected: &FixtureType) -> Vec<String> {
 }
 
 fn extract_diagnostics(mib: &Mib) -> Vec<ExtractedDiagnostic> {
-    let mut diags: Vec<_> = mib
-        .diagnostics()
+    let report = mib.diagnostic_report();
+    let mut diags: Vec<_> = report
         .iter()
-        .map(|d| ExtractedDiagnostic {
-            code: d.code.as_code().to_string(),
-            severity: d.severity.to_string(),
-            module: d.module.clone().unwrap_or_default(),
-            line: d.line.unwrap_or(0),
-            column: d.column.unwrap_or(0),
-            message: normalize_diagnostic_message(&d.message),
+        .map(|entry| {
+            let d = entry.diagnostic();
+            let (line, column) = match entry.byte_positions() {
+                Ok(Some((start, _))) => (
+                    usize::try_from(u64::from(start.line()) + 1).unwrap(),
+                    usize::try_from(u64::from(start.column()) + 1).unwrap(),
+                ),
+                Ok(None) => (0, 0),
+                Err(error) => panic!("diagnostic location unavailable for {}: {error}", d.code),
+            };
+            ExtractedDiagnostic {
+                code: d.code.as_code().to_string(),
+                severity: d.severity.to_string(),
+                module: d.module.clone().unwrap_or_default(),
+                line,
+                column,
+                message: normalize_diagnostic_message(&d.message),
+            }
         })
         .collect();
 
@@ -1450,4 +1499,246 @@ fn diagnostics_cross_strict() {
         return;
     }
     assert_no_diagnostic_divergences("strict", ResolverStrictness::Strict);
+}
+
+#[test]
+fn empty_revision_description_uses_shared_diagnostic_code() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
+
+    const MODULE: &str = "CROSS-EMPTY-DESCRIPTIONS-MIB";
+    const SOURCE: &[u8] = br#"CROSS-EMPTY-DESCRIPTIONS-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+crossEmptyDescriptionsMIB MODULE-IDENTITY
+    LAST-UPDATED "200001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test module"
+    REVISION "200001010000Z"
+    DESCRIPTION ""
+    ::= { enterprises 99999 }
+
+crossEmptyDescriptionObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION ""
+    ::= { crossEmptyDescriptionsMIB 1 }
+END
+"#;
+
+    let corpus = CrossCorpus::with_mib("CROSS-EMPTY-DESCRIPTIONS-MIB.mib", SOURCE);
+    let expected = run_fixturegen_for(&corpus.0, "normal", true, &[MODULE]);
+
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(dir_source(&corpus.0).expect("failed to create cross-test source"))
+            .modules([MODULE])
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(config),
+    )
+    .expect("cross-test MIB load failed");
+    let actual = extract_diagnostics(&mib);
+
+    for (message, code) in [
+        (
+            "\"crossEmptyDescriptionsMIB\": empty REVISION DESCRIPTION clause",
+            "empty-revision-description",
+        ),
+        (
+            "\"crossEmptyDescriptionObject\": empty DESCRIPTION clause",
+            "empty-description",
+        ),
+    ] {
+        let expected = expected
+            .diagnostics
+            .iter()
+            .find(|diagnostic| normalize_diagnostic_message(&diagnostic.message) == message)
+            .unwrap_or_else(|| panic!("gomib did not emit {code}"));
+        assert_eq!(expected.code, code);
+
+        let actual = actual
+            .iter()
+            .find(|diagnostic| diagnostic.message == message)
+            .unwrap_or_else(|| panic!("mib-rs did not emit {code}"));
+        assert_eq!(actual.code, expected.code);
+        assert_eq!(actual.severity, expected.severity);
+        assert_eq!(actual.module, expected.module);
+        if code == "empty-revision-description" {
+            assert_eq!(actual.line, expected.line);
+            assert_eq!(actual.column, expected.column);
+        }
+    }
+}
+
+#[test]
+fn integral_overflow_problem_matches_gomib_recovery() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
+
+    const MODULE: &str = "PROBLEM-INTEGRAL-OVERFLOW-MIB";
+    let problems = problems_dir();
+    let payload = run_fixturegen_for(&problems, "normal", true, &[MODULE]);
+    let problem_source =
+        std::fs::read_to_string(problems.join("PROBLEM-INTEGRAL-OVERFLOW-MIB.mib"))
+            .expect("failed to read overflow problem fixture");
+    let numeric_first_line = problem_source
+        .lines()
+        .position(|line| line.contains("4294967304"))
+        .map(|line| line + 1)
+        .expect("missing numeric-first overflow literal");
+    let numeric_first_column = problem_source
+        .lines()
+        .nth(numeric_first_line - 1)
+        .and_then(|line| line.find("4294967304"))
+        .map(|column| column + 1)
+        .expect("missing numeric-first overflow column");
+
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(dir_source(&problems).expect("failed to create problems source"))
+            .modules([MODULE])
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(config),
+    )
+    .expect("problem fixture load failed");
+
+    let expected_diagnostics: Vec<_> = payload
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code.as_str(), "invalid-i64" | "invalid-u32"))
+        .map(|diagnostic| {
+            (
+                diagnostic.code.as_str(),
+                diagnostic.severity.as_str(),
+                diagnostic.module.as_str(),
+                diagnostic.line,
+                diagnostic.column,
+                normalize_diagnostic_message(&diagnostic.message),
+            )
+        })
+        .collect();
+    let actual = extract_diagnostics(&mib);
+    let local_only_diagnostic = ExtractedDiagnostic {
+        code: "invalid-u32".to_string(),
+        severity: "error".to_string(),
+        module: MODULE.to_string(),
+        line: numeric_first_line,
+        column: numeric_first_column,
+        message: "invalid OID component (not a valid u32)".to_string(),
+    };
+    assert_eq!(
+        payload
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code == local_only_diagnostic.code
+                    && diagnostic.severity == local_only_diagnostic.severity
+                    && diagnostic.module == local_only_diagnostic.module
+                    && diagnostic.line == local_only_diagnostic.line
+                    && diagnostic.column == local_only_diagnostic.column
+                    && normalize_diagnostic_message(&diagnostic.message)
+                        == local_only_diagnostic.message
+            })
+            .count(),
+        0,
+        "gomib unexpectedly emitted the numeric-first OID DEFVAL diagnostic"
+    );
+    let excluded_count = actual
+        .iter()
+        .filter(|diagnostic| **diagnostic == local_only_diagnostic)
+        .count();
+    assert_eq!(
+        excluded_count, 1,
+        "expected exactly one local numeric-first OID DEFVAL diagnostic"
+    );
+    // gomib's current CST lowerer routes a numeric-first OID DEFVAL through
+    // its identifier-first helper and therefore omits this one diagnostic.
+    let actual_diagnostics: Vec<_> = actual
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code.as_str(), "invalid-i64" | "invalid-u32"))
+        .filter(|diagnostic| **diagnostic != local_only_diagnostic)
+        .map(|diagnostic| {
+            (
+                diagnostic.code.as_str(),
+                diagnostic.severity.as_str(),
+                diagnostic.module.as_str(),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(actual_diagnostics, expected_diagnostics);
+
+    let (numeric_first_oid, numeric_first_expected) = payload
+        .nodes
+        .iter()
+        .find(|(_, node)| node.name == "problemOverflowNumericFirstOidDefault")
+        .expect("gomib did not retain numeric-first DEFVAL object");
+    let numeric_first_oid: Oid = numeric_first_oid
+        .parse()
+        .expect("gomib returned invalid OID");
+    let numeric_first_node = mib
+        .node_by_oid(&numeric_first_oid)
+        .expect("mib-rs did not retain numeric-first DEFVAL object");
+    let numeric_first_actual = extract_node(&mib, numeric_first_node);
+    let numeric_first_failures = compare_nodes(&numeric_first_actual, numeric_first_expected);
+    assert!(
+        numeric_first_failures.is_empty(),
+        "numeric-first node differences: {numeric_first_failures:#?}"
+    );
+
+    let module_id = mib.module_by_name(MODULE).expect("missing problem module");
+    for name in ["ProblemOverflowEnum", "ProblemOverflowBits"] {
+        let key = qualified_type_name(MODULE, name);
+        let expected = payload.types.get(&key).expect("missing gomib type");
+        let type_id = mib
+            .raw()
+            .module(module_id)
+            .types()
+            .iter()
+            .copied()
+            .find(|&type_id| mib.raw().type_(type_id).name() == name)
+            .expect("missing mib-rs type");
+        assert!(
+            compare_types(&extract_type(&mib, type_id), expected).is_empty(),
+            "resolved type {name} differs from gomib"
+        );
+    }
+
+    for name in [
+        "problemOverflowPositiveDefault",
+        "problemValidUnsignedDefault",
+        "problemOverflowNegativeDefault",
+        "problemAfterOverflow",
+    ] {
+        let (oid, expected) = payload
+            .nodes
+            .iter()
+            .find(|(_, node)| node.name == name)
+            .unwrap_or_else(|| panic!("missing gomib node {name}"));
+        let oid: Oid = oid.parse().expect("gomib returned invalid OID");
+        let node_id = mib
+            .node_by_oid(&oid)
+            .unwrap_or_else(|| panic!("missing mib-rs node {name}"));
+        assert!(
+            compare_nodes(&extract_node(&mib, node_id), expected).is_empty(),
+            "resolved node {name} differs from gomib"
+        );
+        if name == "problemValidUnsignedDefault" {
+            assert_eq!(expected.default_value, u64::MAX.to_string());
+        }
+    }
 }

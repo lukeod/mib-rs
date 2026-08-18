@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mib_rs::source;
 
-use mib_rs::source::{FindResult, Source};
+use mib_rs::source::{Source, SourceCandidate, SourceOrigin};
 use mib_rs::{DiagCode, DiagnosticConfig, Loader, Severity};
 
 struct AdvertisedSource {
@@ -24,6 +25,10 @@ struct ErrorSource;
 
 struct SharedPathSource;
 
+struct AliasedDocumentSource {
+    bytes: Arc<[u8]>,
+}
+
 impl AdvertisedSource {
     fn new(label: &'static str, modules: &[&str], content: &[(&str, &[u8])]) -> Self {
         Self {
@@ -38,10 +43,14 @@ impl AdvertisedSource {
 }
 
 impl Source for AdvertisedSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
-        Ok(self.content.get(name).map(|content| FindResult {
-            content: content.clone(),
-            path: PathBuf::from(format!("<{}:{name}>", self.label)),
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        Ok(self.content.get(name).map(|content| {
+            SourceCandidate::new(
+                name,
+                SourceOrigin::custom(self.label, name),
+                format!("<{}:{name}>", self.label),
+                Arc::<[u8]>::from(content.as_slice()),
+            )
         }))
     }
 
@@ -51,23 +60,26 @@ impl Source for AdvertisedSource {
 }
 
 impl Source for DuplicateCandidateSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
         self.find_candidates(name).next().transpose()
     }
 
     fn find_candidates<'a>(
         &'a self,
         name: &'a str,
-    ) -> Box<dyn Iterator<Item = io::Result<FindResult>> + 'a> {
+    ) -> Box<dyn Iterator<Item = io::Result<SourceCandidate>> + 'a> {
         Box::new(
             self.candidates
                 .iter()
                 .filter(move |_| name == self.name)
-                .map(move |content| {
-                    Ok(FindResult {
-                        content: content.clone(),
-                        path: PathBuf::from(format!("<{}:{name}>", self.label)),
-                    })
+                .enumerate()
+                .map(move |(index, content)| {
+                    Ok(SourceCandidate::new(
+                        index.to_string(),
+                        SourceOrigin::custom(self.label, format!("{name}/{index}")),
+                        format!("<{}:{name}>", self.label),
+                        Arc::<[u8]>::from(content.as_slice()),
+                    ))
                 }),
         )
     }
@@ -78,8 +90,12 @@ impl Source for DuplicateCandidateSource {
 }
 
 impl Source for ErrorSource {
-    fn find(&self, _name: &str) -> io::Result<Option<FindResult>> {
-        Err(io::Error::other("lower-priority source accessed"))
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        if name == "REAL-MIB" {
+            Err(io::Error::other("lower-priority source accessed"))
+        } else {
+            Ok(None)
+        }
     }
 
     fn list_modules(&self) -> io::Result<Vec<String>> {
@@ -88,16 +104,36 @@ impl Source for ErrorSource {
 }
 
 impl Source for SharedPathSource {
-    fn find(&self, name: &str) -> io::Result<Option<FindResult>> {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
         let content = match name {
             "A-MIB" => b"A-MIB DEFINITIONS ::= BEGIN\nEND\n".as_slice(),
             "B-MIB" => b"B-MIB DEFINITIONS ::= BEGIN\nEND\n".as_slice(),
             _ => return Ok(None),
         };
-        Ok(Some(FindResult {
-            content: content.to_vec(),
-            path: PathBuf::from("<shared>"),
-        }))
+        Ok(Some(SourceCandidate::new(
+            name,
+            SourceOrigin::custom("test", name),
+            "<shared>",
+            Arc::<[u8]>::from(content),
+        )))
+    }
+
+    fn list_modules(&self) -> io::Result<Vec<String>> {
+        Ok(vec!["A-MIB".to_string(), "B-MIB".to_string()])
+    }
+}
+
+impl Source for AliasedDocumentSource {
+    fn find(&self, name: &str) -> io::Result<Option<SourceCandidate>> {
+        match name {
+            "A-MIB" | "B-MIB" => Ok(Some(SourceCandidate::new(
+                "both-modules",
+                SourceOrigin::memory("editor-buffer-1"),
+                "two modules in one buffer",
+                Arc::clone(&self.bytes),
+            ))),
+            _ => Ok(None),
+        }
     }
 
     fn list_modules(&self) -> io::Result<Vec<String>> {
@@ -139,13 +175,20 @@ const MALFORMED: &[u8] = b"LEADING-TOKEN REAL-MIB DEFINITIONS ::= BEGIN\nEND\n";
 const PHANTOM: &[u8] = b"OTHER-MIB DEFINITIONS ::= BEGIN\nEND\n";
 const VALID: &[u8] = b"REAL-MIB DEFINITIONS ::= BEGIN\nEND\n";
 
-fn assert_real_mib_loaded(loader: Loader, expected_path: &Path) {
+fn assert_real_mib_loaded(loader: Loader, expected_origin: SourceOrigin) {
     let mib = loader
         .diagnostic_config(permissive_diagnostics())
         .load()
         .expect("valid candidate should load");
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), expected_path.to_string_lossy());
+    assert_eq!(module.source_origin(), Some(&expected_origin));
+}
+
+fn candidate_file_path(candidate: &SourceCandidate) -> &Path {
+    match candidate.origin() {
+        SourceOrigin::File { path } => path,
+        origin => panic!("expected file origin, got {origin:?}"),
+    }
 }
 
 #[test]
@@ -199,7 +242,7 @@ END
         .expect("later valid source should satisfy the requested module");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -223,7 +266,7 @@ fn explicit_chain_load_continues_after_phantom_child() {
         .expect("later valid chain child should satisfy the requested module");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -247,7 +290,7 @@ fn load_all_chain_continues_after_phantom_child() {
         .expect("later valid chain child should win after candidate validation");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
 }
 
 #[test]
@@ -278,7 +321,7 @@ END
         .expect("later valid source should win after candidate validation");
 
     let module = mib.module("REAL-MIB").expect("REAL-MIB should be loaded");
-    assert_eq!(module.source_path(), "<valid:REAL-MIB>");
+    assert_eq!(module.source_label(), Some("<valid:REAL-MIB>"));
     assert!(mib.module("OTHER-MIB").is_none());
 }
 
@@ -338,7 +381,7 @@ fn built_in_sources_retain_duplicate_candidates_in_order() {
     assert_eq!(
         file_candidates
             .iter()
-            .map(|candidate| candidate.path.as_path())
+            .map(candidate_file_path)
             .collect::<Vec<_>>(),
         vec![first.as_path(), second.as_path()]
     );
@@ -351,10 +394,30 @@ fn built_in_sources_retain_duplicate_candidates_in_order() {
     assert_eq!(directory_candidates.len(), 2);
     let directory_paths = directory_candidates
         .iter()
-        .map(|candidate| candidate.path.as_path())
+        .map(candidate_file_path)
         .collect::<Vec<_>>();
     assert!(directory_paths.contains(&first.as_path()));
     assert!(directory_paths.contains(&second.as_path()));
+}
+
+#[test]
+fn file_source_shares_one_candidate_across_modules_in_one_document() {
+    let dir = TempDir::new();
+    let path = dir.path().join("two-modules.mib");
+    std::fs::write(
+        &path,
+        b"A-MIB DEFINITIONS ::= BEGIN END\nB-MIB DEFINITIONS ::= BEGIN END\n",
+    )
+    .expect("write multi-module source");
+    let files = source::file(&path).expect("build file source");
+
+    let a = files.find("A-MIB").unwrap().unwrap();
+    let b = files.find("B-MIB").unwrap().unwrap();
+
+    assert_eq!(a.identity(), b.identity());
+    assert_eq!(a.origin(), &SourceOrigin::file(path.clone()));
+    assert_eq!(a.label(), path.to_string_lossy());
+    assert!(Arc::ptr_eq(a.shared_bytes(), b.shared_bytes()));
 }
 
 #[test]
@@ -363,7 +426,10 @@ fn explicit_files_load_skips_malformed_first_path() {
     let (malformed, valid) = write_malformed_and_valid_files(&dir);
     let files = source::files([malformed, valid.clone()]).expect("build file source");
 
-    assert_real_mib_loaded(Loader::new().source(files).modules(["REAL-MIB"]), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(files).modules(["REAL-MIB"]),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -372,7 +438,10 @@ fn load_all_files_skips_malformed_first_path() {
     let (malformed, valid) = write_malformed_and_valid_files(&dir);
     let files = source::files([malformed, valid.clone()]).expect("build file source");
 
-    assert_real_mib_loaded(Loader::new().source(files).parallelism(2), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(files).parallelism(2),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -383,7 +452,7 @@ fn explicit_directory_load_skips_malformed_first_path() {
 
     assert_real_mib_loaded(
         Loader::new().source(directory).modules(["REAL-MIB"]),
-        &valid,
+        SourceOrigin::file(&valid),
     );
 }
 
@@ -393,7 +462,10 @@ fn load_all_directory_skips_malformed_first_path() {
     let (_, valid) = write_malformed_and_valid_files(&dir);
     let directory = source::dir(dir.path()).expect("build directory source");
 
-    assert_real_mib_loaded(Loader::new().source(directory).parallelism(2), &valid);
+    assert_real_mib_loaded(
+        Loader::new().source(directory).parallelism(2),
+        SourceOrigin::file(&valid),
+    );
 }
 
 #[test]
@@ -403,7 +475,7 @@ fn chained_valid_candidate_stops_before_later_io_error() {
 
     assert_real_mib_loaded(
         Loader::new().source(chained).modules(["REAL-MIB"]),
-        Path::new("<valid:REAL-MIB>"),
+        SourceOrigin::custom("valid", "REAL-MIB"),
     );
 }
 
@@ -414,7 +486,7 @@ fn load_all_chain_stops_before_later_io_error() {
 
     assert_real_mib_loaded(
         Loader::new().source(chained).parallelism(1),
-        Path::new("<valid:REAL-MIB>"),
+        SourceOrigin::custom("valid", "REAL-MIB"),
     );
 }
 
@@ -430,7 +502,7 @@ fn directory_with_later_stale_candidate(dir: &TempDir) -> (Box<dyn Source>, Path
         .collect::<io::Result<Vec<_>>>()
         .expect("inspect indexed candidate order")
         .into_iter()
-        .map(|candidate| candidate.path)
+        .map(|candidate| candidate_file_path(&candidate).to_path_buf())
         .collect::<Vec<_>>();
     assert_eq!(candidate_paths.len(), 2);
     std::fs::remove_file(&candidate_paths[1]).expect("make later index entry stale");
@@ -444,7 +516,7 @@ fn directory_valid_candidate_stops_before_later_stale_path() {
 
     assert_real_mib_loaded(
         Loader::new().source(directory).modules(["REAL-MIB"]),
-        &valid_path,
+        SourceOrigin::file(&valid_path),
     );
 }
 
@@ -453,7 +525,10 @@ fn load_all_directory_stops_before_later_stale_path() {
     let dir = TempDir::new();
     let (directory, valid_path) = directory_with_later_stale_candidate(&dir);
 
-    assert_real_mib_loaded(Loader::new().source(directory).parallelism(1), &valid_path);
+    assert_real_mib_loaded(
+        Loader::new().source(directory).parallelism(1),
+        SourceOrigin::file(&valid_path),
+    );
 }
 
 #[test]
@@ -481,4 +556,31 @@ fn load_all_cache_distinguishes_module_names_with_same_path() {
 
     assert!(mib.module("A-MIB").is_some());
     assert!(mib.module("B-MIB").is_some());
+}
+
+#[test]
+fn same_candidate_loads_all_modules_under_aliased_requests() {
+    const BOTH: &[u8] = b"A-MIB DEFINITIONS ::= BEGIN END\nB-MIB DEFINITIONS ::= BEGIN END\n";
+
+    for modules in [Some(vec!["A-MIB", "B-MIB"]), None] {
+        let mut loader = Loader::new()
+            .source(Box::new(AliasedDocumentSource {
+                bytes: Arc::from(BOTH),
+            }))
+            .parallelism(2)
+            .diagnostic_config(permissive_diagnostics());
+        if let Some(modules) = modules {
+            loader = loader.modules(modules);
+        }
+        let mib = loader.load().expect("load aliased multi-module source");
+
+        assert!(mib.module("A-MIB").is_some());
+        assert!(mib.module("B-MIB").is_some());
+        let a = mib.module("A-MIB").unwrap();
+        let b = mib.module("B-MIB").unwrap();
+        assert_eq!(a.source_label(), Some("two modules in one buffer"));
+        assert_eq!(b.source_label(), Some("two modules in one buffer"));
+        assert_eq!(a.source_id(), b.source_id());
+        assert!(std::ptr::eq(a.source().unwrap(), b.source().unwrap()));
+    }
 }

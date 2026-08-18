@@ -1,8 +1,8 @@
 //! Phase 1: Module registration.
 //!
-//! Creates synthetic base modules (SNMPv2-SMI, RFC1155-SMI, etc.), filters
-//! out user modules that collide with base names, registers all modules in
-//! the [`ResolverContext`], and builds per-module caches used by later phases.
+//! Registers parsed modules in the [`ResolverContext`] and builds per-module
+//! caches used by later phases. The loading pipeline supplies the SMI
+//! foundation modules from configured sources or its embedded fallback.
 
 use std::collections::HashSet;
 
@@ -12,27 +12,14 @@ use super::context::{IrModuleId, ResolverContext};
 use crate::ir;
 use crate::lower::base_modules;
 
-/// Phase 1: Register all modules (base + user), create resolved module shells,
+/// Phase 1: Register all modules, create resolved module shells,
 /// and build definition name indexes.
 ///
-/// Creates synthetic base modules, filters user modules that collide with
-/// base names, stores the final base+user module list in [`ResolverContext::modules`],
-/// extracts MODULE-IDENTITY metadata, forwards parse/lowering diagnostics, caches
-/// well-known base module ids, and populates the per-module definition indexes.
+/// Stores the input module list in [`ResolverContext::modules`], extracts
+/// MODULE-IDENTITY metadata, forwards parse/lowering diagnostics, caches
+/// well-known foundation module ids, and populates per-module definition indexes.
 pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir::Module>) {
-    // Create synthetic base modules and prepend them.
-    let base_mods = base_modules::create_base_modules();
-    let base_names: HashSet<&str> = base_mods.iter().map(|m| m.name.as_str()).collect();
-
-    // Filter user modules that collide with base module names.
-    let user_mods: Vec<ir::Module> = input_modules
-        .into_iter()
-        .filter(|m| !base_names.contains(m.name.as_str()))
-        .collect();
-
-    let mut all_modules = base_mods;
-    all_modules.extend(user_mods);
-    ctx.modules = all_modules;
+    ctx.modules = input_modules;
 
     // Register each module.
     for idx in 0..ctx.modules.len() {
@@ -41,9 +28,8 @@ pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir:
 
         let mut resolved = ModuleData::new(m.name.clone());
         resolved.language = m.language;
-        resolved.source_path = m.source_path.clone();
+        resolved.source_id = m.source_id;
         resolved.is_base = base_modules::is_base_module(&m.name);
-        resolved.line_table = m.line_table.clone();
 
         // Extract MODULE-IDENTITY metadata.
         for def in &m.definitions {
@@ -58,7 +44,7 @@ pub(super) fn register_modules(ctx: &mut ResolverContext, input_modules: Vec<ir:
                     .map(|r| Revision {
                         date: r.date.clone(),
                         description: r.description.clone(),
-                        span: r.span,
+                        range: r.range,
                     })
                     .collect();
                 break;
@@ -121,13 +107,13 @@ pub(super) fn group_imports(ir_mod: &ir::Module) -> Vec<Import> {
                 order.push(imp.module.as_str());
                 e.insert(vec![ImportSymbol {
                     name: imp.symbol.clone(),
-                    span: imp.span,
+                    range: imp.range,
                 }]);
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 e.get_mut().push(ImportSymbol {
                     name: imp.symbol.clone(),
-                    span: imp.span,
+                    range: imp.range,
                 });
             }
         }

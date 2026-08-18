@@ -2,7 +2,7 @@
 //!
 //! Resolution runs six sequential, single-threaded phases:
 //!
-//! - **Registration** - Index modules, create resolved module shells, seed base modules.
+//! - **Registration** - Index modules and create resolved module shells.
 //! - **Imports** - Resolve cross-module symbol references, handle forwarding and aliases.
 //! - **Types** - Build type graph, resolve parent chains, inherit base types and constraints.
 //! - **OIDs** - Build OID trie from symbolic references in topological order.
@@ -15,13 +15,16 @@
 mod checks;
 mod context;
 mod imports;
+mod navigation;
 mod oids;
 mod registration;
+pub(crate) mod rules;
 mod semantics;
 mod types;
 mod util;
 
 use crate::ir;
+use crate::source::SourceSet;
 use crate::types::{DiagnosticConfig, ResolverStrictness};
 use tracing::{debug, debug_span, info, info_span, warn};
 
@@ -40,6 +43,7 @@ use context::ResolverContext;
 /// controls which diagnostics are reported.
 pub fn resolve(
     modules: Vec<ir::Module>,
+    sources: SourceSet,
     strictness: ResolverStrictness,
     diag_config: &DiagnosticConfig,
 ) -> Mib {
@@ -54,7 +58,7 @@ pub fn resolve(
     );
     let _guard = span.enter();
 
-    let mut ctx = ResolverContext::new(strictness, diag_config.clone());
+    let mut ctx = ResolverContext::new(strictness, diag_config.clone(), sources);
 
     run_phase("registration", || {
         registration::register_modules(&mut ctx, modules);
@@ -69,6 +73,7 @@ pub fn resolve(
     });
     run_phase("imports", || {
         imports::resolve_imports(&mut ctx);
+        imports::copy_import_provenance_to_modules(&mut ctx);
         imports::resolve_transitive_imports(&mut ctx);
         debug!(
             target: "mib_rs::resolver",
@@ -132,6 +137,8 @@ pub fn resolve(
             "phase complete",
         );
     });
+
+    navigation::build_semantic_span_indexes(&mut ctx);
 
     ctx.drop_modules();
     ctx.finalize_unresolved();

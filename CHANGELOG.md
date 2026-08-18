@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - Stop enabling the `cli` feature by default; install the binary with `cargo install mib-rs --features cli`
+- Replace `TokenKind` with the shared `SyntaxKind` token/node vocabulary and rename its error and end-of-file variants to `ErrorToken` and `EofToken`
+- Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
+- Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
+- Use `DiagCode::EmptyRevisionDescription` (`empty-revision-description`) for empty `REVISION DESCRIPTION` clauses while retaining `empty-description` for other descriptions
+- Make `LoadError::DiagnosticThreshold` own a source-retaining `DiagnosticReport`; reports order diagnostics by stable source identity rather than compilation-local IDs and derive checked full ranges on demand
+- Make diagnostic reports internal products of a resolved MIB's exact shared source arena and remove `SourceSet::clone` to prevent cross-arena `SourceId` aliasing
+- Expose checked diagnostic locations and rendering only through report-owned `DiagnosticEntry` handles; raw diagnostic metadata can no longer be resolved through an arbitrary report
+- Replace exported diagnostic `line`/`column` fields with an explicit source identity, label, and half-open byte range location model; resolved-MIB export schema version is now 2
+- Replace constructed foundation-module IR with parsed, RFC-derived source fallbacks that are byte-synchronized with gomib, keep complete RFC modules faithful to their published definitions, adapt incomplete macro excerpts only as needed for standalone loading, and allow configured sources to override them
+- Replace unqualified source spans, synthetic sentinels, copied module paths, and line tables with checked `SourceRange` values, retained `SourceDocument`s, and typed source origins
+
+### Added
+
+- Add checked bidirectional byte positions and explicit UTF-8, UTF-16, and UTF-32 editor-position conversion on retained source documents
+- Add immutable lossless typed CSTs with cursor context and source-safe navigation across syntactic and resolved semantic spans
+- Add structured domain-specific resolution traces and a `trace` CLI command that reports candidates, import provenance, fallbacks, and unresolved references
+- Add deterministic canonical SMIv2 output for resolved modules through the writer API and the `normalize` CLI command
+- Preserve precise integer and octet value kinds, normalized effective constraints, component raw arcs, and typed codec failures
+- Add object-specific index codec bindings for enforcing the 128-arc complete instance-OID limit
+- Report zero-width index components and schemas without rejecting representable definitions
+- Report duplicate and unresolved `INCLUDES` groups and `CREATION-REQUIRES` objects in agent capabilities
+
+### Changed
+
+- Offer project-authored code under either the MIT or Apache-2.0 license at the user's option
+- Classify unresolved and wrong-kind `OBJECT-GROUP` and `NOTIFICATION-GROUP` members as minor diagnostics
+
+### Fixed
+
+- Validate dates, revision ordering, and `LAST-UPDATED` matching for every `MODULE-IDENTITY` regardless of inferred module language
+- Distinguish notification `OBJECTS` references to OID nodes without attached object definitions from unknown symbols
+- Report missing `INTEGER`, `BITS`, `OCTET STRING`, and `OBJECT IDENTIFIER` types when resolving inline syntax
+- Preserve overflowing decimal range endpoints as raw values with `unknown-range-value` diagnostics
 
 ## [0.9.0] - 2026-08-13
 

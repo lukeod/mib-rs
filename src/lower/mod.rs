@@ -13,44 +13,46 @@ use std::collections::HashSet;
 
 use crate::ast;
 use crate::ir;
-use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Span, Status};
+use crate::source::{SourceDocument, SourceRange};
+use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, Status};
 use tracing::{debug, debug_span, info_span};
 
 /// Tracks state accumulated during the lowering pass: diagnostics,
-/// detected language, and the line table for span-to-line conversion.
-pub(crate) struct LoweringContext<'cfg> {
+/// detected language, and the source document used for diagnostics.
+pub(crate) struct LoweringContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     pub language: Language,
-    pub diag_config: &'cfg DiagnosticConfig,
-    line_table: Vec<usize>,
+    pub diag_config: &'a DiagnosticConfig,
+    document: &'a SourceDocument,
     module_name: String,
 }
 
-impl<'cfg> LoweringContext<'cfg> {
-    fn new(source: &[u8], diag_config: &'cfg DiagnosticConfig) -> Self {
+impl<'a> LoweringContext<'a> {
+    fn new(document: &'a SourceDocument, diag_config: &'a DiagnosticConfig) -> Self {
         LoweringContext {
             diagnostics: Vec::new(),
             language: Language::Unknown,
             diag_config,
-            line_table: crate::types::build_line_table(source),
+            document,
             module_name: String::new(),
         }
     }
 
     /// Records a diagnostic if the current config allows it.
-    pub(crate) fn emit_diagnostic(&mut self, code: DiagCode, span: Span, message: String) {
+    pub(crate) fn emit_diagnostic(&mut self, code: DiagCode, range: SourceRange, message: String) {
         if !self.diag_config.should_collect(code) {
             return;
         }
         let severity = self.diag_config.effective_severity(code);
-        let (line, col) = crate::types::line_col_from_table(&self.line_table, span.start);
+        self.document
+            .slice(range)
+            .expect("lowering range belongs to its source document");
         self.diagnostics.push(Diagnostic {
             severity,
             code,
             message,
             module: Some(self.module_name.clone()),
-            line: Some(line),
-            column: Some(col),
+            range: Some(range),
         });
     }
 }
@@ -58,9 +60,13 @@ impl<'cfg> LoweringContext<'cfg> {
 /// Transforms an AST module into a normalized [`ir::Module`].
 ///
 /// Lowering unifies SMIv1/SMIv2 constructs, flattens imports, and runs
-/// validation checks. The `source` bytes are used to compute line/column
-/// positions for diagnostics. The AST is not needed after this returns.
-pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticConfig) -> ir::Module {
+/// validation checks. The source document provides byte slicing, source
+/// identity, and diagnostic positions. The AST is not needed after this returns.
+pub fn lower(
+    ast_module: ast::Module,
+    document: &SourceDocument,
+    diag_config: &DiagnosticConfig,
+) -> ir::Module {
     let module_name = ast_module
         .name
         .as_ref()
@@ -73,15 +79,17 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
         module = %module_name,
         import_clause_count = ast_module.imports.len(),
         definition_count = ast_module.body.len(),
-        byte_count = source.len(),
+        byte_count = document.bytes().len(),
         reporting = ?diag_config.reporting,
     );
     let _guard = span.enter();
 
-    let mut ctx = LoweringContext::new(source, diag_config);
+    let mut ctx = LoweringContext::new(document, diag_config);
 
-    let mut module = ir::Module::new(module_name, ast_module.span);
-    module.line_table = ctx.line_table.clone();
+    document
+        .slice(ast_module.span)
+        .expect("AST module belongs to the lowering source document");
+    let mut module = ir::Module::new(module_name, Some(ast_module.span));
     ctx.module_name = module.name.clone();
 
     run_phase("imports", || {
@@ -128,9 +136,10 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
 
     run_phase("checks", || {
         check_module_name_suffix(&mut ctx, &module);
+        check_module_identity_dates(&mut ctx, &ast_module);
 
         if module.language == Language::SMIv2 && !base_modules::is_base_module(&module.name) {
-            check_module_identity(&mut ctx, &ast_module, &module);
+            check_module_identity_structure(&mut ctx, &module);
             check_macro_imports(&mut ctx, &ast_module, &module);
         }
         debug!(
@@ -144,19 +153,24 @@ pub fn lower(ast_module: ast::Module, source: &[u8], diag_config: &DiagnosticCon
     });
 
     run_phase("diagnostics", || {
-        // Convert AST span-based diagnostics to line/col diagnostics.
         for d in &ast_module.diagnostics {
             if !ctx.diag_config.should_collect(d.code) {
                 continue;
             }
-            let (line, col) = crate::types::line_col_from_table(&ctx.line_table, d.span.start);
+            if let Some(range) = d.range {
+                ctx.document
+                    .slice(range)
+                    .expect("parser diagnostic belongs to its source document");
+            }
             module.diagnostics.push(Diagnostic {
                 severity: ctx.diag_config.effective_severity(d.code),
                 code: d.code,
                 message: d.message.clone(),
-                module: Some(module.name.clone()),
-                line: Some(line),
-                column: Some(col),
+                module: d
+                    .module
+                    .clone()
+                    .or_else(|| (!module.name.is_empty()).then(|| module.name.clone())),
+                range: d.range,
             });
         }
 
@@ -297,7 +311,7 @@ fn lower_imports(import_clauses: &[ast::ImportClause]) -> Vec<ir::Import> {
             imports.push(ir::Import {
                 module: from_module.clone(),
                 symbol: symbol.name.clone(),
-                span: symbol.span,
+                range: symbol.span,
             });
         }
     }
@@ -367,6 +381,16 @@ fn ident_names(idents: &[ast::Ident]) -> Vec<String> {
     idents.iter().map(|id| id.name.clone()).collect()
 }
 
+fn name_refs(idents: &[ast::Ident]) -> Vec<ir::NameRef> {
+    idents
+        .iter()
+        .map(|id| ir::NameRef {
+            name: id.name.clone(),
+            range: id.span,
+        })
+        .collect()
+}
+
 fn optional_string(qs: &Option<ast::QuotedString>) -> String {
     match qs {
         Some(qs) => qs.value.clone(),
@@ -374,24 +398,18 @@ fn optional_string(qs: &Option<ast::QuotedString>) -> String {
     }
 }
 
-fn optional_span(qs: &Option<ast::QuotedString>) -> Span {
-    match qs {
-        Some(qs) => qs.span,
-        None => Span::ZERO,
-    }
+fn optional_range(qs: &Option<ast::QuotedString>) -> Option<SourceRange> {
+    qs.as_ref().map(|qs| qs.span)
 }
 
-fn optional_status_span(s: &Option<ast::StatusClause>) -> Span {
-    match s {
-        Some(s) => s.span,
-        None => Span::ZERO,
-    }
+fn optional_status_range(s: &Option<ast::StatusClause>) -> Option<SourceRange> {
+    s.as_ref().map(|status| status.span)
 }
 
 fn check_empty_optional(
     ctx: &mut LoweringContext<'_>,
     qs: &Option<ast::QuotedString>,
-    span: Span,
+    range: SourceRange,
     def_name: &str,
     clause: &str,
     code: DiagCode,
@@ -401,7 +419,7 @@ fn check_empty_optional(
     {
         ctx.emit_diagnostic(
             code,
-            span,
+            range,
             format!("{:?}: empty {} clause", def_name, clause),
         );
     }
@@ -410,7 +428,7 @@ fn check_empty_optional(
 fn check_empty_required(
     ctx: &mut LoweringContext<'_>,
     value: &str,
-    span: Span,
+    range: SourceRange,
     def_name: &str,
     clause: &str,
     code: DiagCode,
@@ -418,7 +436,7 @@ fn check_empty_required(
     if value.is_empty() {
         ctx.emit_diagnostic(
             code,
-            span,
+            range,
             format!("{:?}: empty {} clause", def_name, clause),
         );
     }
@@ -430,13 +448,13 @@ fn check_description_reference(
     ctx: &mut LoweringContext<'_>,
     description: &str,
     reference: &Option<ast::QuotedString>,
-    span: Span,
+    range: SourceRange,
     def_name: &str,
 ) {
     check_empty_required(
         ctx,
         description,
-        span,
+        range,
         def_name,
         "DESCRIPTION",
         DiagCode::EmptyDescription,
@@ -444,7 +462,7 @@ fn check_description_reference(
     check_empty_optional(
         ctx,
         reference,
-        span,
+        range,
         def_name,
         "REFERENCE",
         DiagCode::EmptyReference,
@@ -457,13 +475,13 @@ fn check_optional_description_reference(
     ctx: &mut LoweringContext<'_>,
     description: &Option<ast::QuotedString>,
     reference: &Option<ast::QuotedString>,
-    span: Span,
+    range: SourceRange,
     def_name: &str,
 ) {
     check_empty_optional(
         ctx,
         description,
-        span,
+        range,
         def_name,
         "DESCRIPTION",
         DiagCode::EmptyDescription,
@@ -471,7 +489,7 @@ fn check_optional_description_reference(
     check_empty_optional(
         ctx,
         reference,
-        span,
+        range,
         def_name,
         "REFERENCE",
         DiagCode::EmptyReference,
@@ -485,17 +503,13 @@ fn check_module_name_suffix(ctx: &mut LoweringContext<'_>, module: &ir::Module) 
     if !module.name.ends_with("-MIB") {
         ctx.emit_diagnostic(
             DiagCode::ModuleNameSuffix,
-            module.span,
+            module.range.expect("lowered source module has a range"),
             format!("module name {:?} does not end with -MIB", module.name),
         );
     }
 }
 
-fn check_module_identity(
-    ctx: &mut LoweringContext<'_>,
-    ast_module: &ast::Module,
-    module: &ir::Module,
-) {
+fn check_module_identity_structure(ctx: &mut LoweringContext<'_>, module: &ir::Module) {
     let mut module_identities: Vec<(usize, &ir::ModuleIdentity)> = Vec::new();
     for (i, def) in module.definitions.iter().enumerate() {
         if let ir::Definition::ModuleIdentity(mi) = def {
@@ -506,7 +520,7 @@ fn check_module_identity(
     if module_identities.is_empty() {
         ctx.emit_diagnostic(
             DiagCode::MissingModuleIdentity,
-            module.span,
+            module.range.expect("lowered source module has a range"),
             format!("SMIv2 module {} lacks MODULE-IDENTITY", module.name),
         );
         return;
@@ -514,35 +528,10 @@ fn check_module_identity(
 
     let (first_index, first_mi) = module_identities[0];
 
-    // Check LAST-UPDATED has matching REVISION.
-    check_revision_last_updated(ctx, first_mi);
-
-    // Validate dates from AST (has per-date spans).
-    let ast_mi = ast_module.body.iter().find_map(|def| {
-        if let ast::Definition::ModuleIdentity(mi) = def {
-            Some(mi)
-        } else {
-            None
-        }
-    });
-    if let Some(ast_mi) = ast_mi {
-        let revision_dates: Vec<(String, Span)> = ast_mi
-            .revisions
-            .iter()
-            .map(|r| (r.date.value.clone(), r.date.span))
-            .collect();
-        dates::check_module_identity_dates(
-            ctx,
-            &ast_mi.last_updated.value,
-            ast_mi.last_updated.span,
-            &revision_dates,
-        );
-    }
-
     if first_index > 0 {
         ctx.emit_diagnostic(
             DiagCode::ModuleIdentityNotFirst,
-            first_mi.span,
+            first_mi.range,
             format!(
                 "MODULE-IDENTITY should be the first definition in {}",
                 module.name
@@ -553,25 +542,49 @@ fn check_module_identity(
     for &(_, mi) in &module_identities[1..] {
         ctx.emit_diagnostic(
             DiagCode::ModuleIdentityMultiple,
-            mi.span,
+            mi.range,
             format!("multiple MODULE-IDENTITY definitions in {}", module.name),
         );
     }
 }
 
-fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ir::ModuleIdentity) {
-    if mi.last_updated.is_empty() {
+fn check_module_identity_dates(ctx: &mut LoweringContext<'_>, ast_module: &ast::Module) {
+    for def in &ast_module.body {
+        let ast::Definition::ModuleIdentity(mi) = def else {
+            continue;
+        };
+
+        let revision_dates: Vec<(String, SourceRange)> = mi
+            .revisions
+            .iter()
+            .map(|r| (r.date.value.clone(), r.date.span))
+            .collect();
+        dates::check_module_identity_dates(
+            ctx,
+            &mi.last_updated.value,
+            mi.last_updated.span,
+            &revision_dates,
+        );
+        check_revision_last_updated(ctx, mi);
+    }
+}
+
+fn check_revision_last_updated(ctx: &mut LoweringContext<'_>, mi: &ast::ModuleIdentityDef) {
+    if mi.last_updated.value.is_empty() {
         return;
     }
     for r in &mi.revisions {
-        if r.date == mi.last_updated {
+        if r.date.value == mi.last_updated.value {
             return;
         }
     }
     ctx.emit_diagnostic(
         DiagCode::RevisionLastUpdated,
         mi.span,
-        format!("revision for LAST-UPDATED {} is missing", mi.last_updated),
+        format!(
+            "revision for LAST-UPDATED {} is missing",
+            mi.last_updated.value
+        ),
     );
 }
 
@@ -636,7 +649,7 @@ fn check_macro_imports(
         if !imported_macros.contains(macro_name) {
             ctx.emit_diagnostic(
                 DiagCode::MacroNotImported,
-                module.span,
+                module.range.expect("lowered source module has a range"),
                 format!("{} used but not imported in {}", macro_name, module.name),
             );
         }
@@ -675,12 +688,12 @@ fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext<'_>) ->
             def.span,
             "unknown type syntax <missing>, defaulting to OCTET STRING".to_string(),
         );
-        ir::TypeSyntax::OctetString { span: def.span }
+        ir::TypeSyntax::OctetString { range: def.span }
     };
 
     ir::ObjectType {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         syntax,
         units: optional_string(&def.units),
         access,
@@ -697,15 +710,15 @@ fn lower_object_type(def: &ast::ObjectTypeDef, ctx: &mut LoweringContext<'_>) ->
         augments,
         defval: lower_optional_defval(&def.defval, ctx),
         oid: lower_oid_assignment(&def.oid),
-        syntax_span: def.syntax.as_ref().map(|s| s.span).unwrap_or(Span::ZERO),
-        access_span: def.access.as_ref().map(|a| a.span).unwrap_or(Span::ZERO),
-        status_span: optional_status_span(&def.status),
-        description_span: optional_span(&def.description),
-        units_span: optional_span(&def.units),
-        reference_span: optional_span(&def.reference),
-        index_span: def.index.as_ref().map(|i| i.span).unwrap_or(Span::ZERO),
-        augments_span: def.augments.as_ref().map(|a| a.span).unwrap_or(Span::ZERO),
-        defval_span: def.defval.as_ref().map(|d| d.span).unwrap_or(Span::ZERO),
+        syntax_range: def.syntax.as_ref().map(|syntax| syntax.span),
+        access_range: def.access.as_ref().map(|access| access.span),
+        status_range: optional_status_range(&def.status),
+        description_range: optional_range(&def.description),
+        units_range: optional_range(&def.units),
+        reference_range: optional_range(&def.reference),
+        index_range: def.index.as_ref().map(|index| index.span),
+        augments_range: def.augments.as_ref().map(|augments| augments.span),
+        defval_range: def.defval.as_ref().map(|defval| defval.span),
     }
 }
 
@@ -743,24 +756,25 @@ fn lower_module_identity(
         .revisions
         .iter()
         .map(|r| {
-            if r.description.value.is_empty() {
-                ctx.emit_diagnostic(
-                    DiagCode::EmptyRevisionDescription,
-                    r.span,
-                    format!("{:?}: empty REVISION DESCRIPTION clause", name),
-                );
-            }
+            check_empty_required(
+                ctx,
+                &r.description.value,
+                r.span,
+                name,
+                "REVISION DESCRIPTION",
+                DiagCode::EmptyRevisionDescription,
+            );
             ir::Revision {
                 date: r.date.value.clone(),
                 description: r.description.value.clone(),
-                span: r.span,
+                range: r.span,
             }
         })
         .collect();
 
     ir::ModuleIdentity {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         last_updated: def.last_updated.value.clone(),
         organization: def.organization.value.clone(),
         contact_info: def.contact_info.value.clone(),
@@ -779,7 +793,7 @@ fn lower_object_identity(
 
     ir::ObjectIdentity {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -797,7 +811,7 @@ fn lower_notification_type(
     let oid = lower_oid_assignment(&def.oid);
     ir::Notification {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         objects: ident_names(&def.objects),
         status: def.status.value,
         description: def.description.value.clone(),
@@ -814,7 +828,7 @@ fn lower_trap_type(def: &ast::TrapTypeDef, ctx: &mut LoweringContext<'_>) -> ir:
 
     ir::Notification {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         objects: ident_names(&def.variables),
         status: Status::Current,
         description: optional_string(&def.description),
@@ -845,7 +859,7 @@ fn lower_textual_convention(
 
     ir::TypeDef {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         syntax: lower_type_syntax(&def.syntax.syntax, ctx),
         base_type: None,
         display_hint: optional_string(&def.display_hint),
@@ -853,11 +867,11 @@ fn lower_textual_convention(
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
         is_textual_convention: true,
-        syntax_span: def.syntax.span,
-        status_span: def.status.span,
-        description_span: def.description.span,
-        reference_span: optional_span(&def.reference),
-        display_hint_span: optional_span(&def.display_hint),
+        syntax_range: def.syntax.span,
+        status_range: Some(def.status.span),
+        description_range: Some(def.description.span),
+        reference_range: optional_range(&def.reference),
+        display_hint_range: optional_range(&def.display_hint),
     }
 }
 
@@ -867,7 +881,7 @@ fn lower_type_assignment(
 ) -> ir::TypeDef {
     ir::TypeDef {
         name: def.name.name.clone(),
-        span: def.span,
+        range: def.span,
         syntax: lower_type_syntax(&def.syntax, ctx),
         base_type: None,
         display_hint: String::new(),
@@ -875,11 +889,11 @@ fn lower_type_assignment(
         description: String::new(),
         reference: String::new(),
         is_textual_convention: false,
-        syntax_span: def.syntax.span(),
-        status_span: Span::ZERO,
-        description_span: Span::ZERO,
-        reference_span: Span::ZERO,
-        display_hint_span: Span::ZERO,
+        syntax_range: def.syntax.span(),
+        status_range: None,
+        description_range: None,
+        reference_range: None,
+        display_hint_range: None,
     }
 }
 
@@ -889,7 +903,7 @@ fn lower_value_assignment(
 ) -> ir::ValueAssignment {
     ir::ValueAssignment {
         name: def.name.name.clone(),
-        span: def.span,
+        range: def.span,
         oid: lower_oid_assignment(&def.oid),
         description: String::new(),
         reference: String::new(),
@@ -902,8 +916,8 @@ fn lower_object_group(def: &ast::ObjectGroupDef, ctx: &mut LoweringContext<'_>) 
 
     ir::ObjectGroup {
         name: name.clone(),
-        span: def.span,
-        objects: ident_names(&def.objects),
+        range: def.span,
+        objects: name_refs(&def.objects),
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -920,8 +934,8 @@ fn lower_notification_group(
 
     ir::NotificationGroup {
         name: name.clone(),
-        span: def.span,
-        notifications: ident_names(&def.notifications),
+        range: def.span,
+        notifications: name_refs(&def.notifications),
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -944,7 +958,7 @@ fn lower_module_compliance(
 
     ir::ModuleCompliance {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         status: def.status.value,
         description: def.description.value.clone(),
         reference: optional_string(&def.reference),
@@ -966,7 +980,7 @@ fn lower_compliance_module(
                 groups.push(ir::ComplianceGroup {
                     group: g.group.name.clone(),
                     description: g.description.value.clone(),
-                    span: g.span,
+                    range: g.span,
                 });
             }
             ast::Compliance::Object(o) => {
@@ -986,7 +1000,7 @@ fn lower_compliance_module(
         mandatory_groups: ident_names(&m.mandatory_groups),
         groups,
         objects,
-        span: m.span,
+        range: m.span,
     }
 }
 
@@ -1003,7 +1017,7 @@ fn lower_compliance_object(
             .map(|s| lower_type_syntax(&s.syntax, ctx)),
         min_access: o.min_access.as_ref().map(|a| a.value),
         description: o.description.value.clone(),
-        span: o.span,
+        range: o.span,
     }
 }
 
@@ -1022,7 +1036,7 @@ fn lower_agent_capabilities(
 
     ir::AgentCapabilities {
         name: name.clone(),
-        span: def.span,
+        range: def.span,
         product_release: def.product_release.value.clone(),
         status: def.status.value,
         description: def.description.value.clone(),
@@ -1044,9 +1058,9 @@ fn lower_supports_module(
 
     ir::SupportsModule {
         module_name: s.module_name.name.clone(),
-        includes: ident_names(&s.includes),
+        includes: name_refs(&s.includes),
         variations,
-        span: s.span,
+        range: s.span,
     }
 }
 
@@ -1059,10 +1073,10 @@ fn lower_variation(v: &ast::Variation, ctx: &mut LoweringContext<'_>) -> ir::Var
             .as_ref()
             .map(|s| lower_type_syntax(&s.syntax, ctx)),
         access: v.access.as_ref().map(|a| a.value),
-        creation_requires: ident_names(&v.creation_requires),
+        creation_requires: name_refs(&v.creation_requires),
         defval: lower_optional_defval(&v.defval, ctx),
         description: v.description.value.clone(),
-        span: v.span,
+        range: v.span,
     }
 }
 
@@ -1072,7 +1086,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
     match syntax {
         ast::TypeSyntax::TypeRef(ident) => ir::TypeSyntax::TypeRef {
             name: ident.name.clone(),
-            span: ident.span,
+            range: ident.span,
         },
 
         ast::TypeSyntax::IntegerEnum {
@@ -1119,7 +1133,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
                 lowered.push(ir::NamedNumber {
                     name: nn.name.name.clone(),
                     value: nn.value,
-                    span: nn.span,
+                    range: nn.span,
                 });
             }
 
@@ -1127,8 +1141,9 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
 
             ir::TypeSyntax::IntegerEnum {
                 base: base_name,
+                base_range: base.as_ref().map(|base| base.span),
                 named_numbers: lowered,
-                span: *span,
+                range: *span,
             }
         }
 
@@ -1188,13 +1203,13 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
                 lowered.push(ir::NamedBit {
                     name: nb.name.name.clone(),
                     position,
-                    span: nb.span,
+                    range: nb.span,
                 });
             }
 
             ir::TypeSyntax::Bits {
                 named_bits: lowered,
-                span: *span,
+                range: *span,
             }
         }
 
@@ -1205,12 +1220,13 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
         } => ir::TypeSyntax::Constrained {
             base: Box::new(lower_type_syntax(base, ctx)),
             constraint: lower_constraint(constraint, ctx),
-            span: *span,
+            range: *span,
         },
 
         ast::TypeSyntax::SequenceOf { entry_type, span } => ir::TypeSyntax::SequenceOf {
             entry_type: entry_type.name.clone(),
-            span: *span,
+            entry_type_range: entry_type.span,
+            range: *span,
         },
 
         ast::TypeSyntax::Sequence { fields, span } => {
@@ -1219,12 +1235,12 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
                 .map(|f| ir::SequenceField {
                     name: f.name.name.clone(),
                     syntax: lower_type_syntax(&f.syntax, ctx),
-                    span: f.span,
+                    range: f.span,
                 })
                 .collect();
             ir::TypeSyntax::Sequence {
                 fields: lowered,
-                span: *span,
+                range: *span,
             }
         }
 
@@ -1244,7 +1260,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
             if let Some(first) = alternatives.first() {
                 lower_type_syntax(&first.syntax, ctx)
             } else {
-                ir::TypeSyntax::OctetString { span: *span }
+                ir::TypeSyntax::OctetString { range: *span }
             }
         }
 
@@ -1264,9 +1280,9 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
             lower_type_syntax(underlying, ctx)
         }
 
-        ast::TypeSyntax::OctetString { span } => ir::TypeSyntax::OctetString { span: *span },
+        ast::TypeSyntax::OctetString { span } => ir::TypeSyntax::OctetString { range: *span },
         ast::TypeSyntax::ObjectIdentifier { span } => {
-            ir::TypeSyntax::ObjectIdentifier { span: *span }
+            ir::TypeSyntax::ObjectIdentifier { range: *span }
         }
     }
 }
@@ -1275,11 +1291,11 @@ fn lower_constraint(constraint: &ast::Constraint, ctx: &mut LoweringContext<'_>)
     match constraint {
         ast::Constraint::Size { ranges, span } => ir::Constraint::Size {
             ranges: lower_ranges(ranges, ctx),
-            span: *span,
+            range: *span,
         },
         ast::Constraint::Range { ranges, span } => ir::Constraint::Range {
             ranges: lower_ranges(ranges, ctx),
-            span: *span,
+            range: *span,
         },
     }
 }
@@ -1292,7 +1308,7 @@ fn lower_range(r: &ast::Range, ctx: &mut LoweringContext<'_>) -> ir::Range {
     ir::Range {
         min: lower_range_value(&r.min, ctx),
         max: r.max.as_ref().map(|v| lower_range_value(v, ctx)),
-        span: r.span,
+        range: r.span,
     }
 }
 
@@ -1323,9 +1339,12 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> 
                 ctx.emit_diagnostic(
                     DiagCode::UnknownRangeValue,
                     ident.span,
-                    format!("unknown range identifier {}, defaulting to 0", ident.name),
+                    format!(
+                        "unknown range identifier {}, preserving it as unresolved",
+                        ident.name
+                    ),
                 );
-                ir::RangeValue::Unsigned(0)
+                ir::RangeValue::Raw(ident.name.clone())
             }
         },
         ast::RangeValue::Raw(value) => ir::RangeValue::Raw(value.clone()),
@@ -1337,7 +1356,7 @@ fn lower_range_value(value: &ast::RangeValue, ctx: &mut LoweringContext<'_>) -> 
 fn lower_oid_assignment(oid: &ast::OidAssignment) -> ir::OidAssignment {
     ir::OidAssignment {
         components: oid.components.iter().map(lower_oid_component).collect(),
-        span: oid.span,
+        range: oid.span,
     }
 }
 
@@ -1345,16 +1364,17 @@ fn lower_oid_component(comp: &ast::OidComponent) -> ir::OidComponent {
     match comp {
         ast::OidComponent::Name(ident) => ir::OidComponent::Name {
             name: ident.name.clone(),
-            span: ident.span,
+            range: ident.span,
         },
         ast::OidComponent::Number { value, span } => ir::OidComponent::Number {
             value: *value,
-            span: *span,
+            range: *span,
         },
         ast::OidComponent::NamedNumber { name, num, span } => ir::OidComponent::NamedNumber {
             name: name.name.clone(),
             number: *num,
-            span: *span,
+            name_range: name.span,
+            range: *span,
         },
         ast::OidComponent::QualifiedName {
             module_name,
@@ -1363,7 +1383,7 @@ fn lower_oid_component(comp: &ast::OidComponent) -> ir::OidComponent {
         } => ir::OidComponent::QualifiedName {
             module: module_name.name.clone(),
             name: name.name.clone(),
-            span: *span,
+            range: *span,
         },
         ast::OidComponent::QualifiedNamedNumber {
             module_name,
@@ -1374,7 +1394,9 @@ fn lower_oid_component(comp: &ast::OidComponent) -> ir::OidComponent {
             module: module_name.name.clone(),
             name: name.name.clone(),
             number: *num,
-            span: *span,
+            name_range: SourceRange::cover(module_name.span, name.span)
+                .expect("qualified OID name parts share one source"),
+            range: *span,
         },
     }
 }
@@ -1389,7 +1411,7 @@ fn lower_index_clause(clause: &Option<ast::IndexClause>) -> Vec<ir::IndexItem> {
             .map(|idx| ir::IndexItem {
                 implied: idx.implied,
                 object: idx.object.name.clone(),
-                span: idx.span,
+                range: idx.span,
             })
             .collect(),
         None => Vec::new(),
@@ -1423,34 +1445,318 @@ fn lower_defval(content: &ast::DefVal, _ctx: &mut LoweringContext<'_>) -> ir::De
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Access, AccessKeyword, DiagCode, DiagnosticConfig, Span};
+    use std::sync::Arc;
+
+    use crate::source::{SourceOrigin, SourceSet};
+    use crate::types::{Access, AccessKeyword, DiagCode, DiagnosticConfig};
 
     use super::*;
 
     #[test]
+    fn lowering_diagnostic_retains_exact_range_and_module() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("lowering-diagnostic"),
+                "lowering-diagnostic",
+                Arc::from(&b"abcde"[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.range(1..4).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let mut context = LoweringContext::new(document, &config);
+        context.module_name = "TEST-MIB".to_string();
+
+        context.emit_diagnostic(DiagCode::EmptyDescription, range, "test".to_string());
+
+        assert_eq!(context.diagnostics.len(), 1);
+        assert_eq!(context.diagnostics[0].range, Some(range));
+        assert_eq!(context.diagnostics[0].module.as_deref(), Some("TEST-MIB"));
+    }
+
+    #[test]
+    fn group_members_retain_identifier_ranges() {
+        let source = br#"GROUP-RANGES-MIB DEFINITIONS ::= BEGIN
+badObjectGroup OBJECT-GROUP
+    OBJECTS {
+        missingObjectOne,
+        missingObjectTwo
+    }
+    STATUS current
+    DESCRIPTION "Test object group."
+    ::= { 1 3 6 1 }
+
+badNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+        missingNotificationOne,
+        missingNotificationTwo
+    }
+    STATUS current
+    DESCRIPTION "Test notification group."
+    ::= { 1 3 6 2 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("group-ranges"),
+                "group-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::ObjectGroup(object_group) = &lowered.definitions[0] else {
+            panic!("expected object group");
+        };
+        assert_eq!(object_group.objects.len(), 2);
+        assert_eq!(object_group.objects[0].name, "missingObjectOne");
+        assert_eq!(object_group.objects[1].name, "missingObjectTwo");
+        assert_eq!(
+            document.slice(object_group.objects[0].range).unwrap(),
+            b"missingObjectOne"
+        );
+        assert_eq!(
+            document.slice(object_group.objects[1].range).unwrap(),
+            b"missingObjectTwo"
+        );
+        let first_object_line = document
+            .byte_position(object_group.objects[0].range.start())
+            .unwrap()
+            .line();
+        let second_object_line = document
+            .byte_position(object_group.objects[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_object_line, second_object_line);
+
+        let ir::Definition::NotificationGroup(notification_group) = &lowered.definitions[1] else {
+            panic!("expected notification group");
+        };
+        assert_eq!(notification_group.notifications.len(), 2);
+        assert_eq!(
+            document
+                .slice(notification_group.notifications[0].range)
+                .unwrap(),
+            b"missingNotificationOne"
+        );
+        assert_eq!(
+            document
+                .slice(notification_group.notifications[1].range)
+                .unwrap(),
+            b"missingNotificationTwo"
+        );
+        let first_notification_line = document
+            .byte_position(notification_group.notifications[0].range.start())
+            .unwrap()
+            .line();
+        let second_notification_line = document
+            .byte_position(notification_group.notifications[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_notification_line, second_notification_line);
+    }
+
+    #[test]
+    fn capabilities_includes_retain_identifier_ranges() {
+        let source = br#"CAPABILITIES-RANGES-MIB DEFINITIONS ::= BEGIN
+testCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Test capabilities."
+    SUPPORTS TARGET-MIB
+        INCLUDES {
+            firstGroup,
+            secondGroup
+        }
+    ::= { 1 3 6 1 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("capabilities-ranges"),
+                "capabilities-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::AgentCapabilities(capabilities) = &lowered.definitions[0] else {
+            panic!("expected agent capabilities");
+        };
+        let includes = &capabilities.supports[0].includes;
+        assert_eq!(includes.len(), 2);
+        assert_eq!(includes[0].name, "firstGroup");
+        assert_eq!(includes[1].name, "secondGroup");
+        assert_eq!(document.slice(includes[0].range).unwrap(), b"firstGroup");
+        assert_eq!(document.slice(includes[1].range).unwrap(), b"secondGroup");
+        let first_line = document
+            .byte_position(includes[0].range.start())
+            .unwrap()
+            .line();
+        let second_line = document
+            .byte_position(includes[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_line, second_line);
+    }
+
+    #[test]
+    fn capabilities_creation_requires_retain_identifier_ranges() {
+        let source = br#"CAPABILITIES-RANGES-MIB DEFINITIONS ::= BEGIN
+testCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Test capabilities."
+    SUPPORTS TARGET-MIB
+        INCLUDES { testGroup }
+        VARIATION targetObject
+            CREATION-REQUIRES {
+                firstObject,
+                secondObject,
+                firstObject
+            }
+            DESCRIPTION "Test variation."
+    ::= { 1 3 6 1 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("creation-requires-ranges"),
+                "creation-requires-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::AgentCapabilities(capabilities) = &lowered.definitions[0] else {
+            panic!("expected agent capabilities");
+        };
+        let creation_requires = &capabilities.supports[0].variations[0].creation_requires;
+        assert_eq!(creation_requires.len(), 3);
+        assert_eq!(creation_requires[0].name, "firstObject");
+        assert_eq!(creation_requires[1].name, "secondObject");
+        assert_eq!(creation_requires[2].name, "firstObject");
+        for reference in creation_requires {
+            assert_eq!(
+                document.slice(reference.range).unwrap(),
+                reference.name.as_bytes()
+            );
+        }
+        assert_ne!(creation_requires[0].range, creation_requires[2].range);
+        assert_eq!(
+            document
+                .byte_position(creation_requires[0].range.start())
+                .unwrap()
+                .line(),
+            9
+        );
+        assert_eq!(
+            document
+                .byte_position(creation_requires[1].range.start())
+                .unwrap()
+                .line(),
+            10
+        );
+        assert_eq!(
+            document
+                .byte_position(creation_requires[2].range.start())
+                .unwrap()
+                .line(),
+            11
+        );
+    }
+
+    #[test]
+    fn malformed_unnamed_module_diagnostic_remains_unattributed() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("malformed-header"),
+                "malformed-header",
+                Arc::from(&b"BAD HEADER"[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(parsed.name.is_none());
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.module.is_none())
+        );
+
+        let lowered = lower(parsed, document, &config);
+
+        assert!(lowered.name.is_empty());
+        assert!(!lowered.diagnostics.is_empty());
+        assert!(
+            lowered
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.module.is_none())
+        );
+    }
+
+    #[test]
     fn object_type_missing_syntax_emits_unknown_type_syntax() {
-        let source = b"";
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("missing-syntax"),
+                "missing-syntax",
+                Arc::from(&b""[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.empty_range(0).unwrap();
         let mut module = ast::Module::new(
             ast::Ident {
                 name: "TEST-MIB".to_string(),
-                span: Span::ZERO,
+                span: range,
             },
-            Span::ZERO,
+            range,
         );
         module
             .body
-            .push(ast::Definition::ObjectType(ast::ObjectTypeDef {
+            .push(ast::Definition::ObjectType(Box::new(ast::ObjectTypeDef {
                 name: ast::Ident {
                     name: "testObject".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
-                span: Span::ZERO,
+                span: range,
                 syntax: None,
                 units: None,
                 access: Some(ast::AccessClause {
                     keyword: AccessKeyword::Access,
                     value: Access::ReadOnly,
-                    span: Span::ZERO,
+                    span: range,
                 }),
                 status: None,
                 description: None,
@@ -1461,15 +1767,31 @@ mod tests {
                 oid: ast::OidAssignment {
                     components: vec![ast::OidComponent::Number {
                         value: 1,
-                        span: Span::ZERO,
+                        span: range,
                     }],
-                    span: Span::ZERO,
+                    span: range,
                 },
-            }));
+            })));
 
         let cfg = DiagnosticConfig::verbose();
-        let lowered = lower(module, source, &cfg);
+        let lowered = lower(module, document, &cfg);
 
+        assert_eq!(lowered.range.unwrap().source(), document.id());
+        assert_eq!(lowered.source_id, Some(document.id()));
+        let ir::Definition::ObjectType(object) = &lowered.definitions[0] else {
+            panic!("expected object type");
+        };
+        assert_eq!(object.range.source(), document.id());
+        assert_eq!(object.syntax.range().source(), document.id());
+        assert!(object.syntax_range.is_none());
+        assert!(object.access_range.is_some());
+        assert!(object.status_range.is_none());
+        assert!(object.description_range.is_none());
+        assert!(object.units_range.is_none());
+        assert!(object.reference_range.is_none());
+        assert!(object.index_range.is_none());
+        assert!(object.augments_range.is_none());
+        assert!(object.defval_range.is_none());
         assert!(
             lowered
                 .diagnostics
@@ -1479,73 +1801,118 @@ mod tests {
     }
 
     #[test]
-    fn revision_empty_description_emits_diagnostic() {
-        let source = b"";
+    fn plain_type_assignment_has_no_absent_clause_ranges() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("type-assignment"),
+                "type-assignment",
+                Arc::from(&b""[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.empty_range(0).unwrap();
         let mut module = ast::Module::new(
             ast::Ident {
                 name: "TEST-MIB".to_string(),
-                span: Span::ZERO,
+                span: range,
             },
-            Span::ZERO,
+            range,
+        );
+        module
+            .body
+            .push(ast::Definition::TypeAssignment(ast::TypeAssignmentDef {
+                name: ast::Ident {
+                    name: "TestType".to_string(),
+                    span: range,
+                },
+                span: range,
+                syntax: ast::TypeSyntax::OctetString { span: range },
+            }));
+
+        let lowered = lower(module, document, &DiagnosticConfig::verbose());
+        let ir::Definition::TypeDef(type_def) = &lowered.definitions[0] else {
+            panic!("expected type definition");
+        };
+        assert_eq!(type_def.range.source(), document.id());
+        assert_eq!(type_def.syntax_range.source(), document.id());
+        assert!(type_def.status_range.is_none());
+        assert!(type_def.description_range.is_none());
+        assert!(type_def.reference_range.is_none());
+        assert!(type_def.display_hint_range.is_none());
+    }
+
+    #[test]
+    fn revision_empty_description_uses_dedicated_diagnostic() {
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("revision-description"),
+                "revision-description",
+                Arc::from(&b""[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let range = document.empty_range(0).unwrap();
+        let mut module = ast::Module::new(
+            ast::Ident {
+                name: "TEST-MIB".to_string(),
+                span: range,
+            },
+            range,
         );
         module
             .body
             .push(ast::Definition::ModuleIdentity(ast::ModuleIdentityDef {
                 name: ast::Ident {
                     name: "testMIB".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
-                span: Span::ZERO,
+                span: range,
                 last_updated: ast::QuotedString {
                     value: "200301090000Z".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
                 organization: ast::QuotedString {
                     value: "Test Org".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
                 contact_info: ast::QuotedString {
                     value: "Test Contact".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
                 description: ast::QuotedString {
                     value: "Test module".to_string(),
-                    span: Span::ZERO,
+                    span: range,
                 },
                 revisions: vec![ast::RevisionClause {
                     date: ast::QuotedString {
                         value: "200301090000Z".to_string(),
-                        span: Span::ZERO,
+                        span: range,
                     },
                     description: ast::QuotedString {
                         value: "".to_string(),
-                        span: Span::ZERO,
+                        span: range,
                     },
-                    span: Span::ZERO,
+                    span: range,
                 }],
                 oid: ast::OidAssignment {
                     components: vec![ast::OidComponent::Number {
                         value: 1,
-                        span: Span::ZERO,
+                        span: range,
                     }],
-                    span: Span::ZERO,
+                    span: range,
                 },
             }));
 
         let cfg = DiagnosticConfig::verbose();
-        let lowered = lower(module, source, &cfg);
+        let lowered = lower(module, document, &cfg);
 
-        assert!(
-            lowered
-                .diagnostics
-                .iter()
-                .any(|d| d.code == DiagCode::EmptyRevisionDescription),
-            "expected EmptyRevisionDescription diagnostic, got: {:?}",
-            lowered
-                .diagnostics
-                .iter()
-                .map(|d| d.code)
-                .collect::<Vec<_>>()
-        );
+        let diagnostic = lowered
+            .diagnostics
+            .iter()
+            .find(|d| d.message == "\"testMIB\": empty REVISION DESCRIPTION clause")
+            .expect("expected empty REVISION DESCRIPTION diagnostic");
+        assert_eq!(diagnostic.code, DiagCode::EmptyRevisionDescription);
     }
 }

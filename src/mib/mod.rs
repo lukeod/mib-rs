@@ -21,6 +21,19 @@
 //! - [`Compliance`] - a MODULE-COMPLIANCE definition
 //! - [`Capability`] - an AGENT-CAPABILITIES definition
 //! - [`Index`] - an index component of a table row
+//!
+//! # Source navigation
+//!
+//! [`Module::semantic_at`] and [`Module::semantic_at_position`] map source
+//! locations to resolved definitions and references. Pair these queries with a
+//! lossless concrete syntax tree through [`crate::cst::SymbolNavigator`] when
+//! an editor needs both written and resolved context.
+//!
+//! # Resolution traces
+//!
+//! [`Mib::trace_symbol`] explains a domain-specific symbol lookup. Its
+//! [`ResolutionTrace`] result records candidates, import provenance, fallback
+//! policy, the selected target, and related unresolved references.
 
 pub mod capability;
 pub mod compliance;
@@ -31,12 +44,14 @@ pub mod index;
 #[allow(clippy::module_inception)]
 pub mod mib;
 pub mod module;
+pub mod navigation;
 pub mod node;
 pub mod notification;
 pub mod object;
 pub mod oid;
 pub mod raw;
 pub mod symbol;
+pub mod trace;
 pub mod typedef;
 pub mod types;
 
@@ -44,13 +59,18 @@ pub(crate) mod resolver;
 
 pub use handle::{Capability, Compliance, Group, Index, Module, Node, Notification, Object, Type};
 pub use mib::{Mib, OidLookup, ResolveOidError};
-pub use module::ModuleData;
+pub use module::{ModuleData, ModuleIdentityData, ModuleIdentityKind};
+pub use navigation::{SemanticSpan, SemanticSpanKind};
 pub use node::{NodeData, OidTree};
 pub use notification::NotificationData;
 pub use object::ObjectData;
 pub use oid::{Oid, ParseOidError};
 pub use raw::RawMib;
 pub use symbol::Symbol;
+pub use trace::{
+    ResolutionCandidate, ResolutionCandidateKind, ResolutionFallbackPolicy, ResolutionOutcome,
+    ResolutionScope, ResolutionStrategy, ResolutionTarget, ResolutionTrace, ResolutionTraceError,
+};
 pub use typedef::TypeData;
 pub use types::*;
 pub use {capability::CapabilityData, compliance::ComplianceData, group::GroupData};

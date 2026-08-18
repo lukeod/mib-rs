@@ -5,7 +5,7 @@
 //! eliminated, and `BITS` positions use [`NamedBit`] with a `u32` position
 //! instead of reusing `NamedNumber`.
 
-use crate::types::Span;
+use crate::source::SourceRange;
 
 use super::oid::OidComponent;
 
@@ -16,49 +16,71 @@ use super::oid::OidComponent;
 #[derive(Debug, Clone)]
 pub enum TypeSyntax {
     /// Reference to a named type, e.g. `Integer32`.
-    TypeRef { name: String, span: Span },
+    TypeRef {
+        name: String,
+        /// Source-qualified range covering the type name.
+        range: SourceRange,
+    },
     /// INTEGER with named values, e.g. `INTEGER { up(1), down(2) }`.
     IntegerEnum {
         base: String,
+        /// Source-qualified range covering the optional named base type.
+        base_range: Option<SourceRange>,
         named_numbers: Vec<NamedNumber>,
-        span: Span,
+        /// Source-qualified range covering the complete type expression.
+        range: SourceRange,
     },
     /// `BITS` type with named bit positions.
     Bits {
         named_bits: Vec<NamedBit>,
-        span: Span,
+        /// Source-qualified range covering the complete `BITS` expression.
+        range: SourceRange,
     },
     /// Type with a subtype constraint applied.
     Constrained {
         base: Box<TypeSyntax>,
         constraint: Constraint,
-        span: Span,
+        /// Source-qualified range covering the base type and constraint.
+        range: SourceRange,
     },
     /// `SEQUENCE OF` entry-type reference (table types).
-    SequenceOf { entry_type: String, span: Span },
+    SequenceOf {
+        entry_type: String,
+        /// Source-qualified range covering `entry_type`.
+        entry_type_range: SourceRange,
+        /// Source-qualified range covering the complete `SEQUENCE OF` expression.
+        range: SourceRange,
+    },
     /// `SEQUENCE` with named fields (table row definition).
     Sequence {
         fields: Vec<SequenceField>,
-        span: Span,
+        /// Source-qualified range covering the complete `SEQUENCE` expression.
+        range: SourceRange,
     },
     /// Explicit `OCTET STRING` type.
-    OctetString { span: Span },
+    OctetString {
+        /// Source-qualified range covering `OCTET STRING`.
+        range: SourceRange,
+    },
     /// `OBJECT IDENTIFIER` type.
-    ObjectIdentifier { span: Span },
+    ObjectIdentifier {
+        /// Source-qualified range covering `OBJECT IDENTIFIER`.
+        range: SourceRange,
+    },
 }
 
 impl TypeSyntax {
-    /// Returns the source span of this type syntax node.
-    pub fn span(&self) -> Span {
+    /// Returns the source-qualified range covering this type syntax node.
+    pub fn range(&self) -> SourceRange {
         match self {
-            TypeSyntax::TypeRef { span, .. }
-            | TypeSyntax::IntegerEnum { span, .. }
-            | TypeSyntax::Bits { span, .. }
-            | TypeSyntax::Constrained { span, .. }
-            | TypeSyntax::SequenceOf { span, .. }
-            | TypeSyntax::Sequence { span, .. }
-            | TypeSyntax::OctetString { span }
-            | TypeSyntax::ObjectIdentifier { span } => *span,
+            TypeSyntax::TypeRef { range, .. }
+            | TypeSyntax::IntegerEnum { range, .. }
+            | TypeSyntax::Bits { range, .. }
+            | TypeSyntax::Constrained { range, .. }
+            | TypeSyntax::SequenceOf { range, .. }
+            | TypeSyntax::Sequence { range, .. }
+            | TypeSyntax::OctetString { range }
+            | TypeSyntax::ObjectIdentifier { range } => *range,
         }
     }
 }
@@ -70,8 +92,8 @@ pub struct NamedNumber {
     pub name: String,
     /// Numeric value assigned to the label.
     pub value: i64,
-    /// Source span covering `name(value)`.
-    pub span: Span,
+    /// Source-qualified range covering `name(value)`.
+    pub range: SourceRange,
 }
 
 /// A named bit position in a `BITS` type, e.g. `flag1(0)`.
@@ -81,8 +103,8 @@ pub struct NamedBit {
     pub name: String,
     /// Zero-based bit position.
     pub position: u32,
-    /// Source span covering `name(position)`.
-    pub span: Span,
+    /// Source-qualified range covering `name(position)`.
+    pub range: SourceRange,
 }
 
 /// A field in a `SEQUENCE` type used for table row entries.
@@ -92,24 +114,32 @@ pub struct SequenceField {
     pub name: String,
     /// Field type expression.
     pub syntax: TypeSyntax,
-    /// Source span of the field.
-    pub span: Span,
+    /// Source-qualified range covering the field declaration.
+    pub range: SourceRange,
 }
 
 /// A subtype constraint (`SIZE` or value range).
 #[derive(Debug, Clone)]
 pub enum Constraint {
     /// `SIZE(...)` constraint on string or sequence length.
-    Size { ranges: Vec<Range>, span: Span },
+    Size {
+        ranges: Vec<Range>,
+        /// Source-qualified range covering the complete `SIZE` constraint.
+        range: SourceRange,
+    },
     /// Value range constraint, e.g. `(0..65535)`.
-    Range { ranges: Vec<Range>, span: Span },
+    Range {
+        ranges: Vec<Range>,
+        /// Source-qualified range covering the complete value constraint.
+        range: SourceRange,
+    },
 }
 
 impl Constraint {
-    /// Returns the source span of this constraint.
-    pub fn span(&self) -> Span {
+    /// Returns the source-qualified range covering this constraint.
+    pub fn range(&self) -> SourceRange {
         match self {
-            Constraint::Size { span, .. } | Constraint::Range { span, .. } => *span,
+            Constraint::Size { range, .. } | Constraint::Range { range, .. } => *range,
         }
     }
 }
@@ -124,8 +154,8 @@ pub struct Range {
     pub min: RangeValue,
     /// Upper bound, if this is a range rather than an exact value.
     pub max: Option<RangeValue>,
-    /// Source span of this range element.
-    pub span: Span,
+    /// Source-qualified range covering this range element.
+    pub range: SourceRange,
 }
 
 /// An endpoint in a range constraint.

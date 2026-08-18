@@ -22,8 +22,11 @@ occur in minor releases with no attempt to maintain backward compatibility.
 - **Display-hint formatting**: RFC 2579 value formatting, numeric scaling, and octet-string rendering
 - **Table support**: Rows, columns, indexes (including augmented/implied)
 - **Diagnostics**: Configurable strictness levels with collected diagnostics instead of fail-fast
+- **Lossless CST tooling**: Preserves source text and recovery regions in typed syntax nodes, with cursor context and source-safe semantic navigation
+- **Resolution tracing**: Explains domain-specific symbol selection, import provenance, fallbacks, and unresolved references
+- **Canonical SMIv2 writer**: Emits deterministic SMIv2 text from resolved modules
 - **Parallel bulk loading**: Loading all discoverable modules uses available CPUs; selected-module loading and resolution are sequential
-- **Synthetic base modules**: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others built in
+- **Embedded foundation modules**: RFC-derived source fallbacks, byte-synchronized with gomib and deliberately adapted, for SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others
 - **System path discovery**: Auto-detects net-snmp and libsmi MIB directories
 - **Layered API**: Handle-based query API, low-level arena access, and public compiler pipeline
 
@@ -128,6 +131,49 @@ let node = mib.lookup_oid(&oid);
 println!("{}", node.name()); // ifDescr
 ```
 
+### Decode and encode table indexes
+
+Compile table index metadata while the MIB is available, then retain the owned
+codec in a runtime plan. Exact decoding rejects malformed, truncated, and
+trailing arcs; canonical encoding checks value kinds and constraints.
+
+```rust
+use std::sync::Arc;
+use mib_rs::{BoundIndexCodec, ConstraintMode, IndexSchema, IndexValue, IndexValueRef};
+
+// Assume IF-MIB is already loaded into `mib`.
+let codec = {
+    let column = mib.object("ifDescr").expect("column exists");
+    let schema = Arc::new(IndexSchema::compile(column).expect("valid INDEX metadata"));
+
+    // Representable MIB concerns are retained rather than silently discarded.
+    for issue in schema.issues() {
+        eprintln!("schema issue: {issue:?}");
+    }
+    for component in schema.components() {
+        for issue in component.issues() {
+            eprintln!("{}: {issue:?}", component.name());
+        }
+    }
+
+    BoundIndexCodec::for_object_oid(
+        schema,
+        column.node().expect("resolved column OID").oid(),
+    )
+    .expect("index suffix fits the instance-OID limit")
+};
+
+drop(mib); // the codec owns the metadata it needs
+
+let decoded = codec.decode_exact(&[7], ConstraintMode::Enforce).unwrap();
+assert_eq!(decoded.values(), &[IndexValue::Integer32(7)]);
+
+let encoded = codec
+    .encode_canonical([IndexValueRef::Integer32(7)])
+    .unwrap();
+assert_eq!(encoded.as_ref(), &[7]);
+```
+
 ## CLI Tool
 
 The optional `mib-rs` binary provides commands for working with MIBs:
@@ -183,6 +229,17 @@ mib-rs find "if*" --format json        # JSON output
 mib-rs inspect ifTable
 mib-rs inspect IF-MIB::ifEntry
 
+# Explain symbol resolution in a specific reference domain
+mib-rs trace IF-MIB::ifDescr --domain object
+mib-rs trace ifDescr --domain object -m IF-MIB --strictness strict
+# Domains: type, oid, object, group-member, index, notification-object, conformance
+
+# Emit canonical SMIv2 (stdout requires exactly one selected module)
+mib-rs normalize IF-MIB > IF-MIB.mib
+mib-rs normalize IF-MIB SNMPv2-MIB --output-dir normalized
+mib-rs normalize IF-MIB --no-descriptions --no-conformance --no-sequences
+# Omit module names with --output-dir to normalize all available user modules
+
 # List available modules
 mib-rs list
 mib-rs list --count
@@ -220,7 +277,8 @@ This crate requires Rust 1.88 or later. The MSRV may be increased in minor relea
 
 ## License
 
-Licensed under the [MIT license](LICENSE).
+Licensed under either the [Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option.
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-//! Low-level raw data access for tooling: arena IDs, sub-clause spans,
+//! Low-level raw data access for tooling: arena IDs, sub-clause ranges,
 //! import metadata, OID references, symbol tables, and OID tree traversal.
 //!
 //! The raw API (`mib.raw()`) is designed for tools that need capabilities
@@ -7,7 +7,6 @@
 //! API does not.
 
 use mib_rs::Loader;
-use mib_rs::types::Span;
 
 fn main() {
     // The fixture contains both used and unused imports so the example can
@@ -75,64 +74,61 @@ END
     let raw = mib.raw();
 
     // ---------------------------------------------------------------
-    // 1. Sub-clause spans
+    // 1. Sub-clause ranges
     //
-    // ObjectData exposes per-clause source locations: syntax_span(),
-    // access_span(), units_span(), augments_span(), default_value_span().
+    // ObjectData exposes per-clause source locations: syntax_range(),
+    // access_range(), units_range(), augments_range(), default_value_range().
     // These let a linter or language server point diagnostics at the
     // specific clause that's wrong, not the whole definition.
     // ---------------------------------------------------------------
-    println!("=== Sub-clause spans ===");
+    println!("=== Sub-clause ranges ===");
 
     let mod_data = raw.module(mib.module_by_name("RAW-EXAMPLE-MIB").unwrap());
-
-    // Helper: absent clauses produce Span::ZERO or Span::SYNTHETIC.
-    let has_span = |s: Span| s != Span::ZERO && !s.is_synthetic();
+    let location = |range: mib_rs::SourceRange| {
+        let source = raw.source(range.source())?;
+        source.slice(range).ok()?;
+        source.line_column(range.start()).ok()
+    };
 
     for &obj_id in mod_data.objects() {
         let obj = raw.object(obj_id);
         println!("  {}:", obj.name());
 
-        // Definition span covers the whole OBJECT-TYPE.
-        let def = obj.span();
-        let (def_line, _) = mod_data.line_col(def.start);
+        // Definition range covers the whole OBJECT-TYPE.
+        let def = obj.range().expect("parsed object has a source range");
+        let (def_line, _) = location(def).expect("valid object range");
         println!("    definition:    line {def_line}");
 
-        // SYNTAX clause span.
-        let syn = obj.syntax_span();
-        if has_span(syn) {
-            let (line, col) = mod_data.line_col(syn.start);
+        // SYNTAX clause range.
+        if let Some(syn) = obj.syntax_range() {
+            let (line, col) = location(syn).expect("valid syntax range");
             println!("    SYNTAX:        line {line}, col {col}");
         }
 
-        // MAX-ACCESS clause span.
-        let acc = obj.access_span();
-        if has_span(acc) {
-            let (line, col) = mod_data.line_col(acc.start);
+        // MAX-ACCESS clause range.
+        if let Some(acc) = obj.access_range() {
+            let (line, col) = location(acc).expect("valid access range");
             println!("    MAX-ACCESS:    line {line}, col {col}");
         }
 
-        // UNITS clause span (only present on some objects).
-        let units = obj.units_span();
-        if has_span(units) {
-            let (line, col) = mod_data.line_col(units.start);
+        // UNITS clause range (only present on some objects).
+        if let Some(units) = obj.units_range() {
+            let (line, col) = location(units).expect("valid units range");
             println!("    UNITS:         line {line}, col {col}");
         }
 
-        // DEFVAL clause span (only present on some objects).
-        let defval = obj.default_value_span();
-        if has_span(defval) {
-            let (line, col) = mod_data.line_col(defval.start);
+        // DEFVAL clause range (only present on some objects).
+        if let Some(defval) = obj.default_value_range() {
+            let (line, col) = location(defval).expect("valid default range");
             println!("    DEFVAL:        line {line}, col {col}");
         }
     }
 
-    // TypeData also has syntax_span() for the SYNTAX clause in TCs.
+    // TypeData also has syntax_range() for the SYNTAX clause in TCs.
     for &type_id in mod_data.types() {
         let ty = raw.type_(type_id);
-        let syn = ty.syntax_span();
-        if has_span(syn) {
-            let (line, col) = mod_data.line_col(syn.start);
+        if let Some(syn) = ty.syntax_range() {
+            let (line, col) = location(syn).expect("valid type syntax range");
             println!("  {} (type):", ty.name());
             println!("    SYNTAX:        line {line}, col {col}");
         }
@@ -167,8 +163,8 @@ END
                 "unresolved".to_string()
             };
 
-            // ImportSymbol carries a span for "go to definition" on imports.
-            let (line, col) = mod_data.line_col(sym.span.start);
+            // ImportSymbol carries a range for "go to definition" on imports.
+            let (line, col) = location(sym.range).expect("valid import range");
             println!("    {:<24} line {}:{:<4} {}", sym.name, line, col, status);
         }
     }
@@ -178,7 +174,7 @@ END
     //
     // Entity definitions record the symbolic names referenced in their
     // OID value assignments. For example, { enterprises 99990 } produces
-    // an OidRef for "enterprises" with its span. A language server uses
+    // an OidRef for "enterprises" with its range. A language server uses
     // these for "go to definition" on OID components and for reference
     // highlighting.
     // ---------------------------------------------------------------
@@ -190,7 +186,7 @@ END
         if !refs.is_empty() {
             println!("  {}:", obj.name());
             for r in refs {
-                let (line, col) = mod_data.line_col(r.span.start);
+                let (line, col) = location(r.range).expect("valid OID reference range");
                 println!("    ref {:?} at line {}:{}", r.name, line, col);
             }
         }
@@ -399,17 +395,19 @@ END
     // The raw and handle APIs are views over the same data. You can
     // freely cross between them: handle.id() drops to raw, and
     // mib.*_by_id(id) lifts back to a handle. Use handles for
-    // navigation, raw for bulk work and span access.
+    // navigation, raw for bulk work and range access.
     // ---------------------------------------------------------------
     println!("\n=== Crossing between handle and raw ===");
 
-    // Start with a handle, drop to raw for span info.
+    // Start with a handle, drop to raw for range info.
     let handle = mib.object("rawCount").unwrap();
     let id = handle.id(); // -> ObjectId
     let data = raw.object(id); // -> &ObjectData
 
-    let (syn_line, _) = mod_data.line_col(data.syntax_span().start);
-    let (acc_line, _) = mod_data.line_col(data.access_span().start);
+    let (syn_line, _) =
+        location(data.syntax_range().expect("SYNTAX range")).expect("valid SYNTAX range");
+    let (acc_line, _) =
+        location(data.access_range().expect("MAX-ACCESS range")).expect("valid MAX-ACCESS range");
     println!(
         "  {}: SYNTAX at line {}, MAX-ACCESS at line {}",
         handle.name(),

@@ -43,9 +43,9 @@
 //! exposes the arena-backed data records directly. This is useful
 //! when you need things the handle API doesn't surface:
 //!
-//! - Per-clause source spans on [`ObjectData`](raw::ObjectData)
-//!   and [`TypeData`](raw::TypeData) (e.g. `syntax_span`,
-//!   `access_span`) for pointing diagnostics at specific clauses.
+//! - Per-clause source ranges on [`ObjectData`](raw::ObjectData)
+//!   and [`TypeData`](raw::TypeData) (e.g. `syntax_range`,
+//!   `access_range`) for pointing diagnostics at specific clauses.
 //! - Import metadata ([`ModuleData::is_import_used`](raw::ModuleData::is_import_used),
 //!   [`ModuleData::import_source`](raw::ModuleData::import_source)).
 //! - Symbolic OID references via `oid_refs()` on entity records.
@@ -55,13 +55,49 @@
 //!
 //! ## Compiler pipeline
 //!
-//! The [`ast`], [`parser`], [`lower`], [`ir`], and [`token`]
+//! The [`cst`], [`ast`], [`parser`], [`lower`], [`ir`], and [`token`]
 //! modules expose pre-resolution stages for callers that need
-//! syntax-aware analysis before full resolution. The parser
-//! produces partial ASTs from broken input, which matters for
-//! editor integration where the user is mid-edit. Token types
-//! carry classification predicates for syntax highlighting.
-//! See the [`compile`] module and the `tokens` example.
+//! syntax-aware analysis before full resolution. The lossless [`cst`] parser
+//! retains every byte and exposes typed syntax nodes for source tooling. The
+//! semantic [`parser`] produces partial [`ast`] modules for lowering; it omits
+//! trivia and should be used when written layout is not needed. [`SyntaxKind`] is the single
+//! token/node inventory and carries fixed spellings, keyword aliases, and
+//! classification predicates for syntax highlighting and parser dispatch.
+//! See the [`compile`] module and the `cst` and `tokens` examples.
+//!
+//! For editor integrations, [`cst::SyntaxTree::cursor_context`] returns the
+//! written construct at a byte offset. [`Module::semantic_at`] and
+//! [`Module::semantic_at_position`] return the resolved definition or
+//! reference at the same location. [`cst::SymbolNavigator`] validates that a
+//! syntax tree and resolved module describe the same source before combining
+//! their results.
+//!
+//! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
+//! parse-only and tooling consumers. Checked [`ByteOffset`] and [`SourceRange`]
+//! values identify byte coordinates without sentinel values. [`BytePosition`]
+//! round-trips arbitrary source bytes, while [`Position`] requires an explicit
+//! [`PositionEncoding`] for UTF-8, UTF-16, or UTF-32 editor coordinates.
+//! [`Diagnostic`] retains an optional full source range, and
+//! [`DiagnosticReport`] keeps the referenced documents alive while deriving
+//! report-owned [`DiagnosticEntry`] handles. Entry rendering includes the
+//! source label plus the full start and exclusive end; invalid or unretained
+//! ranges return [`DiagnosticReportError`] instead of fabricated coordinates.
+//! Reports are obtained from a resolved [`Mib`], the lossless [`cst::parse`]
+//! and [`cst::parse_with_config`] entry points, or a threshold [`LoadError`],
+//! and share that compilation's exact source arena; callers cannot combine
+//! diagnostics with an unrelated [`SourceSet`] or resolve raw diagnostic
+//! metadata through a different report.
+//!
+//! ## Canonical output and resolution traces
+//!
+//! Use [`writer::write`] or [`writer::write_with_options`] to emit one resolved
+//! module as deterministic canonical SMIv2 text. The writer reports definitions
+//! that cannot be represented without changing their meaning.
+//!
+//! Use [`Mib::trace_symbol`] with a [`types::ResolutionDomain`] to explain how
+//! the resolver selected a definition. The returned [`mib::ResolutionTrace`]
+//! includes candidates, import provenance, applicable fallback tiers, and
+//! unresolved references.
 //!
 //! # Loading MIBs
 //!
@@ -247,9 +283,12 @@
 //! keyword omits the length prefix, relying on the index being the
 //! last component. [`Index::encoding`] returns the derived encoding.
 //!
-//! Use [`mib::index::decode_suffix`] to decode raw OID suffix arcs
-//! into typed [`IndexValue`]s, or call [`OidLookup::decode_indexes`]
-//! for the common case of processing a varbind OID.
+//! Compile an owned [`IndexSchema`] from a row or column, then use
+//! [`IndexSchema::decode_exact`] and [`IndexSchema::encode_canonical`] after
+//! the MIB is dropped. Exact decoding rejects truncated, malformed, and
+//! trailing input; canonical encoding validates value kinds and constraints.
+//! Inspect [`IndexSchema::issues`] and [`IndexComponentSchema::issues`] for
+//! representable MIB concerns retained during compilation.
 //!
 //! Use [`Object::is_table`], [`Object::is_row`], [`Object::is_column`],
 //! and [`Object::is_scalar`] to distinguish these, or use the filtered
@@ -307,28 +346,25 @@
 //! | `RFC-1212` | SMIv1 | SMIv1 `OBJECT-TYPE` macro definition |
 //! | `RFC-1215` | SMIv1 | SMIv1 `TRAP-TYPE` macro definition |
 //!
-//! These modules define the SMI language itself, specifically the ASN.1
-//! macros (`OBJECT-TYPE`, `MODULE-IDENTITY`, `TEXTUAL-CONVENTION`, etc.)
-//! that all other MIB modules use. The library constructs them
-//! programmatically rather than parsing them from files, because they
-//! contain ASN.1 MACRO definitions that require a general ASN.1 macro
-//! parser to process. Since RFC 2578 Section 3 explicitly prohibits
-//! user-defined macros in MIB modules ("Additional ASN.1 macros must not
-//! be defined in SMIv2 information modules"), the library only needs to
-//! handle the fixed set of macros defined by the SMI RFCs.
+//! These modules define the SMI language itself, including the ASN.1 macros
+//! (`OBJECT-TYPE`, `MODULE-IDENTITY`, `TEXTUAL-CONVENTION`, etc.) that other
+//! MIB modules use. RFC-derived module sources are embedded as fallbacks and
+//! parsed through the normal pipeline. They are byte-synchronized with gomib
+//! and include deliberate adaptations rather than being literal RFC text;
+//! macro bodies are recognized and skipped because MIB definitions use the
+//! fixed standard macro set.
 //!
 //! Implications for users:
 //!
 //! - **No files needed:** You do not need to supply these modules as source
-//!   files. If they exist on disk in a source directory, the synthetic
-//!   versions take priority and the files are not parsed.
+//!   files. A copy in a configured source takes precedence over the embedded
+//!   fallback and is parsed normally.
 //! - **Always present:** Base modules are included in every loaded [`Mib`],
 //!   even if nothing imports them. Use [`Module::is_base`] to distinguish
 //!   them from user-supplied modules (e.g. when iterating modules).
-//! - **No source spans:** Definitions from base modules carry synthetic
-//!   span values ([`Span::SYNTHETIC`](crate::types::Span::SYNTHETIC))
-//!   rather than real byte offsets, since there is no parsed source text.
-//!   The `source_path` for base modules is empty.
+//! - **Source locations:** Parsed definitions have source-qualified ranges. Embedded
+//!   modules use source labels such as `embedded:SNMPv2-SMI`; configured copies
+//!   retain the label reported by their source.
 //! - **Included in iteration:** [`Mib::modules`], [`Mib::objects`],
 //!   [`Mib::types`], and [`Mib::nodes`] all include base module content.
 //!   Filter with [`Module::is_base`] when you only want user-supplied
@@ -716,7 +752,9 @@
 //!
 //! - `fail_at` - change which severity causes `load()` to return an
 //!   error. For example, set to [`Severity::Minor`] to fail on any
-//!   minor issue.
+//!   minor issue. [`LoadError::DiagnosticThreshold`] owns a [`DiagnosticReport`]
+//!   containing every collected diagnostic in deterministic order and retaining
+//!   the source documents needed to render locations after the load fails.
 //! - `overrides` - promote or demote specific diagnostic codes (e.g.
 //!   turn a warning into an error). The effective severity is stored on
 //!   collected diagnostics and controls `fail_at`; demotion does not suppress
@@ -737,6 +775,7 @@
 //! The repository's [`examples` directory](https://github.com/lukeod/mib-rs/tree/main/examples)
 //! contains runnable programs for loading, queries, OID walks, tables, types,
 //! notifications, diagnostics, source configuration, raw data, tokenization,
+//! lossless and semantic navigation, resolution tracing, canonical writing,
 //! and JSON export.
 //!
 //! Run an example by name:
@@ -745,10 +784,15 @@
 //! cargo run --example basic
 //! cargo run --example tables
 //! cargo run --example diagnostics
+//! cargo run --example cst
+//! cargo run --example navigation
+//! cargo run --example trace
+//! cargo run --example writer
 //! ```
 //!
 //! The JSON export example requires the `serde` feature.
 pub mod ast;
+pub mod cst;
 pub mod error;
 #[cfg(feature = "serde")]
 pub mod export;
@@ -762,22 +806,42 @@ pub mod parser;
 pub(crate) mod scan;
 pub mod searchpath;
 pub mod source;
+pub mod syntax;
 pub mod token;
 pub mod types;
+pub mod writer;
 
 // Re-exports for convenience
 pub use error::LoadError;
 pub use load::{Loader, load};
 pub use mib::{
-    Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid, OidLookup,
-    ParseOidError, ResolveOidError, Type,
-    index::{DecodedIndex, IndexValue},
+    Capability, Compliance, Group, Index, Mib, Module, ModuleIdentityData, ModuleIdentityKind,
+    Node, Notification, Object, Oid, OidLookup, ParseOidError, ResolveOidError, SemanticSpan,
+    SemanticSpanKind, Type,
+    index::{
+        BoundIndexCodec, ConstraintCheck, ConstraintMode, DecodeOptions, DecodedIndexComponent,
+        DecodedRowIndex, EncodeOptions, InclusiveRange, IncompleteConstraintMode, IndexBindError,
+        IndexComponentSchema, IndexConstraintViolation, IndexDecodeError, IndexDecodeErrorKind,
+        IndexEncodeError, IndexEncodeErrorKind, IndexSchema, IndexSchemaError, IndexSchemaIssue,
+        IndexSuffix, IndexValue, IndexValueKind, IndexValueRef, IndexWireType, IntegerConstraint,
+        IntegerIndexKind, LengthConstraint, MAX_INSTANCE_OID_ARCS, NormalizedConstraint,
+        OctetIndexKind, PartialRange, ReportedIndexViolation, VariableFraming,
+    },
 };
-pub use source::{FindResult, Source};
-pub use token::{Token, TokenKind};
+pub use source::{
+    ByteOffset, BytePosition, CandidateId, Position, PositionEncoding, PositionError, Source,
+    SourceCandidate, SourceDocument, SourceId, SourceOrigin, SourceRange, SourceRangeError,
+    SourceSet,
+};
+pub use syntax::{
+    FORBIDDEN_KEYWORDS, KeywordCategory, SyntaxCategory, SyntaxKind, is_forbidden_keyword,
+    lookup_keyword,
+};
+pub use token::Token;
 pub use types::{
-    Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, IndexEncoding, Kind,
-    Language, ReportingLevel, ResolverStrictness, Severity, Status,
+    Access, AccessKeyword, BaseType, DiagCode, Diagnostic, DiagnosticConfig, DiagnosticEntry,
+    DiagnosticReport, DiagnosticReportError, IndexEncoding, Kind, Language, ReportingLevel,
+    ResolverStrictness, Severity, Status,
 };
 
 /// Low-level resolved data access.
@@ -794,9 +858,11 @@ pub mod raw {
 
 /// Compiler pipeline APIs exposed before final resolution.
 ///
-/// These modules are useful when building syntax-aware tooling or diagnostics
-/// that need direct access to tokens, parsed AST, lowered IR, or the parser
-/// entry points themselves.
+/// The lossless CST entry points, node wrappers, and token handles are
+/// re-exported directly from this module. The stage modules remain available
+/// for syntax-aware tooling that needs the semantic AST, lowered IR, raw token
+/// streams, or their parser entry points.
 pub mod compile {
-    pub use crate::{ast, ir, lower, parser, token};
+    pub use crate::cst::{self, *};
+    pub use crate::{ast, ir, lower, parser, syntax, token};
 }
