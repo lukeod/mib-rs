@@ -18,7 +18,7 @@ use crate::graph;
 use crate::ir;
 use crate::lower::base_modules;
 use crate::source::SourceRange;
-use crate::types::Kind;
+use crate::types::{Kind, ResolutionDomain};
 
 use super::super::types::*;
 use super::super::{ModuleIdentityData, ModuleIdentityKind};
@@ -358,7 +358,10 @@ fn lookup_smi_global_root_symbol(
     ir_mod: IrModuleId,
     name: &str,
 ) -> Option<graph::Symbol> {
-    if ctx.strictness.allow_constrained_fallbacks() && is_smi_global_root_symbol(ctx, name) {
+    if !super::rules::constrained_foundation_modules(ResolutionDomain::Oid, ctx.strictness)
+        .is_empty()
+        && is_smi_global_root_symbol(ctx, name)
+    {
         trace!(
             target: "mib_rs::resolver",
             component = "resolver",
@@ -591,7 +594,8 @@ fn lookup_name_component(ctx: &mut ResolverContext, od: &OidDef, name: &str) -> 
     }
 
     // Constrained (Normal+): SMI global OID roots.
-    if ctx.strictness.allow_constrained_fallbacks()
+    if !super::rules::constrained_foundation_modules(ResolutionDomain::Oid, ctx.strictness)
+        .is_empty()
         && let Some(node) = lookup_smi_global_oid_root(ctx, name)
     {
         trace!(
@@ -913,7 +917,7 @@ fn resolve_trap_type_definitions(ctx: &mut ResolverContext, trap_defs: &[OidDef]
                 ctx.mark_import_used(od.ir_mod, &enterprise_name);
             }
             Some(node)
-        } else if ctx.strictness.allow_constrained_fallbacks() {
+        } else if super::rules::allows_trap_enterprise_fallback(ctx.strictness) {
             ctx.lookup_node_global(&enterprise_name)
         } else {
             None

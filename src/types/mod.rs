@@ -19,5 +19,5 @@ pub use diagnostic::{
 };
 pub use enums::{
     Access, AccessKeyword, BaseType, IndexEncoding, Kind, Language, ReportingLevel,
-    ResolverStrictness, Severity, Status,
+    ResolutionDomain, ResolverStrictness, Severity, Status,
 };

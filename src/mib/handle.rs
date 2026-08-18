@@ -491,6 +491,11 @@ impl<'a> Module<'a> {
             .map(|id| Module::new(self.mib, id))
     }
 
+    /// Return retained pre-collapse resolution provenance for an imported symbol.
+    pub fn import_resolution(self, name: &str) -> Option<&'a super::types::ImportResolution> {
+        self.data().import_resolution(name)
+    }
+
     /// Look up an object defined by this module.
     pub fn object(self, name: &str) -> Option<Object<'a>> {
         self.data()

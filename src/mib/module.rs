@@ -159,6 +159,7 @@ pub struct ModuleData {
 
     pub(crate) used_import_names: HashSet<String>,
     pub(crate) resolved_imports: HashMap<String, ModuleId>,
+    pub(crate) import_resolutions: HashMap<String, ImportResolution>,
     pub(crate) semantic_spans: SemanticSpanIndex,
 
     pub(crate) objects_by_name: HashMap<String, ObjectId>,
@@ -194,6 +195,7 @@ impl ModuleData {
             nodes: Vec::new(),
             used_import_names: HashSet::new(),
             resolved_imports: HashMap::new(),
+            import_resolutions: HashMap::new(),
             semantic_spans: SemanticSpanIndex::default(),
             objects_by_name: HashMap::new(),
             types_by_name: HashMap::new(),
@@ -367,6 +369,38 @@ impl ModuleData {
         None
     }
 
+    /// Look up every distinct definition kind with this name in the module.
+    ///
+    /// An OID entity is returned instead of its attached plain node. A type
+    /// and an OID entity with the same name are both retained.
+    pub fn symbols(&self, name: &str) -> Vec<Symbol> {
+        let mut symbols = Vec::new();
+        if let Some(&id) = self.objects_by_name.get(name) {
+            symbols.push(Symbol::Object(id));
+        }
+        if let Some(&id) = self.notifications_by_name.get(name) {
+            symbols.push(Symbol::Notification(id));
+        }
+        if let Some(&id) = self.groups_by_name.get(name) {
+            symbols.push(Symbol::Group(id));
+        }
+        if let Some(&id) = self.compliances_by_name.get(name) {
+            symbols.push(Symbol::Compliance(id));
+        }
+        if let Some(&id) = self.capabilities_by_name.get(name) {
+            symbols.push(Symbol::Capability(id));
+        }
+        if symbols.is_empty()
+            && let Some(&id) = self.nodes_by_name.get(name)
+        {
+            symbols.push(Symbol::Node(id));
+        }
+        if let Some(&id) = self.types_by_name.get(name) {
+            symbols.push(Symbol::Type(id));
+        }
+        symbols
+    }
+
     /// Return `true` if this module defines a symbol with the given name.
     pub fn defines_symbol(&self, name: &str) -> bool {
         self.symbol(name).is_some()
@@ -387,6 +421,11 @@ impl ModuleData {
     /// Return the resolved source module for an imported name.
     pub fn import_source(&self, name: &str) -> Option<ModuleId> {
         self.resolved_imports.get(name).copied()
+    }
+
+    /// Return retained pre-collapse resolution provenance for an imported symbol.
+    pub fn import_resolution(&self, name: &str) -> Option<&ImportResolution> {
+        self.import_resolutions.get(name)
     }
 
     // Builder methods used during resolution.

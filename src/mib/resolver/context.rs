@@ -9,7 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ir;
 use crate::source::{SourceRange, SourceSet};
-use crate::types::{DiagCode, Diagnostic, DiagnosticConfig, Language, ResolverStrictness};
+use crate::types::{
+    DiagCode, Diagnostic, DiagnosticConfig, Language, ResolutionDomain, ResolverStrictness,
+};
 
 use super::super::mib::Mib;
 use super::super::types::*;
@@ -98,6 +100,16 @@ pub(super) struct ResolverContext {
     /// IR module -> symbol name -> source IR module. Import chain.
     pub module_imports: HashMap<IrModuleId, HashMap<String, IrModuleId>>,
 
+    /// Per-symbol import strategy retained before collapse.
+    pub import_resolution_modes: HashMap<IrModuleId, HashMap<String, ImportResolutionModeInternal>>,
+
+    /// Candidate paths observed by the live import resolver before collapse.
+    pub import_resolution_attempts:
+        HashMap<IrModuleId, HashMap<String, Vec<ImportAttemptInternal>>>,
+
+    /// Exact live traversal path selected for each resolved import.
+    pub import_selected_paths: HashMap<IrModuleId, HashMap<String, Vec<IrModuleId>>>,
+
     /// IR module -> symbol name -> TypeId. Populated by type phase.
     pub module_symbol_to_type: HashMap<IrModuleId, HashMap<String, TypeId>>,
 
@@ -157,13 +169,16 @@ impl ResolverContext {
         sources: SourceSet,
     ) -> Self {
         Self {
-            mib: Mib::with_sources(sources),
+            mib: Mib::with_sources(sources, strictness),
             modules: Vec::new(),
             module_index: HashMap::new(),
             module_to_resolved: HashMap::new(),
             resolved_to_module: HashMap::new(),
             module_symbol_to_node: HashMap::new(),
             module_imports: HashMap::new(),
+            import_resolution_modes: HashMap::new(),
+            import_resolution_attempts: HashMap::new(),
+            import_selected_paths: HashMap::new(),
             module_symbol_to_type: HashMap::new(),
             module_def_names: HashMap::new(),
             module_oid_def_names: HashMap::new(),
@@ -404,7 +419,7 @@ impl ResolverContext {
             });
         }
 
-        if self.strictness.allow_global_fallbacks() {
+        if super::rules::allows_global_fallback(ResolutionDomain::Conformance, self.strictness) {
             for (candidate, _) in self.all_modules() {
                 if let Some(&node_id) = self
                     .module_symbol_to_node
@@ -459,10 +474,12 @@ impl ResolverContext {
         {
             return Some(target);
         }
-        if matches!(name, "iso" | "ccitt" | "joint-iso-ccitt") {
+        if super::rules::intrinsic_foundation_module(ResolutionDomain::Oid, name).is_some() {
             return self.snmpv2_smi;
         }
-        if self.strictness.allow_constrained_fallbacks() {
+        if !super::rules::constrained_foundation_modules(ResolutionDomain::Oid, self.strictness)
+            .is_empty()
+        {
             return [self.snmpv2_smi, self.rfc1155_smi]
                 .into_iter()
                 .flatten()
@@ -555,10 +572,8 @@ impl ResolverContext {
     /// Tier 3 (global, Permissive only): not handled here (see global lookup).
     fn try_well_known_type_fallbacks(&self, name: &str) -> Option<TypeId> {
         // Tier 1: ASN.1 primitives always resolve from SNMPv2-SMI
-        if matches!(
-            name,
-            "INTEGER" | "OCTET STRING" | "OBJECT IDENTIFIER" | "BITS"
-        ) && let Some(smi) = self.snmpv2_smi
+        if super::rules::intrinsic_foundation_module(ResolutionDomain::Type, name).is_some()
+            && let Some(smi) = self.snmpv2_smi
         {
             return self
                 .module_symbol_to_type
@@ -567,7 +582,9 @@ impl ResolverContext {
                 .copied();
         }
         // Tier 2: constrained fallbacks (Normal+)
-        if !self.strictness.allow_constrained_fallbacks() {
+        if super::rules::constrained_foundation_modules(ResolutionDomain::Type, self.strictness)
+            .is_empty()
+        {
             return None;
         }
         // SMI global types from SNMPv2-SMI
@@ -874,6 +891,24 @@ impl ResolverContext {
             });
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ImportResolutionModeInternal {
+    Direct,
+    Alias,
+    Forwarded,
+    Partial,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ImportAttemptInternal {
+    pub stage: ImportResolutionStage,
+    pub path: Vec<IrModuleId>,
+    pub missing_module: Option<String>,
+    pub outcome: ImportAttemptOutcome,
+    pub selected: bool,
 }
 
 #[cfg(test)]

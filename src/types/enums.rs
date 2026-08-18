@@ -99,6 +99,37 @@ impl_display!(ResolverStrictness {
     Permissive => "permissive",
 });
 
+/// Resolver lookup context used when explaining a symbol reference.
+///
+/// Different SMI reference sites intentionally use different fallback rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResolutionDomain {
+    /// A type reference in SYNTAX or a type assignment.
+    Type,
+    /// A symbolic OID component.
+    Oid,
+    /// The object-only lookup used by AUGMENTS and non-bare INDEX targets.
+    Object,
+    /// An OBJECT-GROUP or NOTIFICATION-GROUP member node reference.
+    GroupMember,
+    /// An INDEX component, including the permitted bare type names.
+    Index,
+    /// A NOTIFICATION-TYPE or TRAP-TYPE OBJECTS reference.
+    NotificationObject,
+    /// A conformance target without an explicit SUPPORTS module qualifier.
+    Conformance,
+}
+
+impl_display!(ResolutionDomain {
+    Type => "type",
+    Oid => "oid",
+    Object => "object",
+    GroupMember => "group-member",
+    Index => "index",
+    NotificationObject => "notification-object",
+    Conformance => "conformance",
+});
+
 /// Controls diagnostic reporting verbosity.
 ///
 /// See also [`ResolverStrictness`] which controls resolver fallback behavior separately.

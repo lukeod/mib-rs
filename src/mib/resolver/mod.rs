@@ -18,6 +18,7 @@ mod imports;
 mod navigation;
 mod oids;
 mod registration;
+pub(crate) mod rules;
 mod semantics;
 mod types;
 mod util;
@@ -72,6 +73,7 @@ pub fn resolve(
     });
     run_phase("imports", || {
         imports::resolve_imports(&mut ctx);
+        imports::copy_import_provenance_to_modules(&mut ctx);
         imports::resolve_transitive_imports(&mut ctx);
         debug!(
             target: "mib_rs::resolver",

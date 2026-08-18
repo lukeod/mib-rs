@@ -24,6 +24,48 @@ enum CliReportingLevel {
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
+enum CliResolverStrictness {
+    Strict,
+    Normal,
+    Permissive,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum CliResolutionDomain {
+    Type,
+    Oid,
+    Object,
+    GroupMember,
+    Index,
+    NotificationObject,
+    Conformance,
+}
+
+impl From<CliResolutionDomain> for mib_rs::types::ResolutionDomain {
+    fn from(domain: CliResolutionDomain) -> Self {
+        match domain {
+            CliResolutionDomain::Type => Self::Type,
+            CliResolutionDomain::Oid => Self::Oid,
+            CliResolutionDomain::Object => Self::Object,
+            CliResolutionDomain::GroupMember => Self::GroupMember,
+            CliResolutionDomain::Index => Self::Index,
+            CliResolutionDomain::NotificationObject => Self::NotificationObject,
+            CliResolutionDomain::Conformance => Self::Conformance,
+        }
+    }
+}
+
+impl From<CliResolverStrictness> for ResolverStrictness {
+    fn from(strictness: CliResolverStrictness) -> Self {
+        match strictness {
+            CliResolverStrictness::Strict => ResolverStrictness::Strict,
+            CliResolverStrictness::Normal => ResolverStrictness::Normal,
+            CliResolverStrictness::Permissive => ResolverStrictness::Permissive,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
 enum CliSeverity {
     #[value(name = "0")]
     Fatal,
@@ -209,6 +251,20 @@ enum Command {
         #[arg(long, conflicts_with = "strict")]
         permissive: bool,
     },
+    /// Explain how one symbol resolves
+    Trace {
+        /// Symbol name or MODULE::symbol query
+        query: String,
+        /// Resolver reference domain to explain
+        #[arg(long, value_enum)]
+        domain: CliResolutionDomain,
+        /// Resolve an unqualified symbol from this module's scope
+        #[arg(short = 'm', long = "module", value_name = "MODULE")]
+        module: Option<String>,
+        /// Resolver strictness used for loading and fallback decisions
+        #[arg(long, value_enum, default_value = "normal")]
+        strictness: CliResolverStrictness,
+    },
     /// Export resolved MIB data as JSON
     Dump {
         /// Module names to load (omit to load all available modules)
@@ -355,6 +411,18 @@ fn main() {
             strict,
             permissive,
         } => cmd_inspect(&cli.paths, &query, modules, strict, permissive),
+        Command::Trace {
+            query,
+            domain,
+            module,
+            strictness,
+        } => cmd_trace(
+            &cli.paths,
+            &query,
+            module.as_deref(),
+            domain.into(),
+            strictness.into(),
+        ),
         Command::Dump {
             modules,
             strict,
@@ -1120,6 +1188,204 @@ fn non_empty(s: &str) -> Option<String> {
     } else {
         Some(s.to_string())
     }
+}
+
+// --- trace ---
+
+fn cmd_trace(
+    paths: &[String],
+    query: &str,
+    module_scope: Option<&str>,
+    domain: mib_rs::types::ResolutionDomain,
+    strictness: ResolverStrictness,
+) -> i32 {
+    let mib = match load_mib(paths, Vec::new(), strictness, DiagnosticConfig::silent()) {
+        Ok(mib) => mib,
+        Err(code) => return code,
+    };
+    let trace = match mib.trace_symbol(query, module_scope, domain) {
+        Ok(trace) => trace,
+        Err(mib_rs::mib::ResolutionTraceError::AmbiguousModuleScope { module, candidates }) => {
+            eprintln!("error: module scope {module:?} is ambiguous across loaded sources");
+            for candidate in candidates {
+                eprintln!("  {}", format_trace_scope(&candidate));
+            }
+            return 2;
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+
+    println!("Query: {}", trace.query);
+    println!("Symbol: {}", trace.symbol);
+    println!("Domain: {}", trace.domain);
+    println!("Strictness: {}", trace.strictness);
+    println!(
+        "Module scope: {}",
+        trace
+            .scope
+            .as_ref()
+            .map(format_trace_scope)
+            .unwrap_or_else(|| "(unscoped)".to_owned())
+    );
+    println!("Fallbacks:");
+    println!(
+        "  intrinsic: {}",
+        if trace.fallbacks.intrinsic {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  constrained: {}",
+        if trace.fallbacks.constrained {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  global: {}",
+        if trace.fallbacks.global {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+
+    println!("Candidates:");
+    if trace.candidates.is_empty() {
+        println!("  (none)");
+    } else {
+        for candidate in &trace.candidates {
+            let oid = candidate
+                .oid
+                .as_ref()
+                .map(|oid| format!(", oid {oid}"))
+                .unwrap_or_default();
+            let revision = if candidate.last_updated.is_empty() {
+                String::new()
+            } else {
+                format!(", revision {}", candidate.last_updated)
+            };
+            let source = candidate
+                .source_label
+                .as_ref()
+                .map(|source| format!(", source {source}"))
+                .unwrap_or_default();
+            let applicability = if candidate.applicable {
+                "applicable"
+            } else {
+                "other domain"
+            };
+            println!(
+                "  {}::{} ({kind}{oid}{revision}{source}, {applicability})",
+                candidate.module_name,
+                trace.symbol,
+                kind = candidate.kind
+            );
+        }
+    }
+
+    println!("Import resolution:");
+    if let Some(import) = &trace.import {
+        println!("  declared module: {}", import.declared_module);
+        println!("  mode: {}", import.mode);
+        println!("  selected path:");
+        if import.selected_path.is_empty() {
+            println!("    (none)");
+        } else {
+            println!(
+                "    {}",
+                format_trace_module_path(&mib, &import.selected_path)
+            );
+        }
+        println!("  attempts:");
+        for attempt in &import.attempts {
+            let mut path = format_trace_module_path(&mib, &attempt.path);
+            if let Some(missing) = &attempt.missing_module {
+                if !path.is_empty() {
+                    path.push_str(" -> ");
+                }
+                path.push_str(missing);
+            }
+            if path.is_empty() {
+                path.push_str("(none)");
+            }
+            let selected = if attempt.selected { ", selected" } else { "" };
+            println!(
+                "    [{}] {path}: {}{selected}",
+                attempt.stage, attempt.outcome
+            );
+        }
+    } else {
+        println!("  (none)");
+    }
+
+    println!("Resolved target:");
+    if let Some(target) = &trace.target {
+        println!(
+            "  {}::{} ({}, via {})",
+            target.candidate.module_name, trace.symbol, target.candidate.kind, target.strategy
+        );
+    } else {
+        match trace.outcome {
+            mib_rs::mib::ResolutionOutcome::Ambiguous => println!("  (ambiguous)"),
+            mib_rs::mib::ResolutionOutcome::Missing => println!("  (not found)"),
+            mib_rs::mib::ResolutionOutcome::Resolved => unreachable!(),
+        }
+    }
+
+    println!("Related unresolved references:");
+    if trace.unresolved.is_empty() {
+        println!("  (none)");
+    } else {
+        for unresolved in &trace.unresolved {
+            println!(
+                "  [{}] {} in {}: {}",
+                unresolved.kind, unresolved.symbol, unresolved.module, unresolved.reason
+            );
+        }
+    }
+
+    match trace.outcome {
+        mib_rs::mib::ResolutionOutcome::Resolved => 0,
+        mib_rs::mib::ResolutionOutcome::Ambiguous | mib_rs::mib::ResolutionOutcome::Missing => 1,
+    }
+}
+
+fn format_trace_scope(scope: &mib_rs::mib::ResolutionScope) -> String {
+    let source = scope.source_label.as_deref().unwrap_or("<no source>");
+    if scope.last_updated.is_empty() {
+        format!("{} [source {source}]", scope.module_name)
+    } else {
+        format!(
+            "{} [source {source}, revision {}]",
+            scope.module_name, scope.last_updated
+        )
+    }
+}
+
+fn format_trace_module_path(mib: &Mib, path: &[mib_rs::mib::ModuleId]) -> String {
+    path.iter()
+        .map(|module| {
+            let module = mib.module_by_id(*module);
+            let source = module.source_label().unwrap_or("<no source>");
+            if module.last_updated().is_empty() {
+                format!("{} [source {source}]", module.name())
+            } else {
+                format!(
+                    "{} [source {source}, revision {}]",
+                    module.name(),
+                    module.last_updated()
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 // --- inspect ---

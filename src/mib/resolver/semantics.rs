@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ir;
 use crate::mib::Oid;
 use crate::source::SourceRange;
-use crate::types::{Access, BaseType, DiagCode, Kind, Status};
+use crate::types::{Access, BaseType, DiagCode, Kind, ResolutionDomain, Status};
 use tracing::trace;
 
 use super::super::capability::CapabilityData;
@@ -989,7 +989,7 @@ fn validate_table_semantics(ctx: &mut ResolverContext) {
         for (name, index_items, augments, augments_range) in work {
             if !index_items.is_empty() {
                 for item in &index_items {
-                    if is_bare_type_index(&item.object) {
+                    if super::rules::is_bare_index_type(&item.object) {
                         continue;
                     }
                     if lookup_object_by_name(ctx, ir_id, &item.object).is_some() {
@@ -1135,7 +1135,7 @@ fn resolve_index_entry(
     _row_name: &str,
     item: &ir::definition::IndexItem,
 ) -> Option<IndexEntry> {
-    if is_bare_type_index(&item.object) {
+    if super::rules::is_bare_index_type(&item.object) {
         let type_id = ctx
             .lookup_type_for_module(ir_mod, &item.object)
             .map(|(id, _)| id);
@@ -1189,27 +1189,6 @@ fn resolve_index_entry(
     })
 }
 
-// Primitive/global type names that can appear directly in INDEX clauses.
-fn is_bare_type_index(name: &str) -> bool {
-    matches!(
-        name,
-        "INTEGER"
-            | "OCTET STRING"
-            | "BITS"
-            | "Integer32"
-            | "Counter32"
-            | "Counter64"
-            | "Gauge32"
-            | "Unsigned32"
-            | "TimeTicks"
-            | "IpAddress"
-            | "Opaque"
-            | "Counter"
-            | "Gauge"
-            | "NetworkAddress"
-    )
-}
-
 fn lookup_object_by_name(
     ctx: &mut ResolverContext,
     ir_mod: IrModuleId,
@@ -1218,7 +1197,7 @@ fn lookup_object_by_name(
     if let Some(obj_id) = lookup_object_in_module_scope(ctx, ir_mod, name) {
         return Some(obj_id);
     }
-    if ctx.strictness.allow_global_fallbacks()
+    if super::rules::allows_global_fallback(ResolutionDomain::Object, ctx.strictness)
         && let Some(obj_id) = ctx.mib.object_by_name(name)
     {
         trace!(
@@ -1580,7 +1559,7 @@ fn lookup_notification_object(
         };
     }
 
-    if ctx.strictness.allow_global_fallbacks()
+    if super::rules::allows_global_fallback(ResolutionDomain::NotificationObject, ctx.strictness)
         && let Some(node_id) = ctx.lookup_node_global(name)
     {
         trace!(
@@ -2309,7 +2288,7 @@ fn lookup_member_node(
     if let Some(result) = ctx.lookup_node_for_module(ir_mod, name) {
         return Some(result);
     }
-    if ctx.strictness.allow_global_fallbacks()
+    if super::rules::allows_global_fallback(ResolutionDomain::GroupMember, ctx.strictness)
         && let Some(node_id) = ctx.lookup_node_global(name)
     {
         return Some((node_id, false));
@@ -2329,7 +2308,7 @@ fn is_notification_variation(
     if let Some((node_id, _)) = ctx.lookup_node_for_module(ir_mod, &var.name) {
         return ctx.mib.tree().get(node_id).kind == Kind::Notification;
     }
-    if ctx.strictness.allow_global_fallbacks()
+    if super::rules::allows_global_fallback(ResolutionDomain::Conformance, ctx.strictness)
         && let Some(node_id) = ctx.lookup_node_global(&var.name)
     {
         return ctx.mib.tree().get(node_id).kind == Kind::Notification;

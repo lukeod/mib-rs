@@ -35,6 +35,120 @@ pub struct Import {
     pub symbols: Vec<ImportSymbol>,
 }
 
+/// Resolver strategy used for one imported symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportResolutionMode {
+    /// The selected source module directly defines the complete import group.
+    Direct,
+    /// A well-known source-module alias selected the defining module.
+    Alias,
+    /// The declared source module forwarded the complete import group.
+    Forwarded,
+    /// The symbol was retained while resolving a mixed direct/forwarded group.
+    Partial,
+    /// No source module candidate could resolve the symbol.
+    Unresolved,
+    /// No target was selected and at least one candidate path was cyclic.
+    Cycle,
+}
+
+impl fmt::Display for ImportResolutionMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Direct => "direct",
+            Self::Alias => "alias",
+            Self::Forwarded => "forwarded",
+            Self::Partial => "partial",
+            Self::Unresolved => "unresolved",
+            Self::Cycle => "cycle",
+        })
+    }
+}
+
+/// Terminal result of one candidate path attempted during import resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportAttemptOutcome {
+    /// The path reached a module defining the symbol.
+    Resolved,
+    /// The path ended at a loaded module that neither defines nor imports the symbol.
+    SymbolNotDefined,
+    /// The next declared source module was unavailable.
+    ModuleNotFound,
+    /// The path revisited a module.
+    Cycle,
+}
+
+/// Import resolver stage that produced a candidate-path attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportResolutionStage {
+    /// Aggregate direct-source candidate scoring.
+    Direct,
+    /// Aggregate well-known module-alias candidate scoring.
+    Alias,
+    /// Aggregate import-forwarding traversal.
+    Forwarding,
+    /// Per-symbol partial-resolution traversal.
+    Partial,
+    /// Terminal failure because the declared source module was unavailable.
+    Unresolved,
+}
+
+impl fmt::Display for ImportResolutionStage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Direct => "direct",
+            Self::Alias => "alias",
+            Self::Forwarding => "forwarding",
+            Self::Partial => "partial",
+            Self::Unresolved => "unresolved",
+        })
+    }
+}
+
+impl fmt::Display for ImportAttemptOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Resolved => "resolved",
+            Self::SymbolNotDefined => "symbol-not-defined",
+            Self::ModuleNotFound => "module-not-found",
+            Self::Cycle => "cycle",
+        })
+    }
+}
+
+/// One exact module-version path observed during live import resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportResolutionAttempt {
+    /// Live resolver stage that executed this attempt.
+    pub stage: ImportResolutionStage,
+    /// Loaded module versions visited by the attempt, including a repeated
+    /// final module for a detected cycle.
+    pub path: Vec<ModuleId>,
+    /// Unavailable module named by the last visited module, when applicable.
+    pub missing_module: Option<String>,
+    /// Terminal result.
+    pub outcome: ImportAttemptOutcome,
+    /// Whether this attempt supplied the retained resolution.
+    pub selected: bool,
+}
+
+/// Retained pre-collapse provenance for one IMPORTS symbol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportResolution {
+    /// Imported symbol.
+    pub symbol: String,
+    /// Source module name written in the importing module.
+    pub declared_module: String,
+    /// Resolver strategy used for the import group.
+    pub mode: ImportResolutionMode,
+    /// Exact defining module version retained after resolution.
+    pub target: Option<ModuleId>,
+    /// Exact selected forwarding path, excluding the importing module itself.
+    pub selected_path: Vec<ModuleId>,
+    /// Candidate paths attempted before the transitive import map was collapsed.
+    pub attempts: Vec<ImportResolutionAttempt>,
+}
+
 /// An endpoint in a resolved SIZE or value range constraint.
 ///
 /// Signed and unsigned literals remain distinct so values above [`i64::MAX`]

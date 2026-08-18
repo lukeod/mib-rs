@@ -38,6 +38,7 @@ pub mod object;
 pub mod oid;
 pub mod raw;
 pub mod symbol;
+pub mod trace;
 pub mod typedef;
 pub mod types;
 
@@ -53,6 +54,10 @@ pub use object::ObjectData;
 pub use oid::{Oid, ParseOidError};
 pub use raw::RawMib;
 pub use symbol::Symbol;
+pub use trace::{
+    ResolutionCandidate, ResolutionCandidateKind, ResolutionFallbackPolicy, ResolutionOutcome,
+    ResolutionScope, ResolutionStrategy, ResolutionTarget, ResolutionTrace, ResolutionTraceError,
+};
 pub use typedef::TypeData;
 pub use types::*;
 pub use {capability::CapabilityData, compliance::ComplianceData, group::GroupData};

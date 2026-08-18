@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::mib::{Oid, ParseOidError};
 use crate::source::{SourceDocument, SourceId, SourceSet};
-use crate::types::{BaseType, Diagnostic, DiagnosticReport, Kind, Severity};
+use crate::types::{BaseType, Diagnostic, DiagnosticReport, Kind, ResolverStrictness, Severity};
 
 use super::capability::CapabilityData;
 use super::compliance::ComplianceData;
@@ -62,6 +62,7 @@ pub struct Mib {
     pub(crate) node_count: usize,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) unresolved: Vec<UnresolvedRef>,
+    pub(crate) resolver_strictness: ResolverStrictness,
 }
 
 impl Mib {
@@ -87,6 +88,7 @@ impl Mib {
             node_count: 0,
             diagnostics: Vec::new(),
             unresolved: Vec::new(),
+            resolver_strictness: ResolverStrictness::Normal,
         }
     }
 
@@ -96,11 +98,21 @@ impl Mib {
         &self.tree
     }
 
-    pub(crate) fn with_sources(sources: SourceSet) -> Self {
+    pub(crate) fn with_sources(
+        sources: SourceSet,
+        resolver_strictness: ResolverStrictness,
+    ) -> Self {
         Self {
             sources: Arc::new(sources),
+            resolver_strictness,
             ..Self::new()
         }
+    }
+
+    /// Return the strictness used to resolve this MIB.
+    #[must_use]
+    pub fn resolver_strictness(&self) -> ResolverStrictness {
+        self.resolver_strictness
     }
 
     /// Return a low-level view of this MIB.

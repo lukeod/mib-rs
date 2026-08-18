@@ -3,6 +3,7 @@
 use crate::ir;
 use crate::mib::navigation::{SemanticSpanEntry, SemanticSpanIndex, SemanticSpanKind};
 use crate::source::SourceRange;
+use crate::types::ResolutionDomain;
 
 use super::super::{ModuleId, NodeId, Symbol};
 use super::context::{IrModuleId, ResolverContext};
@@ -387,7 +388,7 @@ fn resolve_member_identity(ctx: &ResolverContext, ir_mod: IrModuleId, name: &str
     {
         return exact_node_identity(ctx, target, name, node);
     }
-    if ctx.strictness.allow_global_fallbacks() {
+    if super::rules::allows_global_fallback(ResolutionDomain::GroupMember, ctx.strictness) {
         for (target, _) in ctx.all_modules() {
             if let Some(node) = declared_node_in_ir_module(ctx, target, name) {
                 return exact_node_identity(ctx, target, name, node);
