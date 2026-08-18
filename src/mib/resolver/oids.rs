@@ -21,6 +21,7 @@ use crate::source::SourceRange;
 use crate::types::Kind;
 
 use super::super::types::*;
+use super::super::{ModuleIdentityData, ModuleIdentityKind};
 use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 use super::util::{language_rank, normalize_timestamp};
 
@@ -673,6 +674,10 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
     };
     let resolved_mod_id = ctx.module_to_resolved[&od.ir_mod];
 
+    if let Some(identity) = declared_identity(ctx, od, node_id) {
+        ctx.mib.module_mut(resolved_mod_id).add_identity(identity);
+    }
+
     // Detect OID reuse/registration conflicts before overwriting the node label.
     let existing_name = ctx.mib.tree().get(node_id).name.clone();
     if !existing_name.is_empty() && existing_name != od.name() {
@@ -771,6 +776,68 @@ fn finalize_oid_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: Node
         }
         _ => {} // deferred to semantics
     }
+}
+
+fn declared_identity(
+    ctx: &ResolverContext,
+    od: &OidDef,
+    node_id: NodeId,
+) -> Option<ModuleIdentityData> {
+    let definition = &ctx.modules[od.ir_mod.index()].definitions[od.def_idx];
+    let oid = ctx.mib.tree().oid_of(node_id).clone();
+    let empty = String::new;
+
+    let identity = match definition {
+        ir::Definition::ModuleIdentity(item) => ModuleIdentityData {
+            name: item.name.clone(),
+            kind: ModuleIdentityKind::ModuleIdentity,
+            oid,
+            status: None,
+            description: item.description.clone(),
+            reference: empty(),
+            last_updated: item.last_updated.clone(),
+            organization: item.organization.clone(),
+            contact_info: item.contact_info.clone(),
+            revisions: item
+                .revisions
+                .iter()
+                .map(|revision| Revision {
+                    date: revision.date.clone(),
+                    description: revision.description.clone(),
+                    range: revision.range,
+                })
+                .collect(),
+            range: item.range,
+        },
+        ir::Definition::ObjectIdentity(item) => ModuleIdentityData {
+            name: item.name.clone(),
+            kind: ModuleIdentityKind::ObjectIdentity,
+            oid,
+            status: Some(item.status),
+            description: item.description.clone(),
+            reference: item.reference.clone(),
+            last_updated: empty(),
+            organization: empty(),
+            contact_info: empty(),
+            revisions: Vec::new(),
+            range: item.range,
+        },
+        ir::Definition::ValueAssignment(item) => ModuleIdentityData {
+            name: item.name.clone(),
+            kind: ModuleIdentityKind::ObjectIdentifier,
+            oid,
+            status: None,
+            description: item.description.clone(),
+            reference: item.reference.clone(),
+            last_updated: empty(),
+            organization: empty(),
+            contact_info: empty(),
+            revisions: Vec::new(),
+            range: item.range,
+        },
+        _ => return None,
+    };
+    Some(identity)
 }
 
 fn finalize_trap_type_definition(ctx: &mut ResolverContext, od: &OidDef, node_id: NodeId) {

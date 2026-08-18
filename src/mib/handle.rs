@@ -457,6 +457,14 @@ impl<'a> Module<'a> {
         self.data().imports()
     }
 
+    /// Return exact module-scoped OID identity declarations.
+    ///
+    /// This preserves same-OID aliases and declarations hidden by the global
+    /// OID tree's winning name, kind, metadata, or module.
+    pub fn identities(self) -> &'a [super::module::ModuleIdentityData] {
+        self.data().identities()
+    }
+
     /// Return `true` if this is an SMI foundation module (SNMPv2-SMI, etc.).
     ///
     /// Foundation modules define the SMI language itself. Their source may be

@@ -45,7 +45,7 @@ pub(crate) mod resolver;
 
 pub use handle::{Capability, Compliance, Group, Index, Module, Node, Notification, Object, Type};
 pub use mib::{Mib, OidLookup, ResolveOidError};
-pub use module::ModuleData;
+pub use module::{ModuleData, ModuleIdentityData, ModuleIdentityKind};
 pub use navigation::{SemanticSpan, SemanticSpanKind};
 pub use node::{NodeData, OidTree};
 pub use notification::NotificationData;

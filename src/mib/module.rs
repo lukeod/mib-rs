@@ -9,12 +9,104 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mib::Oid;
-use crate::source::SourceId;
-use crate::types::Language;
+use crate::source::{SourceId, SourceRange};
+use crate::types::{Language, Status};
 
 use super::navigation::SemanticSpanIndex;
 use super::symbol::Symbol;
 use super::types::*;
+
+/// The declared kind of a module-scoped OID identity.
+///
+/// Unlike the global OID tree's winning [`Kind`](crate::Kind), this value is
+/// retained independently for every declaration, including aliases and OID
+/// collisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModuleIdentityKind {
+    /// A `MODULE-IDENTITY` declaration.
+    ModuleIdentity,
+    /// An `OBJECT-IDENTITY` declaration.
+    ObjectIdentity,
+    /// A plain `OBJECT IDENTIFIER` value assignment.
+    ObjectIdentifier,
+}
+
+/// Exact module-scoped data for one resolved OID identity declaration.
+///
+/// Multiple records may have the same numeric OID. This preserves aliases and
+/// declarations that lost global OID-tree ownership to another module or to
+/// an object, group, notification, or conformance definition.
+#[derive(Debug, Clone)]
+pub struct ModuleIdentityData {
+    pub(crate) name: String,
+    pub(crate) kind: ModuleIdentityKind,
+    pub(crate) oid: Oid,
+    pub(crate) status: Option<Status>,
+    pub(crate) description: String,
+    pub(crate) reference: String,
+    pub(crate) last_updated: String,
+    pub(crate) organization: String,
+    pub(crate) contact_info: String,
+    pub(crate) revisions: Vec<Revision>,
+    pub(crate) range: SourceRange,
+}
+
+impl ModuleIdentityData {
+    /// Return the name exactly as declared in this module.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return the declaration kind independently of global OID ownership.
+    pub fn kind(&self) -> ModuleIdentityKind {
+        self.kind
+    }
+
+    /// Return the resolved numeric OID.
+    pub fn oid(&self) -> &Oid {
+        &self.oid
+    }
+
+    /// Return the declared status for an `OBJECT-IDENTITY`.
+    pub fn status(&self) -> Option<Status> {
+        self.status
+    }
+
+    /// Return the declared description text.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Return the declared reference text.
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// Return the `LAST-UPDATED` value for a `MODULE-IDENTITY`.
+    pub fn last_updated(&self) -> &str {
+        &self.last_updated
+    }
+
+    /// Return the `ORGANIZATION` text for a `MODULE-IDENTITY`.
+    pub fn organization(&self) -> &str {
+        &self.organization
+    }
+
+    /// Return the `CONTACT-INFO` text for a `MODULE-IDENTITY`.
+    pub fn contact_info(&self) -> &str {
+        &self.contact_info
+    }
+
+    /// Return the revisions for a `MODULE-IDENTITY` in declaration order.
+    pub fn revisions(&self) -> &[Revision] {
+        &self.revisions
+    }
+
+    /// Return the complete source range of the declaration.
+    pub fn range(&self) -> SourceRange {
+        self.range
+    }
+}
 
 /// A loaded and resolved MIB module.
 ///
@@ -33,6 +125,7 @@ pub struct ModuleData {
     pub(crate) last_updated: String,
     pub(crate) revisions: Vec<Revision>,
     pub(crate) imports: Vec<Import>,
+    pub(crate) identities: Vec<ModuleIdentityData>,
 
     pub(crate) objects: Vec<ObjectId>,
     pub(crate) types: Vec<TypeId>,
@@ -69,6 +162,7 @@ impl ModuleData {
             last_updated: String::new(),
             revisions: Vec::new(),
             imports: Vec::new(),
+            identities: Vec::new(),
             objects: Vec::new(),
             types: Vec::new(),
             notifications: Vec::new(),
@@ -144,6 +238,14 @@ impl ModuleData {
     /// Return the IMPORTS declarations.
     pub fn imports(&self) -> &[Import] {
         &self.imports
+    }
+
+    /// Return exact module-scoped OID identity declarations.
+    ///
+    /// Records retain aliases and collisions independently of the global OID
+    /// tree's selected name, kind, metadata, and owning module.
+    pub fn identities(&self) -> &[ModuleIdentityData] {
+        &self.identities
     }
 
     /// Return the object ids defined by this module.
@@ -300,6 +402,10 @@ impl ModuleData {
     pub(crate) fn add_node(&mut self, name: impl Into<String>, id: NodeId) {
         self.nodes.push(id);
         self.nodes_by_name.entry(name.into()).or_insert(id);
+    }
+
+    pub(crate) fn add_identity(&mut self, identity: ModuleIdentityData) {
+        self.identities.push(identity);
     }
 
     /// Yield all definitions in this module as [`Symbol`] values.

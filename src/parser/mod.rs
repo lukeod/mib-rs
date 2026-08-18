@@ -297,13 +297,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         }
         let token = self.advance();
         let full_text = self.text(token.span);
-        let value = if full_text.len() >= 2 && full_text.ends_with('"') {
-            full_text[1..full_text.len() - 1].to_string()
+        let content = if full_text.len() >= 2 && full_text.ends_with('"') {
+            &full_text[1..full_text.len() - 1]
         } else if !full_text.is_empty() {
-            full_text[1..].to_string()
+            &full_text[1..]
         } else {
-            String::new()
+            ""
         };
+        let value = content.replace("\"\"", "\"");
         Ok(QuotedString {
             value,
             span: token.span,
@@ -2733,6 +2734,29 @@ END
             }
             other => panic!("expected ModuleIdentity, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn quoted_string_decodes_doubled_quotes_but_retains_raw_range() {
+        let input = r#"TEST-MIB DEFINITIONS ::= BEGIN
+testMIB MODULE-IDENTITY
+    LAST-UPDATED "200606140000Z"
+    ORGANIZATION "The ""quoted"" organization"
+    CONTACT-INFO "test@test"
+    DESCRIPTION "A test MIB."
+    ::= { enterprises 1 }
+END
+"#;
+        let modules = parse_str(input);
+        let Definition::ModuleIdentity(identity) = &modules[0].body[0] else {
+            panic!("expected module identity");
+        };
+        assert_eq!(identity.organization.value, "The \"quoted\" organization");
+        assert_eq!(
+            &input[identity.organization.span.byte_range()],
+            r#""The ""quoted"" organization""#
+        );
+        assert!(modules[0].diagnostics.is_empty());
     }
 
     #[test]

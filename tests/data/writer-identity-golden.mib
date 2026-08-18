@@ -1,0 +1,38 @@
+IDENTITY-ONLY-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-IDENTITY, enterprises
+        FROM SNMPv2-SMI;
+
+identityOnlyMib MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION
+        "Example ""quoted"" organization"
+    CONTACT-INFO
+        "Example contact"
+    DESCRIPTION
+        "An identity-only test module.
+        Continued module description."
+    REVISION "202601010000Z"
+    DESCRIPTION
+        "Initial revision."
+    ::= { enterprises 424242 }
+
+identityObjects OBJECT IDENTIFIER ::= { identityOnlyMib 1 }
+
+identityFirst OBJECT-IDENTITY
+    STATUS current
+    DESCRIPTION
+        "The first identity.
+        Continued first identity."
+    ::= { identityObjects 1 }
+
+identitySecond OBJECT-IDENTITY
+    STATUS deprecated
+    DESCRIPTION
+        "The second identity."
+    REFERENCE
+        "Identity reference."
+    ::= { identityObjects 2 }
+
+END

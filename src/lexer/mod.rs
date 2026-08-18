@@ -426,6 +426,11 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                     return self.token(SyntaxKind::QuotedString, start);
                 }
                 Some(b'"') => {
+                    if self.peek_at(1) == Some(b'"') {
+                        self.advance();
+                        self.advance();
+                        continue;
+                    }
                     self.advance();
                     return self.token(SyntaxKind::QuotedString, start);
                 }
@@ -616,6 +621,12 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
                 } else {
                     Some(self.token(SyntaxKind::EofToken, start))
                 };
+            }
+
+            if in_quoted_string && self.peek() == Some(b'"') && self.peek_at(1) == Some(b'"') {
+                self.advance();
+                self.advance();
+                continue;
             }
 
             if self.peek() == Some(b'"') {
@@ -943,6 +954,22 @@ mod tests {
             vec![SyntaxKind::QuotedString, SyntaxKind::EofToken]
         );
         assert_eq!(text_of(input, &tokens[0]), r#""hello world""#);
+    }
+
+    #[test]
+    fn quoted_string_retains_doubled_quotes_in_one_exact_token() {
+        let input = r#""the ""quoted"" value" next"#;
+        let (tokens, diagnostics) = tokenize_with_diags(input);
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::QuotedString,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken
+            ]
+        );
+        assert_eq!(text_of(input, &tokens[0]), r#""the ""quoted"" value""#);
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
