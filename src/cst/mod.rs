@@ -17,7 +17,7 @@ use std::iter::FusedIterator;
 use std::sync::Arc;
 
 use crate::source::{
-    SourceCandidate, SourceDocument, SourceId, SourceRange, SourceRangeError, SourceSet,
+    ByteOffset, SourceCandidate, SourceDocument, SourceId, SourceRange, SourceRangeError, SourceSet,
 };
 pub use crate::syntax::SyntaxKind;
 use crate::token::Token;
@@ -53,6 +53,7 @@ pub struct SyntaxTree {
     sources: Arc<SourceSet>,
     document: SourceId,
     root: NodeData,
+    token_index: Box<[TokenData]>,
 }
 
 impl SyntaxTree {
@@ -81,6 +82,37 @@ impl SyntaxTree {
     /// Iterate over all tokens in source order, including EOF.
     pub fn tokens(&self) -> DescendantTokens<'_, '_> {
         self.root().descendant_tokens()
+    }
+
+    /// Return the token at a byte offset in this tree's source document.
+    ///
+    /// Token ranges are interpreted as half-open: an offset in
+    /// `[token.start(), token.end())` selects that token. Consequently, an
+    /// offset exactly at a token's start selects that token, while an offset
+    /// exactly at its end selects the following token. Whitespace and comments
+    /// are returned like any other token. The document's exclusive end selects
+    /// the zero-length [`SyntaxKind::EofToken`], including for an empty
+    /// document; an offset beyond the document returns `None`.
+    ///
+    /// [`ByteOffset`] has no source identity, so `offset` is always interpreted
+    /// in the retained document returned by [`Self::document`]. Offsets are
+    /// byte-based and need not fall on a UTF-8 code-point boundary; each byte
+    /// within multibyte or invalid source text selects its containing token.
+    /// The lookup uses the tree's immutable token index and takes `O(log n)`
+    /// time for `n` tokens.
+    pub fn token_at(&self, offset: ByteOffset) -> Option<SyntaxToken<'_, '_>> {
+        if offset > self.document().len() {
+            return None;
+        }
+
+        let index = self
+            .token_index
+            .partition_point(|token| token.range.start() <= offset)
+            .checked_sub(1)?;
+        self.token_index.get(index).map(|data| SyntaxToken {
+            data,
+            document: self.document(),
+        })
     }
 
     /// Reconstruct the original source bytes from the tree's tokens.
@@ -188,6 +220,7 @@ fn build_lossless_tree(
             sources,
             document: document_id,
             root,
+            token_index: tokens,
         },
         diagnostics,
     )
@@ -673,6 +706,120 @@ mod tests {
                     (SyntaxKind::EofToken, 13..13),
                 ]
             );
+        });
+    }
+
+    #[test]
+    fn token_lookup_has_exhaustive_half_open_boundary_behavior() {
+        let input = b"name \t-- caf\xc3\xa9 --\n\"h\xc3\xa9\",{7}\xff";
+        with_document(input, |document| {
+            let (tree, _) = build(document);
+            let tokens = tree
+                .tokens()
+                .map(|token| (token.kind(), token.range().byte_range()))
+                .collect::<Vec<_>>();
+
+            assert!(tokens.iter().any(|(kind, _)| kind.is_identifier()));
+            assert!(
+                tokens
+                    .iter()
+                    .any(|(kind, _)| *kind == SyntaxKind::Whitespace)
+            );
+            assert!(tokens.iter().any(|(kind, _)| *kind == SyntaxKind::Comment));
+            assert!(tokens.iter().any(|(kind, _)| kind.is_literal()));
+            assert!(tokens.iter().any(|(kind, _)| kind.is_punctuation()));
+            assert!(
+                tokens
+                    .iter()
+                    .any(|(kind, _)| *kind == SyntaxKind::ErrorToken)
+            );
+
+            for (index, (kind, range)) in tokens.iter().enumerate() {
+                let at_start = tree
+                    .token_at(ByteOffset::new(range.start as u32))
+                    .expect("every token start is in the document");
+                assert_eq!(at_start.kind(), *kind, "start of token {index}");
+                assert_eq!(
+                    at_start.range().byte_range(),
+                    *range,
+                    "start of token {index}"
+                );
+
+                for byte in range.clone() {
+                    let inside = tree.token_at(ByteOffset::new(byte as u32)).unwrap();
+                    assert_eq!(inside.kind(), *kind, "byte {byte} of token {index}");
+                    assert_eq!(inside.range().byte_range(), *range, "byte {byte}");
+                }
+
+                let at_end = tree
+                    .token_at(ByteOffset::new(range.end as u32))
+                    .expect("token ends are in the document");
+                let expected = tokens
+                    .get(index + 1)
+                    .unwrap_or_else(|| tokens.last().expect("the token stream includes EOF"));
+                assert_eq!(at_end.kind(), expected.0, "end of token {index}");
+                assert_eq!(
+                    at_end.range().byte_range(),
+                    expected.1,
+                    "end of token {index}"
+                );
+            }
+
+            for (position, expected_kind) in [
+                (
+                    input
+                        .windows(2)
+                        .position(|bytes| bytes == b"\xc3\xa9")
+                        .unwrap(),
+                    SyntaxKind::Comment,
+                ),
+                (
+                    input
+                        .windows(2)
+                        .rposition(|bytes| bytes == b"\xc3\xa9")
+                        .unwrap(),
+                    SyntaxKind::QuotedString,
+                ),
+            ] {
+                for offset in position..position + 2 {
+                    assert_eq!(
+                        tree.token_at(ByteOffset::new(offset as u32))
+                            .unwrap()
+                            .kind(),
+                        expected_kind
+                    );
+                }
+            }
+            assert_eq!(
+                tree.token_at(ByteOffset::new((input.len() - 1) as u32))
+                    .unwrap()
+                    .kind(),
+                SyntaxKind::ErrorToken
+            );
+            assert_eq!(
+                tree.token_at(ByteOffset::new(input.len() as u32))
+                    .unwrap()
+                    .kind(),
+                SyntaxKind::EofToken
+            );
+            assert!(
+                tree.token_at(ByteOffset::new(input.len() as u32 + 1))
+                    .is_none()
+            );
+            assert!(tree.token_at(ByteOffset::new(u32::MAX)).is_none());
+        });
+    }
+
+    #[test]
+    fn empty_input_token_lookup_returns_only_eof_at_document_end() {
+        with_document(b"", |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty());
+            let eof = tree.token_at(ByteOffset::new(0)).unwrap();
+            assert_eq!(eof.kind(), SyntaxKind::EofToken);
+            assert_eq!(eof.range().byte_range(), 0..0);
+            assert_eq!(eof.text(), b"");
+            assert!(tree.token_at(ByteOffset::new(1)).is_none());
         });
     }
 

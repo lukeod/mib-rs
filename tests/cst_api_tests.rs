@@ -4,7 +4,7 @@ use mib_rs::compile::{
     CstNode, Definition, Module, SourceFile, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken,
     SyntaxTree, parse, parse_with_config,
 };
-use mib_rs::{DiagnosticConfig, SourceCandidate, SourceOrigin};
+use mib_rs::{ByteOffset, DiagnosticConfig, SourceCandidate, SourceOrigin};
 
 const SOURCE: &[u8] =
     b"PUBLIC-MIB DEFINITIONS ::= BEGIN\nvalue OBJECT IDENTIFIER ::= { 1 3 6 }\nEND\n";
@@ -66,6 +66,14 @@ fn documented_compile_reexports_form_a_usable_public_api() {
         .find(|token| token.kind() == SyntaxKind::UppercaseIdent)
         .unwrap();
     assert_eq!(token_text(name), b"PUBLIC-MIB");
+    assert_eq!(
+        token_text(tree.token_at(ByteOffset::new(0)).unwrap()),
+        b"PUBLIC-MIB"
+    );
+    assert_eq!(
+        tree.token_at(tree.document().len()).unwrap().kind(),
+        SyntaxKind::EofToken
+    );
 }
 
 #[test]
