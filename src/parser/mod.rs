@@ -318,32 +318,41 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(Some(self.parse_quoted_string()?))
     }
 
-    fn parse_u32(&mut self, span: SourceRange, context: &str) -> Result<u32, Diagnostic> {
+    /// Convert an unsigned integral token without turning conversion failure
+    /// into a structural parse failure.
+    ///
+    /// Zero is the retained placeholder for an out-of-range value. The exact
+    /// token range remains available through the emitted `invalid-u32`
+    /// diagnostic, while retaining a plain `u32` keeps the AST and lowering
+    /// representation aligned with valid integral values.
+    fn parse_u32(&mut self, span: SourceRange, context: &str) -> u32 {
         let text = self.text(span);
         match text.parse::<u32>() {
-            Ok(v) => Ok(v),
+            Ok(v) => v,
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidU32,
                     span,
                     format!("invalid {} (not a valid u32)", context),
                 );
-                Err(self.make_error(format!("invalid {} (not a valid u32)", context)))
+                0
             }
         }
     }
 
-    fn parse_i64(&mut self, span: SourceRange, context: &str) -> Result<i64, Diagnostic> {
+    /// Convert a signed integral token, retaining zero after conversion
+    /// failure so the containing definition can still be represented.
+    fn parse_i64(&mut self, span: SourceRange, context: &str) -> i64 {
         let text = self.text(span);
         match text.parse::<i64>() {
-            Ok(v) => Ok(v),
+            Ok(v) => v,
             Err(_) => {
                 self.emit_diagnostic(
                     DiagCode::InvalidI64,
                     span,
                     format!("invalid {} (not a valid i64)", context),
                 );
-                Err(self.make_error(format!("invalid {} (not a valid i64)", context)))
+                0
             }
         }
     }
@@ -1005,7 +1014,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         // ::= number
         self.expect(SyntaxKind::ColonColonEqual)?;
         let num_token = self.expect(SyntaxKind::Number)?;
-        let trap_number = self.parse_u32(num_token.span, "trap number")?;
+        let trap_number = self.parse_u32(num_token.span, "trap number");
 
         let span = cover(start, self.last_span);
         Ok(Definition::TrapType(TrapTypeDef {
@@ -1722,7 +1731,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
             }
             SyntaxKind::NegativeNumber => {
                 let token = self.advance();
-                let v = self.parse_i64(token.span, "DEFVAL number")?;
+                let v = self.parse_i64(token.span, "DEFVAL number");
                 Ok(DefVal::Integer(v))
             }
             SyntaxKind::QuotedString => {
@@ -1849,7 +1858,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         let first_component = if self.check(SyntaxKind::LParen) {
             self.advance();
             let num_token = self.expect(SyntaxKind::Number)?;
-            let num = self.parse_u32(num_token.span, "OID component")?;
+            let num = self.parse_u32(num_token.span, "OID component");
             self.expect(SyntaxKind::RParen)?;
             OidComponent::NamedNumber {
                 span: cover(first.span, self.last_span),
@@ -1889,7 +1898,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 || kind == SyntaxKind::LowercaseIdent
                 || kind == SyntaxKind::UppercaseIdent
             {
-                let comp = self.parse_oid_component()?;
+                let comp = self.parse_oid_component("OID component number")?;
                 components.push(comp);
             } else {
                 break;
@@ -2255,10 +2264,10 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
             let value = if self.check(SyntaxKind::NegativeNumber) {
                 let num_token = self.advance();
-                self.parse_i64(num_token.span, "named number")?
+                self.parse_i64(num_token.span, "named number")
             } else {
                 let num_token = self.expect(SyntaxKind::Number)?;
-                self.parse_i64(num_token.span, "named number")?
+                self.parse_i64(num_token.span, "named number")
             };
 
             self.expect(SyntaxKind::RParen)?;
@@ -2319,7 +2328,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
 
         let mut components = Vec::new();
         while !self.check(SyntaxKind::RBrace) && !self.is_eof() {
-            let comp = self.parse_oid_component()?;
+            let comp = self.parse_oid_component("OID component")?;
             components.push(comp);
         }
 
@@ -2329,11 +2338,14 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
         Ok(OidAssignment { components, span })
     }
 
-    fn parse_oid_component(&mut self) -> Result<OidComponent, Diagnostic> {
+    fn parse_oid_component(
+        &mut self,
+        named_number_context: &str,
+    ) -> Result<OidComponent, Diagnostic> {
         match self.peek().kind {
             SyntaxKind::Number => {
                 let token = self.advance();
-                let value = self.parse_u32(token.span, "OID component")?;
+                let value = self.parse_u32(token.span, "OID component");
                 Ok(OidComponent::Number {
                     value,
                     span: token.span,
@@ -2355,7 +2367,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                         if self.check(SyntaxKind::LParen) {
                             self.advance();
                             let num_token = self.expect(SyntaxKind::Number)?;
-                            let num = self.parse_u32(num_token.span, "OID component number")?;
+                            let num = self.parse_u32(num_token.span, named_number_context);
                             self.expect(SyntaxKind::RParen)?;
                             let span = cover(ident.span, self.last_span);
                             return Ok(OidComponent::QualifiedNamedNumber {
@@ -2379,7 +2391,7 @@ impl<'src, 'cfg> Parser<'src, 'cfg> {
                 if self.check(SyntaxKind::LParen) {
                     self.advance();
                     let num_token = self.expect(SyntaxKind::Number)?;
-                    let num = self.parse_u32(num_token.span, "OID component number")?;
+                    let num = self.parse_u32(num_token.span, named_number_context);
                     self.expect(SyntaxKind::RParen)?;
                     let span = cover(ident.span, self.last_span);
                     return Ok(OidComponent::NamedNumber {
@@ -2439,6 +2451,7 @@ pub fn parse(document: &SourceDocument, diag_config: &DiagnosticConfig) -> Vec<M
 mod tests {
     use super::*;
     use crate::source::{SourceOrigin, SourceSet};
+    use crate::types::Severity;
     use std::sync::Arc;
 
     fn parse_with_config(input: &str, config: &DiagnosticConfig) -> Vec<Module> {
@@ -3834,5 +3847,394 @@ END
             }
             other => panic!("expected ObjectType, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn integral_overflow_retains_zero_and_following_definitions() {
+        let input = r#"OVERFLOW-MIB DEFINITIONS ::= BEGIN
+OverflowEnum ::= INTEGER { high(9223372036854775808), low(-9223372036854775809), ok(1) }
+OverflowBits ::= BITS { high(9223372036854775809), low(-9223372036854775810), ok(2) }
+overflowOid OBJECT IDENTIFIER ::= { 4294967296 named(4294967297) REMOTE-MIB.qualified(4294967298) }
+positiveDefault OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "positive"
+    DEFVAL { 18446744073709551616 }
+    ::= { overflowOid 1 }
+validUnsignedDefault OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "valid unsigned"
+    DEFVAL { 18446744073709551615 }
+    ::= { overflowOid 4 }
+negativeDefault OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "negative"
+    DEFVAL { -9223372036854775811 }
+    ::= { overflowOid 2 }
+oidDefault OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "OID"
+    DEFVAL { { first(4294967299) 4294967300 REMOTE-MIB.qualified(4294967301) later(4294967302) } }
+    ::= { overflowOid 3 }
+numericFirstDefault OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "numeric-first OID"
+    DEFVAL { { 4294967304 later(4294967305) } }
+    ::= { overflowOid 5 }
+overflowTrap TRAP-TYPE
+    ENTERPRISE overflowOid
+    DESCRIPTION "trap"
+    ::= 4294967303
+after OBJECT IDENTIFIER ::= { overflowOid 7 }
+END
+"#;
+
+        let modules = parse_strict(input);
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.body.len(), 10);
+        assert!(
+            module
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != DiagCode::ParseError)
+        );
+
+        let definition = |name: &str| {
+            module
+                .body
+                .iter()
+                .find(|definition| definition.name().is_some_and(|ident| ident.name == name))
+                .unwrap_or_else(|| panic!("missing definition {name}"))
+        };
+
+        for name in ["OverflowEnum", "OverflowBits"] {
+            let numbers = match definition(name) {
+                Definition::TypeAssignment(definition) => match &definition.syntax {
+                    TypeSyntax::IntegerEnum { named_numbers, .. }
+                    | TypeSyntax::Bits {
+                        named_bits: named_numbers,
+                        ..
+                    } => named_numbers,
+                    other => panic!("expected named-number syntax, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            };
+            assert_eq!(numbers.len(), 3);
+            assert_eq!(numbers[0].value, 0);
+            assert_eq!(numbers[1].value, 0);
+            assert_eq!(numbers[2].value, if name == "OverflowEnum" { 1 } else { 2 });
+        }
+
+        let oid = match definition("overflowOid") {
+            Definition::ValueAssignment(definition) => &definition.oid.components,
+            other => panic!("expected value assignment, got {other:?}"),
+        };
+        assert!(matches!(oid[0], OidComponent::Number { value: 0, .. }));
+        assert!(matches!(oid[1], OidComponent::NamedNumber { num: 0, .. }));
+        assert!(matches!(
+            oid[2],
+            OidComponent::QualifiedNamedNumber { num: 0, .. }
+        ));
+
+        for name in ["positiveDefault", "negativeDefault"] {
+            let defval = match definition(name) {
+                Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+                other => panic!("expected object type, got {other:?}"),
+            };
+            assert_eq!(defval, &DefVal::Integer(0));
+        }
+        let unsigned_defval = match definition("validUnsignedDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        assert_eq!(unsigned_defval, &DefVal::Unsigned(u64::MAX));
+
+        let oid_defval = match definition("oidDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        let components = match oid_defval {
+            DefVal::ObjectIdentifier { components, .. } => components,
+            other => panic!("expected OID DEFVAL, got {other:?}"),
+        };
+        assert!(matches!(
+            components.as_slice(),
+            [
+                OidComponent::NamedNumber { num: 0, .. },
+                OidComponent::Number { value: 0, .. },
+                OidComponent::QualifiedNamedNumber { num: 0, .. },
+                OidComponent::NamedNumber { num: 0, .. }
+            ]
+        ));
+
+        let numeric_first_defval = match definition("numericFirstDefault") {
+            Definition::ObjectType(definition) => &definition.defval.as_ref().unwrap().value,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        assert!(matches!(
+            numeric_first_defval,
+            DefVal::ObjectIdentifier { components, .. }
+                if matches!(
+                    components.as_slice(),
+                    [
+                        OidComponent::Number { value: 0, .. },
+                        OidComponent::NamedNumber { num: 0, .. }
+                    ]
+                )
+        ));
+
+        match definition("overflowTrap") {
+            Definition::TrapType(definition) => assert_eq!(definition.trap_number, 0),
+            other => panic!("expected trap type, got {other:?}"),
+        }
+        assert!(matches!(
+            definition("after"),
+            Definition::ValueAssignment(_)
+        ));
+
+        let invalid_i64: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidI64)
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                &input[range]
+            })
+            .collect();
+        assert_eq!(
+            invalid_i64,
+            [
+                "9223372036854775808",
+                "-9223372036854775809",
+                "9223372036854775809",
+                "-9223372036854775810",
+                "18446744073709551616",
+                "-9223372036854775811",
+            ]
+        );
+        let valid_unsigned_start = input.find("18446744073709551615").unwrap();
+        assert!(module.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code != DiagCode::InvalidI64
+                || diagnostic.range.unwrap().byte_range()
+                    != (valid_unsigned_start..valid_unsigned_start + 20)
+        }));
+        let invalid_u32: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidU32)
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                &input[range]
+            })
+            .collect();
+        assert_eq!(
+            invalid_u32,
+            [
+                "4294967296",
+                "4294967297",
+                "4294967298",
+                "4294967299",
+                "4294967300",
+                "4294967301",
+                "4294967302",
+                "4294967304",
+                "4294967305",
+                "4294967303",
+            ]
+        );
+
+        let overflow_diagnostics: Vec<_> = module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+            })
+            .map(|diagnostic| {
+                let range = diagnostic.range.unwrap().byte_range();
+                (
+                    diagnostic.code,
+                    &input[range],
+                    diagnostic.message.as_str(),
+                    diagnostic.severity,
+                )
+            })
+            .collect();
+        assert_eq!(
+            overflow_diagnostics,
+            [
+                (
+                    DiagCode::InvalidI64,
+                    "9223372036854775808",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775809",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "9223372036854775809",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775810",
+                    "invalid named number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967296",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967297",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967298",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "18446744073709551616",
+                    "invalid DEFVAL number",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidI64,
+                    "-9223372036854775811",
+                    "invalid DEFVAL number (not a valid i64)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967299",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967300",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967301",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967302",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967304",
+                    "invalid OID component (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967305",
+                    "invalid OID component number (not a valid u32)",
+                    Severity::Error
+                ),
+                (
+                    DiagCode::InvalidU32,
+                    "4294967303",
+                    "invalid trap number (not a valid u32)",
+                    Severity::Error
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn integral_overflow_recovery_respects_diagnostic_policy() {
+        let input = r#"POLICY-MIB DEFINITIONS ::= BEGIN
+PolicyEnum ::= INTEGER { huge(9223372036854775808) }
+policyOid OBJECT IDENTIFIER ::= { root 4294967296 }
+after OBJECT IDENTIFIER ::= { root 1 }
+END
+"#;
+
+        let assert_recovery = |module: &Module| {
+            assert_eq!(module.body.len(), 3);
+            match &module.body[0] {
+                Definition::TypeAssignment(definition) => match &definition.syntax {
+                    TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                        assert_eq!(named_numbers[0].value, 0);
+                    }
+                    other => panic!("expected enum, got {other:?}"),
+                },
+                other => panic!("expected type assignment, got {other:?}"),
+            }
+            match &module.body[1] {
+                Definition::ValueAssignment(definition) => assert!(matches!(
+                    definition.oid.components.as_slice(),
+                    [OidComponent::Name(_), OidComponent::Number { value: 0, .. }]
+                )),
+                other => panic!("expected value assignment, got {other:?}"),
+            }
+            assert_eq!(module.body[2].name().unwrap().name, "after");
+        };
+
+        let mut ignored = DiagnosticConfig::verbose();
+        ignored
+            .ignore
+            .extend(["invalid-i64".to_string(), "invalid-u32".to_string()]);
+        let ignored_modules = parse_with_config(input, &ignored);
+        assert_recovery(&ignored_modules[0]);
+        assert!(ignored_modules[0].diagnostics.iter().all(|diagnostic| {
+            !matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+        }));
+
+        let mut overridden = DiagnosticConfig::verbose();
+        overridden
+            .overrides
+            .insert(DiagCode::InvalidI64, Severity::Minor);
+        overridden
+            .overrides
+            .insert(DiagCode::InvalidU32, Severity::Warning);
+        let overridden_modules = parse_with_config(input, &overridden);
+        assert_recovery(&overridden_modules[0]);
+        let diagnostics: Vec<_> = overridden_modules[0]
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(diagnostic.code, DiagCode::InvalidI64 | DiagCode::InvalidU32)
+            })
+            .map(|diagnostic| (diagnostic.code, diagnostic.severity))
+            .collect();
+        assert_eq!(
+            diagnostics,
+            [
+                (DiagCode::InvalidI64, Severity::Minor),
+                (DiagCode::InvalidU32, Severity::Warning),
+            ]
+        );
     }
 }

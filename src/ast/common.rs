@@ -36,6 +36,9 @@ pub struct NamedNumber {
     /// The label, e.g. `up`.
     pub name: Ident,
     /// The numeric value, e.g. `1`.
+    ///
+    /// An overflowing source literal is retained as zero and accompanied by
+    /// an `invalid-i64` parser diagnostic over the literal.
     pub value: i64,
     /// Source location covering `name(value)`.
     pub span: SourceRange,

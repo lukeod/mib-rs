@@ -7,7 +7,7 @@ use mib_rs::{SourceOrigin, SourceSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{collect_mib_files, corpus_dir};
+use common::{collect_mib_files, corpus_dir, problems_dir};
 
 fn lower_source(source: &[u8], config: &DiagnosticConfig) -> Vec<mib_rs::ir::Module> {
     let mut sources = SourceSet::new();
@@ -75,6 +75,138 @@ fn primary_corpus_lowering_no_panics() {
         total_modules,
         total_defs,
         files.len()
+    );
+}
+
+#[test]
+fn integral_overflow_fixture_lowers_with_zero_placeholders() {
+    let path = problems_dir().join("PROBLEM-INTEGRAL-OVERFLOW-MIB.mib");
+    let module = parse_and_lower(&path).into_iter().next().unwrap();
+    assert_eq!(module.name, "PROBLEM-INTEGRAL-OVERFLOW-MIB");
+
+    let definition = |name: &str| {
+        module
+            .definitions
+            .iter()
+            .find(|definition| definition.name() == name)
+            .unwrap_or_else(|| panic!("missing lowered definition {name}"))
+    };
+
+    for name in ["ProblemOverflowEnum", "ProblemOverflowBits"] {
+        let values: Vec<i64> = match definition(name) {
+            mib_rs::ir::Definition::TypeDef(definition) => match &definition.syntax {
+                mib_rs::ir::TypeSyntax::IntegerEnum { named_numbers, .. } => {
+                    named_numbers.iter().map(|value| value.value).collect()
+                }
+                mib_rs::ir::TypeSyntax::Bits { named_bits, .. } => named_bits
+                    .iter()
+                    .map(|value| i64::from(value.position))
+                    .collect(),
+                other => panic!("expected named-number syntax, got {other:?}"),
+            },
+            other => panic!("expected type definition, got {other:?}"),
+        };
+        assert_eq!(
+            values,
+            [0, 0, if name == "ProblemOverflowEnum" { 1 } else { 2 }]
+        );
+    }
+
+    for (name, expected_kind) in [
+        ("problemOverflowPlain", "plain"),
+        ("problemOverflowNamed", "named"),
+        ("problemOverflowQualified", "qualified"),
+    ] {
+        let components = definition(name).oid().unwrap().components.as_slice();
+        let last = components.last().unwrap();
+        match (expected_kind, last) {
+            ("plain", mib_rs::ir::OidComponent::Number { value: 0, .. })
+            | ("named", mib_rs::ir::OidComponent::NamedNumber { number: 0, .. })
+            | ("qualified", mib_rs::ir::OidComponent::QualifiedNamedNumber { number: 0, .. }) => {}
+            _ => panic!("unexpected lowered OID component for {name}: {last:?}"),
+        }
+    }
+
+    for name in [
+        "problemOverflowPositiveDefault",
+        "problemOverflowNegativeDefault",
+    ] {
+        match definition(name) {
+            mib_rs::ir::Definition::ObjectType(definition) => assert!(matches!(
+                definition.defval,
+                Some(mib_rs::ir::DefVal::Integer(0))
+            )),
+            other => panic!("expected object type, got {other:?}"),
+        }
+    }
+    match definition("problemValidUnsignedDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => assert!(matches!(
+            definition.defval,
+            Some(mib_rs::ir::DefVal::Unsigned(u64::MAX))
+        )),
+        other => panic!("expected object type, got {other:?}"),
+    }
+
+    let oid_default = match definition("problemOverflowOidDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => definition.defval.as_ref().unwrap(),
+        other => panic!("expected object type, got {other:?}"),
+    };
+    assert!(matches!(
+        oid_default,
+        mib_rs::ir::DefVal::OidValue { components }
+            if matches!(
+                components.as_slice(),
+                [
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. },
+                    mib_rs::ir::OidComponent::Number { value: 0, .. },
+                    mib_rs::ir::OidComponent::QualifiedNamedNumber { number: 0, .. },
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. }
+                ]
+            )
+    ));
+
+    let numeric_first_oid_default = match definition("problemOverflowNumericFirstOidDefault") {
+        mib_rs::ir::Definition::ObjectType(definition) => definition.defval.as_ref().unwrap(),
+        other => panic!("expected object type, got {other:?}"),
+    };
+    assert!(matches!(
+        numeric_first_oid_default,
+        mib_rs::ir::DefVal::OidValue { components }
+            if matches!(
+                components.as_slice(),
+                [
+                    mib_rs::ir::OidComponent::Number { value: 0, .. },
+                    mib_rs::ir::OidComponent::NamedNumber { number: 0, .. }
+                ]
+            )
+    ));
+
+    match definition("problemOverflowTrap") {
+        mib_rs::ir::Definition::Notification(definition) => {
+            assert_eq!(definition.trap_info.as_ref().unwrap().trap_number, 0);
+        }
+        other => panic!("expected notification, got {other:?}"),
+    }
+    assert!(matches!(
+        definition("problemAfterOverflow"),
+        mib_rs::ir::Definition::ValueAssignment(_)
+    ));
+
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidI64)
+            .count(),
+        6
+    );
+    assert_eq!(
+        module
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::InvalidU32)
+            .count(),
+        10
     );
 }
 

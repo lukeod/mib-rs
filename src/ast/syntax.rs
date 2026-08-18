@@ -213,8 +213,12 @@ pub struct DefValClause {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DefVal {
     /// Signed integer literal, e.g. `DEFVAL { -1 }`.
+    /// Overflowing numeric literals are retained as zero with an
+    /// `invalid-i64` parser diagnostic.
     Integer(i64),
     /// Unsigned integer literal, e.g. `DEFVAL { 0 }`.
+    /// Values above `u64::MAX` use the signed zero recovery variant and emit
+    /// an `invalid-i64` parser diagnostic.
     Unsigned(u64),
     /// Quoted string literal, e.g. `DEFVAL { "default" }`.
     String(QuotedString),

@@ -21,6 +21,8 @@ pub struct OidAssignment {
 ///
 /// OID values are written as a sequence of these components between
 /// braces, mixing named references and numeric sub-identifiers.
+/// Overflowing numeric sub-identifiers are retained as zero and accompanied
+/// by an `invalid-u32` parser diagnostic over the literal.
 #[derive(Debug, PartialEq, Eq)]
 pub enum OidComponent {
     /// Named reference, e.g. `internet`, `ifEntry`.

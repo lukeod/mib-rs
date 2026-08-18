@@ -185,7 +185,8 @@ pub struct TrapTypeDef {
     pub description: Option<QuotedString>,
     /// Optional REFERENCE clause.
     pub reference: Option<QuotedString>,
-    /// Numeric trap value from the `::= N` assignment.
+    /// Numeric trap value from the `::= N` assignment. An overflowing source
+    /// literal is retained as zero with an `invalid-u32` parser diagnostic.
     pub trap_number: u32,
 }
 
