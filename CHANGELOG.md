@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Offer project-authored code under either the MIT or Apache-2.0 license at the user's option
 - Classify unresolved and wrong-kind `OBJECT-GROUP` and `NOTIFICATION-GROUP` members as minor diagnostics
 
 ### Fixed

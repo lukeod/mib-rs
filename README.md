@@ -277,7 +277,8 @@ This crate requires Rust 1.88 or later. The MSRV may be increased in minor relea
 
 ## License
 
-Licensed under the [MIT license](LICENSE).
+Licensed under either the [Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option.
 
 ## Contributing
 
