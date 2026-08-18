@@ -1073,7 +1073,7 @@ fn lower_variation(v: &ast::Variation, ctx: &mut LoweringContext<'_>) -> ir::Var
             .as_ref()
             .map(|s| lower_type_syntax(&s.syntax, ctx)),
         access: v.access.as_ref().map(|a| a.value),
-        creation_requires: ident_names(&v.creation_requires),
+        creation_requires: name_refs(&v.creation_requires),
         defval: lower_optional_defval(&v.defval, ctx),
         description: v.description.value.clone(),
         range: v.span,
@@ -1608,6 +1608,79 @@ END
             .unwrap()
             .line();
         assert_ne!(first_line, second_line);
+    }
+
+    #[test]
+    fn capabilities_creation_requires_retain_identifier_ranges() {
+        let source = br#"CAPABILITIES-RANGES-MIB DEFINITIONS ::= BEGIN
+testCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Test capabilities."
+    SUPPORTS TARGET-MIB
+        INCLUDES { testGroup }
+        VARIATION targetObject
+            CREATION-REQUIRES {
+                firstObject,
+                secondObject,
+                firstObject
+            }
+            DESCRIPTION "Test variation."
+    ::= { 1 3 6 1 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("creation-requires-ranges"),
+                "creation-requires-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::AgentCapabilities(capabilities) = &lowered.definitions[0] else {
+            panic!("expected agent capabilities");
+        };
+        let creation_requires = &capabilities.supports[0].variations[0].creation_requires;
+        assert_eq!(creation_requires.len(), 3);
+        assert_eq!(creation_requires[0].name, "firstObject");
+        assert_eq!(creation_requires[1].name, "secondObject");
+        assert_eq!(creation_requires[2].name, "firstObject");
+        for reference in creation_requires {
+            assert_eq!(
+                document.slice(reference.range).unwrap(),
+                reference.name.as_bytes()
+            );
+        }
+        assert_ne!(creation_requires[0].range, creation_requires[2].range);
+        assert_eq!(
+            document
+                .byte_position(creation_requires[0].range.start())
+                .unwrap()
+                .line(),
+            9
+        );
+        assert_eq!(
+            document
+                .byte_position(creation_requires[1].range.start())
+                .unwrap()
+                .line(),
+            10
+        );
+        assert_eq!(
+            document
+                .byte_position(creation_requires[2].range.start())
+                .unwrap()
+                .line(),
+            11
+        );
     }
 
     #[test]

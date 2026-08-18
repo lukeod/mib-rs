@@ -1397,7 +1397,7 @@ struct VariationData {
     access: Option<Access>,
     description: String,
     range: SourceRange,
-    creation_requires: Vec<String>,
+    creation_requires: Vec<ir::NameRef>,
     defval: Option<ir::syntax::DefVal>,
 }
 
@@ -1535,7 +1535,11 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         syntax,
                         write_syntax,
                         access: var.access,
-                        creation_requires: var.creation_requires.clone(),
+                        creation_requires: var
+                            .creation_requires
+                            .iter()
+                            .map(|reference| reference.name.clone())
+                            .collect(),
                         def_val,
                         description: var.description.clone(),
                         range: var.range,

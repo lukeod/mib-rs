@@ -94,6 +94,15 @@ existingNotificationGroup NOTIFICATION-GROUP
     STATUS current
     DESCRIPTION "Existing notification group."
     ::= { capabilitiesTarget 4 }
+
+sharedOidObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Object sharing an OID with a plain node."
+    ::= { capabilitiesTarget 5 }
+
+sharedOidNode OBJECT IDENTIFIER ::= { capabilitiesTarget 5 }
 END
 "#[..],
         ),
@@ -128,8 +137,12 @@ referenceCapabilities AGENT-CAPABILITIES
         }
         VARIATION existingObject
             CREATION-REQUIRES {
-                existingObject, existingObject,
-                missingObject, missingObject
+                existingObject,
+                existingObject,
+                missingObject,
+                missingObject,
+                existingGroup,
+                sharedOidNode
             }
             DESCRIPTION "Object reference checks."
     ::= { capabilitiesReferences 1 }
@@ -477,6 +490,7 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
 #[test]
 fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurrence() {
     let mib = load_capabilities_reference_fixture();
+    let report = mib.diagnostic_report();
 
     let duplicate = diagnostics_for(&mib, DiagCode::CreationRequiresDuplicate);
     assert_eq!(duplicate.len(), 2);
@@ -496,12 +510,123 @@ fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurren
     }));
 
     let unresolved = diagnostics_for(&mib, DiagCode::CreationRequiresUnresolved);
-    assert_eq!(unresolved.len(), 2);
+    assert_eq!(unresolved.len(), 4);
     assert!(unresolved.iter().all(|diagnostic| {
         diagnostic.severity == Severity::Warning
-            && diagnostic.message.contains("missingObject")
             && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
     }));
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("missingObject"))
+            .count(),
+        2
+    );
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("existingGroup")
+            && diagnostic.message.contains("not an OBJECT-TYPE")
+    }));
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("sharedOidNode")
+            && diagnostic.message.contains("not an OBJECT-TYPE")
+    }));
+
+    let duplicate_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::CreationRequiresDuplicate)
+        .collect();
+    assert_eq!(duplicate_entries.len(), 2);
+    assert_eq!(
+        duplicate_entries[0].slice().unwrap(),
+        Some(&b"existingObject"[..])
+    );
+    assert_eq!(
+        duplicate_entries[1].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    let (existing_duplicate_start, _) = duplicate_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("resolved duplicate should have a range");
+    let (missing_duplicate_start, _) = duplicate_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("unresolved duplicate should have a range");
+    assert_eq!(existing_duplicate_start.line(), 30);
+    assert_eq!(missing_duplicate_start.line(), 32);
+
+    let unresolved_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::CreationRequiresUnresolved)
+        .collect();
+    assert_eq!(unresolved_entries.len(), 4);
+    assert_eq!(
+        unresolved_entries[0].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[1].slice().unwrap(),
+        Some(&b"missingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[2].slice().unwrap(),
+        Some(&b"existingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[3].slice().unwrap(),
+        Some(&b"sharedOidNode"[..])
+    );
+    assert_ne!(
+        unresolved_entries[0].diagnostic().range,
+        unresolved_entries[1].diagnostic().range
+    );
+    let (first_unresolved_start, _) = unresolved_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("first unresolved reference should have a range");
+    let (second_unresolved_start, _) = unresolved_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("second unresolved reference should have a range");
+    let (wrong_kind_start, _) = unresolved_entries[2]
+        .byte_positions()
+        .unwrap()
+        .expect("wrong-kind reference should have a range");
+    let (shared_oid_wrong_kind_start, _) = unresolved_entries[3]
+        .byte_positions()
+        .unwrap()
+        .expect("shared-OID wrong-kind reference should have a range");
+    assert_eq!(first_unresolved_start.line(), 31);
+    assert_eq!(second_unresolved_start.line(), 32);
+    assert_eq!(wrong_kind_start.line(), 33);
+    assert_eq!(shared_oid_wrong_kind_start.line(), 34);
+
+    let target_module = mib
+        .module_by_name("CAPABILITIES-TARGET-MIB")
+        .expect("target module should resolve");
+    let target_module = mib.raw().module(target_module);
+    let shared_node = target_module
+        .node_by_name("sharedOidNode")
+        .expect("shared OID node should resolve");
+    let shared_object = target_module
+        .object_by_name("sharedOidObject")
+        .expect("shared OID object should resolve");
+    assert_eq!(mib.raw().object(shared_object).node(), Some(shared_node));
+
+    let capability = mib
+        .capability("referenceCapabilities")
+        .expect("capability should resolve");
+    assert_eq!(
+        capability.supports()[0].object_variations[0].creation_requires,
+        [
+            "existingObject",
+            "existingObject",
+            "missingObject",
+            "missingObject",
+            "existingGroup",
+            "sharedOidNode",
+        ]
+    );
 }
 
 // --- Basic loading tests ---

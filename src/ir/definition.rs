@@ -445,7 +445,7 @@ pub struct Variation {
     /// Restricted access level, if specified.
     pub access: Option<Access>,
     /// Objects required for row creation.
-    pub creation_requires: Vec<String>,
+    pub creation_requires: Vec<NameRef>,
     /// Default value override, if specified.
     pub defval: Option<DefVal>,
     /// `DESCRIPTION` clause text.

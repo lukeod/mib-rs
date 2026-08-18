@@ -3311,16 +3311,62 @@ fn lookup_compliance_member(
     module_name: &str,
     name: &str,
 ) -> Option<NodeId> {
+    lookup_compliance_member_with_module(ctx, comp_ir, module_name, name)
+        .map(|(_, node_id)| node_id)
+}
+
+/// Look up a compliance member and retain the module that declared the matched
+/// name. The module identity is needed when several declared names share one
+/// OID node but represent different entity kinds.
+fn lookup_compliance_member_with_module(
+    ctx: &ResolverContext,
+    comp_ir: IrModuleId,
+    module_name: &str,
+    name: &str,
+) -> Option<(IrModuleId, NodeId)> {
     if !module_name.is_empty()
-        && let Some(n) = ctx.lookup_node_in_module(module_name, name)
+        && let Some(candidates) = ctx.module_index.get(module_name)
     {
-        return Some(n);
+        for &candidate in candidates {
+            if let Some(&node_id) = ctx
+                .module_symbol_to_node
+                .get(&candidate)
+                .and_then(|symbols| symbols.get(name))
+            {
+                return Some((candidate, node_id));
+            }
+        }
     }
-    if let Some((n, _)) = ctx.lookup_node_for_module(comp_ir, name) {
-        return Some(n);
+
+    if let Some(&node_id) = ctx
+        .module_symbol_to_node
+        .get(&comp_ir)
+        .and_then(|symbols| symbols.get(name))
+    {
+        return Some((comp_ir, node_id));
     }
+    if let Some(&source_ir) = ctx
+        .module_imports
+        .get(&comp_ir)
+        .and_then(|imports| imports.get(name))
+        && let Some(&node_id) = ctx
+            .module_symbol_to_node
+            .get(&source_ir)
+            .and_then(|symbols| symbols.get(name))
+    {
+        return Some((source_ir, node_id));
+    }
+
     if ctx.strictness.allow_global_fallbacks() {
-        return ctx.lookup_node_global(name);
+        for (candidate, _) in ctx.all_modules() {
+            if let Some(&node_id) = ctx
+                .module_symbol_to_node
+                .get(&candidate)
+                .and_then(|symbols| symbols.get(name))
+            {
+                return Some((candidate, node_id));
+            }
+        }
     }
     None
 }
@@ -3485,31 +3531,57 @@ fn check_creation_requires(ctx: &mut ResolverContext) {
             for supports in &capabilities.supports {
                 for variation in &supports.variations {
                     let mut seen = HashSet::with_capacity(variation.creation_requires.len());
-                    for name in &variation.creation_requires {
-                        if !seen.insert(name.as_str()) {
+                    for reference in &variation.creation_requires {
+                        if !seen.insert(reference.name.as_str()) {
                             diags.push(Diag {
                                 code: DiagCode::CreationRequiresDuplicate,
                                 ir_id: Some(ir_id),
-                                span: Some(variation.range),
+                                span: Some(reference.range),
                                 message: format!(
                                     "duplicate CREATION-REQUIRES {:?} in VARIATION {}",
-                                    name, variation.name
+                                    reference.name, variation.name
                                 ),
                             });
                         }
 
-                        if lookup_compliance_member(ctx, ir_id, &supports.module_name, name)
-                            .is_none()
-                        {
-                            diags.push(Diag {
+                        match lookup_compliance_member_with_module(
+                            ctx,
+                            ir_id,
+                            &supports.module_name,
+                            &reference.name,
+                        ) {
+                            None => diags.push(Diag {
                                 code: DiagCode::CreationRequiresUnresolved,
                                 ir_id: Some(ir_id),
-                                span: Some(variation.range),
+                                span: Some(reference.range),
                                 message: format!(
                                     "CREATION-REQUIRES {:?} not found in module {:?}",
-                                    name, supports.module_name
+                                    reference.name, supports.module_name
                                 ),
-                            });
+                            }),
+                            Some((declaring_ir, _))
+                                if ctx
+                                    .module_to_resolved
+                                    .get(&declaring_ir)
+                                    .and_then(|&module_id| {
+                                        ctx.mib
+                                            .raw()
+                                            .module(module_id)
+                                            .object_by_name(&reference.name)
+                                    })
+                                    .is_none() =>
+                            {
+                                diags.push(Diag {
+                                    code: DiagCode::CreationRequiresUnresolved,
+                                    ir_id: Some(ir_id),
+                                    span: Some(reference.range),
+                                    message: format!(
+                                        "CREATION-REQUIRES {:?} in module {:?} is not an OBJECT-TYPE",
+                                        reference.name, supports.module_name
+                                    ),
+                                });
+                            }
+                            Some(_) => {}
                         }
                     }
                 }
