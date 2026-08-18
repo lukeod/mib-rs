@@ -571,8 +571,9 @@ pub struct ObjectVariation {
     pub write_syntax: Option<SyntaxConstraints>,
     /// Overridden access level, if any.
     pub access: Option<Access>,
-    /// Objects required for row creation.
-    pub creation_requires: Vec<String>,
+    /// Objects required for row creation, with their exact resolved defining
+    /// module and OID when available.
+    pub creation_requires: Vec<OidRef>,
     /// Implementation-specific default value, if any.
     pub def_val: Option<DefVal>,
     /// Description of this variation.
@@ -684,8 +685,11 @@ pub struct UnresolvedRef {
     pub reason: String,
 }
 
-/// A symbolic name referenced in an OID value assignment (e.g. `enterprises` in
-/// `{ enterprises 9 }`).
+/// A symbolic reference to an OID-bearing definition.
+///
+/// Used both for OID value-assignment components (for example `enterprises` in
+/// `{ enterprises 9 }`) and for resolved conformance references that need to
+/// retain exact defining-module provenance.
 #[derive(Debug, Clone)]
 pub struct OidRef {
     /// The symbolic name referenced in the OID assignment.

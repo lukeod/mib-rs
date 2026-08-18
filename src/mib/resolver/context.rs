@@ -129,6 +129,13 @@ pub(super) struct ResolverContext {
     pub diag_config: DiagnosticConfig,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ConformanceNode {
+    pub module: IrModuleId,
+    pub node: NodeId,
+    pub used_import: bool,
+}
+
 /// Tracks an unresolved reference during resolution, before conversion to the
 /// public [`UnresolvedRef`] type.
 pub(super) struct UnresolvedTracking {
@@ -340,6 +347,99 @@ impl ResolverContext {
             range,
             module: target.and_then(|target| self.module_to_resolved.get(&target).copied()),
             oid: node.map(|node| self.mib.tree().oid_of(node).clone()),
+        }
+    }
+
+    /// Resolve a name using the scope rules shared by conformance module
+    /// clauses. The returned IR module is the exact selected module version
+    /// that defined the matching node.
+    pub(super) fn lookup_conformance_node(
+        &self,
+        mod_id: IrModuleId,
+        supports_module: &str,
+        name: &str,
+    ) -> Option<ConformanceNode> {
+        if !supports_module.is_empty()
+            && let Some(candidates) = self.module_index.get(supports_module)
+        {
+            for &candidate in candidates {
+                if let Some(&node_id) = self
+                    .module_symbol_to_node
+                    .get(&candidate)
+                    .and_then(|symbols| symbols.get(name))
+                {
+                    return Some(ConformanceNode {
+                        module: candidate,
+                        node: node_id,
+                        used_import: false,
+                    });
+                }
+            }
+        }
+
+        if let Some(&node_id) = self
+            .module_symbol_to_node
+            .get(&mod_id)
+            .and_then(|symbols| symbols.get(name))
+        {
+            return Some(ConformanceNode {
+                module: mod_id,
+                node: node_id,
+                used_import: false,
+            });
+        }
+        if let Some(&source) = self
+            .module_imports
+            .get(&mod_id)
+            .and_then(|imports| imports.get(name))
+            && let Some(&node_id) = self
+                .module_symbol_to_node
+                .get(&source)
+                .and_then(|symbols| symbols.get(name))
+        {
+            return Some(ConformanceNode {
+                module: source,
+                node: node_id,
+                used_import: true,
+            });
+        }
+
+        if self.strictness.allow_global_fallbacks() {
+            for (candidate, _) in self.all_modules() {
+                if let Some(&node_id) = self
+                    .module_symbol_to_node
+                    .get(&candidate)
+                    .and_then(|symbols| symbols.get(name))
+                {
+                    return Some(ConformanceNode {
+                        module: candidate,
+                        node: node_id,
+                        used_import: false,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Retain a SUPPORTS-scoped reference with exact selected-version
+    /// provenance when it resolves.
+    pub(super) fn supports_oid_ref(
+        &mut self,
+        mod_id: IrModuleId,
+        supports_module: &str,
+        name: &str,
+        range: SourceRange,
+    ) -> OidRef {
+        let target = self.lookup_conformance_node(mod_id, supports_module, name);
+        if target.is_some_and(|target| target.used_import) {
+            self.mark_import_used(mod_id, name);
+        }
+        OidRef {
+            name: name.to_owned(),
+            range,
+            module: target.and_then(|target| self.module_to_resolved.get(&target.module).copied()),
+            oid: target.map(|target| self.mib.tree().oid_of(target.node).clone()),
         }
     }
 

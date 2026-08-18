@@ -29,6 +29,252 @@ fn types_objects_mib() -> mib_rs::Mib {
         .expect("types and objects fixture should load")
 }
 
+fn notifications_conformance_mib() -> mib_rs::Mib {
+    Loader::new()
+        .source(source::memory(
+            "WRITER-CONFORMANCE-MIB",
+            include_bytes!("data/writer-notifications-conformance-input.mib").as_slice(),
+        ))
+        .diagnostic_config(DiagnosticConfig::silent())
+        .modules(["WRITER-CONFORMANCE-MIB"])
+        .load()
+        .expect("notifications and conformance fixture should load")
+}
+
+fn constraint_semantics(mib: &mib_rs::Mib, syntax: &mib_rs::mib::SyntaxConstraints) -> String {
+    let type_name = syntax
+        .type_id
+        .map(|id| canonical_type_semantics(mib.type_by_id(id).name()))
+        .unwrap_or_default();
+    format!(
+        "type={type_name};ranges-constrained={};ranges={:?};declared-ranges={:?};sizes-constrained={};sizes={:?};declared-sizes={:?};enums={:?};bits={:?}",
+        syntax.ranges_constrained,
+        syntax
+            .ranges
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        syntax
+            .declared_ranges
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        syntax.sizes_constrained,
+        syntax
+            .sizes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        syntax
+            .declared_sizes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        named_values(&syntax.enums),
+        named_values(&syntax.bits),
+    )
+}
+
+fn notification_conformance_semantics(
+    mib: &mib_rs::Mib,
+    module_name: &str,
+) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    let mut notifications = mib
+        .notifications()
+        .filter(|definition| {
+            definition
+                .module()
+                .is_some_and(|module| module.name() == module_name)
+        })
+        .map(|definition| {
+            format!(
+                "{}|{}|{:?}|{}|{}|{}|{:?}",
+                definition.name(),
+                definition.node().unwrap().oid(),
+                definition.status(),
+                definition.description(),
+                definition.reference(),
+                definition
+                    .objects()
+                    .map(|object| object.name())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                definition
+                    .trap_info()
+                    .map(|trap| (&trap.enterprise, trap.trap_number)),
+            )
+        })
+        .collect::<Vec<_>>();
+    notifications.sort();
+
+    let mut groups = mib
+        .groups()
+        .filter(|definition| {
+            definition
+                .module()
+                .is_some_and(|module| module.name() == module_name)
+        })
+        .map(|definition| {
+            format!(
+                "{}|{}|{}|{:?}|{}|{}|{}",
+                definition.name(),
+                definition.node().unwrap().oid(),
+                definition.is_notification_group(),
+                definition.status(),
+                definition.description(),
+                definition.reference(),
+                definition
+                    .members()
+                    .map(|member| member.name())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        })
+        .collect::<Vec<_>>();
+    groups.sort();
+
+    let mut compliances = mib
+        .compliances()
+        .filter(|definition| {
+            definition
+                .module()
+                .is_some_and(|module| module.name() == module_name)
+        })
+        .map(|definition| {
+            let modules = definition
+                .modules()
+                .iter()
+                .map(|module| {
+                    let groups = module
+                        .groups
+                        .iter()
+                        .map(|group| format!("{}:{}", group.group, group.description))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let objects = module
+                        .objects
+                        .iter()
+                        .map(|object| {
+                            format!(
+                                "{}:syntax={}:write={}:access={:?}:{}",
+                                object.object,
+                                object
+                                    .syntax
+                                    .as_ref()
+                                    .map(|syntax| constraint_semantics(mib, syntax))
+                                    .unwrap_or_default(),
+                                object
+                                    .write_syntax
+                                    .as_ref()
+                                    .map(|syntax| constraint_semantics(mib, syntax))
+                                    .unwrap_or_default(),
+                                object.min_access,
+                                object.description,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "{}|mandatory={}|groups={groups}|objects={objects}",
+                        module.module_name,
+                        module.mandatory_groups.join(","),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            format!(
+                "{}|{}|{:?}|{}|{}|{modules}",
+                definition.name(),
+                definition.node().unwrap().oid(),
+                definition.status(),
+                definition.description(),
+                definition.reference(),
+            )
+        })
+        .collect::<Vec<_>>();
+    compliances.sort();
+
+    let mut capabilities = mib
+        .capabilities()
+        .filter(|definition| {
+            definition
+                .module()
+                .is_some_and(|module| module.name() == module_name)
+        })
+        .map(|definition| {
+            let supports = definition
+                .supports()
+                .iter()
+                .map(|supports| {
+                    let objects = supports
+                        .object_variations
+                        .iter()
+                        .map(|variation| {
+                            format!(
+                                "{}:syntax={}:write={}:access={:?}:creation={}:default={}:{}",
+                                variation.object,
+                                variation
+                                    .syntax
+                                    .as_ref()
+                                    .map(|syntax| constraint_semantics(mib, syntax))
+                                    .unwrap_or_default(),
+                                variation
+                                    .write_syntax
+                                    .as_ref()
+                                    .map(|syntax| constraint_semantics(mib, syntax))
+                                    .unwrap_or_default(),
+                                variation.access,
+                                variation
+                                    .creation_requires
+                                    .iter()
+                                    .map(|reference| reference.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                                variation
+                                    .def_val
+                                    .as_ref()
+                                    .map(default_semantics)
+                                    .unwrap_or_default(),
+                                variation.description,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let notifications = supports
+                        .notification_variations
+                        .iter()
+                        .map(|variation| {
+                            format!(
+                                "{}:access={:?}:{}",
+                                variation.notification, variation.access, variation.description
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "{}|includes={}|objects={objects}|notifications={notifications}",
+                        supports.module_name,
+                        supports.includes.join(","),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            format!(
+                "{}|{}|{:?}|{}|{}|{}|{supports}",
+                definition.name(),
+                definition.node().unwrap().oid(),
+                definition.status(),
+                definition.product_release(),
+                definition.description(),
+                definition.reference(),
+            )
+        })
+        .collect::<Vec<_>>();
+    capabilities.sort();
+
+    (notifications, groups, compliances, capabilities)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct TypeSemantics {
     name: String,
@@ -597,6 +843,280 @@ fn identity_only_module_matches_golden_output() {
     assert_eq!(rewritten, output.as_bytes());
 }
 
+#[test]
+fn notifications_and_conformance_round_trip_resolved_semantics() {
+    let mib = notifications_conformance_mib();
+    let expected = notification_conformance_semantics(&mib, "WRITER-CONFORMANCE-MIB");
+
+    let mut first = Vec::new();
+    writer::write(&mut first, &mib, "WRITER-CONFORMANCE-MIB").unwrap();
+    let mut second = Vec::new();
+    writer::write(&mut second, &mib, "WRITER-CONFORMANCE-MIB").unwrap();
+    assert_eq!(first, second, "writer output must be deterministic");
+
+    let output = String::from_utf8(first).unwrap();
+    assert!(output.contains("writerNotice NOTIFICATION-TYPE"));
+    assert!(output.contains("writerObjects OBJECT-GROUP"));
+    assert!(output.contains("writerNotifications NOTIFICATION-GROUP"));
+    assert!(output.contains("writerCompliance MODULE-COMPLIANCE"));
+    assert!(output.contains("writerCapabilities AGENT-CAPABILITIES"));
+    assert!(output.contains("WRITE-SYNTAX WriterMode { active(1) }"));
+    assert!(output.contains("WRITE-SYNTAX OCTET STRING (SIZE (1..6))"));
+    assert!(output.contains("ACCESS write-only"));
+    assert!(output.contains("VARIATION writerEntry"));
+    assert!(output.contains("CREATION-REQUIRES { writerMode }"));
+    assert!(output.contains("VARIATION writerNotice"));
+    assert!(output.contains("ACCESS not-implemented"));
+
+    let reparsed = load_inline(
+        &[("WRITER-CONFORMANCE-MIB", &output)],
+        &["WRITER-CONFORMANCE-MIB"],
+    );
+    assert_eq!(
+        expected,
+        notification_conformance_semantics(&reparsed, "WRITER-CONFORMANCE-MIB")
+    );
+}
+
+#[test]
+fn external_conformance_references_and_refinement_types_are_imported() {
+    let creation_dependency = r#"WRITER-CREATION-DEPENDENCY DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationDependencyMib MODULE-IDENTITY LAST-UPDATED "202608180000Z" ORGANIZATION "External" CONTACT-INFO "External" DESCRIPTION "External." ::= { enterprises 424264 }
+externalCreationObject OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-create STATUS current DESCRIPTION "Creation dependency." ::= { creationDependencyMib 1 }
+END
+"#;
+    let base = r#"WRITER-CONFORMANCE-BASE DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises FROM SNMPv2-SMI
+        TEXTUAL-CONVENTION FROM SNMPv2-TC
+        OBJECT-GROUP, NOTIFICATION-GROUP FROM SNMPv2-CONF;
+externalMib MODULE-IDENTITY LAST-UPDATED "202608180000Z" ORGANIZATION "External" CONTACT-INFO "External" DESCRIPTION "External." ::= { enterprises 424262 }
+ExternalMode ::= TEXTUAL-CONVENTION STATUS current DESCRIPTION "Mode." SYNTAX INTEGER { one(1), two(2) }
+externalObject OBJECT-TYPE SYNTAX ExternalMode MAX-ACCESS read-write STATUS current DESCRIPTION "Object." ::= { externalMib 1 }
+externalNotice NOTIFICATION-TYPE OBJECTS { externalObject } STATUS current DESCRIPTION "Notice." ::= { externalMib 2 }
+externalObjects OBJECT-GROUP OBJECTS { externalObject } STATUS current DESCRIPTION "Objects." ::= { externalMib 3 }
+externalNotifications NOTIFICATION-GROUP NOTIFICATIONS { externalNotice } STATUS current DESCRIPTION "Notifications." ::= { externalMib 4 }
+externalTable OBJECT-TYPE SYNTAX SEQUENCE OF ExternalEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Table." ::= { externalMib 5 }
+externalEntry OBJECT-TYPE SYNTAX ExternalEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Row." INDEX { externalIndex } ::= { externalTable 1 }
+externalIndex OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-only STATUS current DESCRIPTION "Index." ::= { externalEntry 1 }
+ExternalEntry ::= SEQUENCE { externalIndex Integer32 }
+END
+"#;
+    let output_source = r#"WRITER-EXTERNAL-CONFORMANCE DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY, enterprises FROM SNMPv2-SMI
+        MODULE-COMPLIANCE, AGENT-CAPABILITIES FROM SNMPv2-CONF
+        ExternalMode, externalEntry, externalObject, externalNotice, externalObjects, externalNotifications FROM WRITER-CONFORMANCE-BASE
+        externalCreationObject FROM WRITER-CREATION-DEPENDENCY;
+externalWriterMib MODULE-IDENTITY LAST-UPDATED "202608180000Z" ORGANIZATION "Writer" CONTACT-INFO "Writer" DESCRIPTION "Writer." ::= { enterprises 424263 }
+externalCompliance MODULE-COMPLIANCE
+    STATUS current DESCRIPTION "Compliance."
+    MODULE WRITER-CONFORMANCE-BASE
+        MANDATORY-GROUPS { externalObjects, externalNotifications }
+        OBJECT externalObject
+            SYNTAX ExternalMode { one(1), two(2) }
+            WRITE-SYNTAX ExternalMode { one(1) }
+            MIN-ACCESS read-only
+            DESCRIPTION "Refinement."
+    ::= { externalWriterMib 1 }
+externalCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "1"
+    STATUS current DESCRIPTION "Capabilities."
+    SUPPORTS WRITER-CONFORMANCE-BASE
+        INCLUDES { externalObjects, externalNotifications }
+        VARIATION externalObject
+            SYNTAX ExternalMode { one(1), two(2) }
+            WRITE-SYNTAX ExternalMode { one(1) }
+            ACCESS read-only
+            DESCRIPTION "Object variation."
+        VARIATION externalEntry
+            CREATION-REQUIRES { externalCreationObject }
+            DESCRIPTION "Row variation."
+        VARIATION externalNotice
+            ACCESS not-implemented
+            DESCRIPTION "Notice variation."
+    ::= { externalWriterMib 2 }
+END
+"#;
+    let mib = load_inline(
+        &[
+            ("WRITER-CREATION-DEPENDENCY", creation_dependency),
+            ("WRITER-CONFORMANCE-BASE", base),
+            ("WRITER-EXTERNAL-CONFORMANCE", output_source),
+        ],
+        &["WRITER-CONFORMANCE-BASE", "WRITER-EXTERNAL-CONFORMANCE"],
+    );
+    let expected = notification_conformance_semantics(&mib, "WRITER-EXTERNAL-CONFORMANCE");
+
+    let mut output = Vec::new();
+    writer::write(&mut output, &mib, "WRITER-EXTERNAL-CONFORMANCE").unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains(
+        "ExternalMode, externalEntry, externalNotice, externalNotifications, externalObject, externalObjects\n        FROM WRITER-CONFORMANCE-BASE"
+    ));
+    assert!(output.contains("externalCreationObject\n        FROM WRITER-CREATION-DEPENDENCY"));
+    assert!(output.contains("CREATION-REQUIRES { externalCreationObject }"));
+
+    let reparsed = load_inline(
+        &[
+            ("WRITER-CREATION-DEPENDENCY", creation_dependency),
+            ("WRITER-CONFORMANCE-BASE", base),
+            ("WRITER-EXTERNAL-CONFORMANCE", &output),
+        ],
+        &["WRITER-CONFORMANCE-BASE", "WRITER-EXTERNAL-CONFORMANCE"],
+    );
+    assert_eq!(
+        expected,
+        notification_conformance_semantics(&reparsed, "WRITER-EXTERNAL-CONFORMANCE")
+    );
+}
+
+#[test]
+fn no_conformance_option_omits_definitions_and_imports_but_keeps_notifications() {
+    let mib = notifications_conformance_mib();
+    let mut output = Vec::new();
+    writer::write_with_options(
+        &mut output,
+        &mib,
+        "WRITER-CONFORMANCE-MIB",
+        Options::default().with_conformance(false),
+    )
+    .unwrap();
+    let output = String::from_utf8(output).unwrap();
+
+    assert!(output.contains("writerNotice NOTIFICATION-TYPE"));
+    for omitted in [
+        "OBJECT-GROUP",
+        "NOTIFICATION-GROUP",
+        "MODULE-COMPLIANCE",
+        "AGENT-CAPABILITIES",
+    ] {
+        assert!(!output.contains(omitted), "unexpected {omitted} output");
+    }
+    assert!(!output.contains("{ writerCapabilities 1 }"));
+    assert!(
+        output.contains("writerConformanceChild OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 424260 6 1 }")
+    );
+
+    let reparsed = load_inline(
+        &[("WRITER-CONFORMANCE-MIB", &output)],
+        &["WRITER-CONFORMANCE-MIB"],
+    );
+    let semantics = notification_conformance_semantics(&reparsed, "WRITER-CONFORMANCE-MIB");
+    assert_eq!(semantics.0.len(), 1);
+    assert!(semantics.1.is_empty());
+    assert!(semantics.2.is_empty());
+    assert!(semantics.3.is_empty());
+    assert_eq!(
+        reparsed
+            .resolve_oid("writerConformanceChild")
+            .unwrap()
+            .to_string(),
+        mib.resolve_oid("writerConformanceChild")
+            .unwrap()
+            .to_string()
+    );
+}
+
+#[test]
+fn description_option_applies_to_notifications_and_nested_conformance() {
+    let mib = notifications_conformance_mib();
+    let mut output = Vec::new();
+    writer::write_with_options(
+        &mut output,
+        &mib,
+        "WRITER-CONFORMANCE-MIB",
+        Options::default().with_descriptions(false),
+    )
+    .unwrap();
+    let output = String::from_utf8(output).unwrap();
+
+    assert!(!output.contains("DESCRIPTION"));
+    assert!(output.contains("writerNotice NOTIFICATION-TYPE"));
+    assert!(output.contains("writerCompliance MODULE-COMPLIANCE"));
+    assert!(output.contains("VARIATION writerNotice"));
+}
+
+#[test]
+fn required_empty_group_and_includes_lists_remain_parseable() {
+    let source = r#"EMPTY-CONFORMANCE-MIB DEFINITIONS ::= BEGIN
+emptyRoot OBJECT IDENTIFIER ::= { iso 424264 }
+emptyObjects OBJECT-GROUP
+    OBJECTS { }
+    STATUS current
+    DESCRIPTION "Empty group."
+    ::= { emptyRoot 1 }
+emptyCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "Empty"
+    STATUS current
+    DESCRIPTION "Empty capabilities."
+    SUPPORTS EMPTY-CONFORMANCE-MIB
+        INCLUDES { }
+    ::= { emptyRoot 2 }
+END
+"#;
+    let mib = load_inline(
+        &[("EMPTY-CONFORMANCE-MIB", source)],
+        &["EMPTY-CONFORMANCE-MIB"],
+    );
+    let mut output = Vec::new();
+    writer::write(&mut output, &mib, "EMPTY-CONFORMANCE-MIB").unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("OBJECTS { }"));
+    assert!(output.contains("INCLUDES { }"));
+
+    let reparsed = load_inline(
+        &[("EMPTY-CONFORMANCE-MIB", &output)],
+        &["EMPTY-CONFORMANCE-MIB"],
+    );
+    assert_eq!(reparsed.groups().count(), mib.groups().count());
+    assert_eq!(reparsed.capabilities().count(), mib.capabilities().count());
+}
+
+#[test]
+fn smiv1_trap_is_normalized_to_notification_type() {
+    let source = r#"WRITER-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM RFC1155-SMI;
+trapRoot OBJECT IDENTIFIER ::= { enterprises 424261 }
+trapObject OBJECT-TYPE
+    SYNTAX INTEGER
+    ACCESS read-only
+    STATUS mandatory
+    DESCRIPTION "Trap object."
+    ::= { trapRoot 1 }
+writerTrap TRAP-TYPE
+    ENTERPRISE trapRoot
+    VARIABLES { trapObject }
+    DESCRIPTION "A v1 trap."
+    REFERENCE "Trap reference."
+    ::= 7
+END
+"#;
+    let mib = load_inline(&[("WRITER-TRAP-MIB", source)], &["WRITER-TRAP-MIB"]);
+    let original = mib
+        .module("WRITER-TRAP-MIB")
+        .unwrap()
+        .notification("writerTrap")
+        .unwrap();
+    let original_oid = original.node().unwrap().oid().clone();
+
+    let mut output = Vec::new();
+    writer::write(&mut output, &mib, "WRITER-TRAP-MIB").unwrap();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("writerTrap NOTIFICATION-TYPE"));
+    assert!(!output.contains("TRAP-TYPE"));
+    assert!(output.contains("OBJECTS { trapObject }"));
+
+    let reparsed = load_inline(&[("WRITER-TRAP-MIB", &output)], &["WRITER-TRAP-MIB"]);
+    let normalized = reparsed
+        .module("WRITER-TRAP-MIB")
+        .unwrap()
+        .notification("writerTrap")
+        .unwrap();
+    assert_eq!(normalized.node().unwrap().oid(), &original_oid);
+    assert_eq!(normalized.objects().next().unwrap().name(), "trapObject");
+    assert!(normalized.trap_info().is_none());
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct IdentitySemantics {
     name: String,
@@ -939,7 +1459,9 @@ END
     assert!(output.contains("STATUS obsolete"));
     assert!(output.contains("\"Exact group-collision identity.\""));
     assert!(output.contains("collisionObject OBJECT-TYPE"));
-    assert!(!output.contains("collisionGroup OBJECT-GROUP"));
+    assert!(output.contains("collisionGroup OBJECT-GROUP"));
+    assert!(output.contains("OBJECTS { collisionObject }"));
+    assert!(output.contains("\"Winning group.\""));
     assert!(output.contains("parentObject OBJECT-TYPE"));
     assert!(output.contains("childOid OBJECT IDENTIFIER ::= { parentObject 1 }"));
 

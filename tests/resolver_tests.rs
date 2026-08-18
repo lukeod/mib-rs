@@ -657,7 +657,11 @@ fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurren
         .capability("referenceCapabilities")
         .expect("capability should resolve");
     assert_eq!(
-        capability.supports()[0].object_variations[0].creation_requires,
+        capability.supports()[0].object_variations[0]
+            .creation_requires
+            .iter()
+            .map(|reference| reference.name.as_str())
+            .collect::<Vec<_>>(),
         [
             "existingObject",
             "existingObject",
@@ -667,6 +671,87 @@ fn capabilities_creation_requires_report_duplicates_and_each_unresolved_occurren
             "sharedOidNode",
         ]
     );
+}
+
+#[test]
+fn creation_requires_marks_the_exact_import_used() {
+    let source = memory_modules([
+        (
+            "CREATION-IMPORT-TARGET-MIB",
+            &br#"CREATION-IMPORT-TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationImportTargetRoot OBJECT IDENTIFIER ::= { enterprises 99970 }
+creationImportTable OBJECT-TYPE SYNTAX SEQUENCE OF CreationImportEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Table." ::= { creationImportTargetRoot 1 }
+creationImportEntry OBJECT-TYPE SYNTAX CreationImportEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Row." INDEX { creationImportIndex } ::= { creationImportTable 1 }
+creationImportIndex OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-only STATUS current DESCRIPTION "Index." ::= { creationImportEntry 1 }
+CreationImportEntry ::= SEQUENCE { creationImportIndex Integer32 }
+END
+"#[..],
+        ),
+        (
+            "CREATION-IMPORT-DEPENDENCY-MIB",
+            &br#"CREATION-IMPORT-DEPENDENCY-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationOnlyImport OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-create STATUS current DESCRIPTION "Creation requirement." ::= { enterprises 99971 }
+END
+"#[..],
+        ),
+        (
+            "CREATION-IMPORT-CONSUMER-MIB",
+            &br#"CREATION-IMPORT-CONSUMER-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI
+        AGENT-CAPABILITIES FROM SNMPv2-CONF
+        creationOnlyImport FROM CREATION-IMPORT-DEPENDENCY-MIB;
+creationImportCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Creation import usage."
+    SUPPORTS CREATION-IMPORT-TARGET-MIB
+        INCLUDES { }
+        VARIATION creationImportEntry
+            CREATION-REQUIRES { creationOnlyImport }
+            DESCRIPTION "Row variation."
+    ::= { enterprises 99972 }
+END
+"#[..],
+        ),
+    ]);
+    let mut diagnostics = DiagnosticConfig::verbose();
+    diagnostics.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(source)
+            .resolver_strictness(ResolverStrictness::Strict)
+            .diagnostic_config(diagnostics)
+            .modules(["CREATION-IMPORT-CONSUMER-MIB"]),
+    )
+    .expect("creation import fixture should load");
+
+    let consumer = mib
+        .module("CREATION-IMPORT-CONSUMER-MIB")
+        .expect("consumer module should resolve");
+    let dependency = consumer
+        .import_source("creationOnlyImport")
+        .expect("creation-only import should resolve");
+    assert!(
+        mib.raw()
+            .module(consumer.id())
+            .is_import_used("creationOnlyImport")
+    );
+    assert!(!mib.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagCode::ImportUnused
+            && diagnostic.module.as_deref() == Some("CREATION-IMPORT-CONSUMER-MIB")
+            && diagnostic.message.contains("creationOnlyImport")
+    }));
+
+    let reference = &consumer
+        .capability("creationImportCapabilities")
+        .expect("capability should resolve")
+        .supports()[0]
+        .object_variations[0]
+        .creation_requires[0];
+    assert_eq!(reference.module_id(), Some(dependency.id()));
+    assert_eq!(reference.oid().unwrap().to_string(), "1.3.6.1.4.1.99971");
 }
 
 // --- Basic loading tests ---

@@ -1984,7 +1984,14 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
                         creation_requires: var
                             .creation_requires
                             .iter()
-                            .map(|reference| reference.name.clone())
+                            .map(|reference| {
+                                ctx.supports_oid_ref(
+                                    ir_id,
+                                    &sd.module_name,
+                                    &reference.name,
+                                    reference.range,
+                                )
+                            })
                             .collect(),
                         def_val,
                         description: var.description.clone(),

@@ -403,32 +403,8 @@ fn resolve_supports_identity(
     supports_module: &str,
     name: &str,
 ) -> Identity {
-    if !supports_module.is_empty()
-        && let Some(candidates) = ctx.module_index.get(supports_module)
-    {
-        for &target in candidates {
-            if let Some(node) = declared_node_in_ir_module(ctx, target, name) {
-                return exact_node_identity(ctx, target, name, node);
-            }
-        }
-    }
-    if let Some(node) = declared_node_in_ir_module(ctx, ir_mod, name) {
-        return exact_node_identity(ctx, ir_mod, name, node);
-    }
-    if let Some(&target) = ctx
-        .module_imports
-        .get(&ir_mod)
-        .and_then(|imports| imports.get(name))
-        && let Some(node) = declared_node_in_ir_module(ctx, target, name)
-    {
-        return exact_node_identity(ctx, target, name, node);
-    }
-    if ctx.strictness.allow_global_fallbacks() {
-        for (target, _) in ctx.all_modules() {
-            if let Some(node) = declared_node_in_ir_module(ctx, target, name) {
-                return exact_node_identity(ctx, target, name, node);
-            }
-        }
+    if let Some(target) = ctx.lookup_conformance_node(ir_mod, supports_module, name) {
+        return exact_node_identity(ctx, target.module, name, target.node);
     }
     if !supports_module.is_empty() {
         let hint = module_name_hint(ctx, supports_module, name);

@@ -4,9 +4,10 @@
 //! arbitrary [`std::io::Write`] destination. Output ordering, imports, and
 //! indentation are deterministic.
 //!
-//! The writer currently emits identities, type definitions, `OBJECT-TYPE`
-//! definitions, and reconstructed table `SEQUENCE` definitions. Notification
-//! and conformance families are not emitted yet.
+//! The writer emits identities, type definitions, `OBJECT-TYPE` and
+//! `NOTIFICATION-TYPE` definitions, conformance definitions, and reconstructed
+//! table `SEQUENCE` definitions. SMIv1 traps are normalized to
+//! `NOTIFICATION-TYPE`.
 //! Resolved quoted-text values are preserved exactly, including multiline
 //! whitespace and line endings; embedded quotes use ASN.1 doubled-quote
 //! escaping.
@@ -18,10 +19,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, Write};
 
-use crate::mib::{DefValValue, NamedValue, OidRef, Range};
+use crate::mib::{DefValValue, NamedValue, OidRef, Range, SyntaxConstraints};
 use crate::{
-    Access, BaseType, Kind, Mib, Module, ModuleIdentityData, ModuleIdentityKind, Object, Oid,
-    Status, Type,
+    Access, BaseType, Capability, Compliance, Group, Kind, Mib, Module, ModuleIdentityData,
+    ModuleIdentityKind, Notification, Object, Oid, Status, Type,
 };
 
 const INDENT: &[u8] = b"    ";
@@ -151,7 +152,7 @@ pub fn write_with_options<W: Write>(
         .module(module_name)
         .ok_or_else(|| Error::ModuleNotFound(module_name.to_owned()))?;
     let definitions = Definitions::collect(module);
-    definitions.validate(module)?;
+    definitions.validate(module, options)?;
     Emitter::new(destination, options).emit_module(module, &definitions)?;
     Ok(())
 }
@@ -161,6 +162,10 @@ struct Definitions<'a> {
     types: Vec<Type<'a>>,
     oid_assignments: Vec<&'a ModuleIdentityData>,
     objects: Vec<Object<'a>>,
+    notifications: Vec<Notification<'a>>,
+    groups: Vec<Group<'a>>,
+    compliances: Vec<Compliance<'a>>,
+    capabilities: Vec<Capability<'a>>,
     rows: Vec<Object<'a>>,
     object_by_name: BTreeMap<&'a str, Object<'a>>,
 }
@@ -205,17 +210,65 @@ impl<'a> Definitions<'a> {
             .map(|object| (object.name(), *object))
             .collect();
 
+        let mut notifications = module
+            .data()
+            .notifications()
+            .iter()
+            .copied()
+            .map(|id| module.mib.notification_by_id(id))
+            .collect::<Vec<_>>();
+        notifications.sort_by(|left, right| {
+            entity_order(left.node(), left.name(), right.node(), right.name())
+        });
+
+        let mut groups = module
+            .data()
+            .groups()
+            .iter()
+            .copied()
+            .map(|id| module.mib.group_by_id(id))
+            .collect::<Vec<_>>();
+        groups.sort_by(|left, right| {
+            entity_order(left.node(), left.name(), right.node(), right.name())
+        });
+
+        let mut compliances = module
+            .data()
+            .compliances()
+            .iter()
+            .copied()
+            .map(|id| module.mib.compliance_by_id(id))
+            .collect::<Vec<_>>();
+        compliances.sort_by(|left, right| {
+            entity_order(left.node(), left.name(), right.node(), right.name())
+        });
+
+        let mut capabilities = module
+            .data()
+            .capabilities()
+            .iter()
+            .copied()
+            .map(|id| module.mib.capability_by_id(id))
+            .collect::<Vec<_>>();
+        capabilities.sort_by(|left, right| {
+            entity_order(left.node(), left.name(), right.node(), right.name())
+        });
+
         Self {
             module_identities,
             types,
             oid_assignments,
             objects,
+            notifications,
+            groups,
+            compliances,
+            capabilities,
             rows,
             object_by_name,
         }
     }
 
-    fn validate(&self, module: Module<'_>) -> Result<(), Error> {
+    fn validate(&self, module: Module<'_>, options: Options) -> Result<(), Error> {
         for identity in self.module_identities.iter().chain(&self.oid_assignments) {
             validate_oid_anchor(module, identity.name(), identity.oid(), identity.oid_refs())?;
         }
@@ -239,6 +292,80 @@ impl<'a> Definitions<'a> {
                 ));
             }
         }
+        for notification in &self.notifications {
+            validate_entity_oid(
+                module,
+                notification.name(),
+                notification.node(),
+                notification.oid_refs(),
+            )?;
+        }
+        if options.conformance {
+            for group in &self.groups {
+                validate_entity_oid(module, group.name(), group.node(), group.oid_refs())?;
+            }
+            for compliance in &self.compliances {
+                validate_entity_oid(
+                    module,
+                    compliance.name(),
+                    compliance.node(),
+                    compliance.oid_refs(),
+                )?;
+                for clause in compliance.modules() {
+                    if !clause.module_name.is_empty()
+                        && module.mib.module(&clause.module_name).is_none()
+                    {
+                        return Err(unsupported(
+                            compliance.name(),
+                            "references an unresolved compliance module",
+                        ));
+                    }
+                    for object in &clause.objects {
+                        if let Some(syntax) = &object.syntax {
+                            validate_syntax_constraints(module, compliance.name(), syntax)?;
+                        }
+                        if let Some(syntax) = &object.write_syntax {
+                            validate_syntax_constraints(module, compliance.name(), syntax)?;
+                        }
+                    }
+                }
+            }
+            for capability in &self.capabilities {
+                validate_entity_oid(
+                    module,
+                    capability.name(),
+                    capability.node(),
+                    capability.oid_refs(),
+                )?;
+                for supports in capability.supports() {
+                    if module.mib.module(&supports.module_name).is_none() {
+                        return Err(unsupported(
+                            capability.name(),
+                            "references an unresolved supported module",
+                        ));
+                    }
+                    for variation in &supports.object_variations {
+                        if let Some(syntax) = &variation.syntax {
+                            validate_syntax_constraints(module, capability.name(), syntax)?;
+                        }
+                        if let Some(syntax) = &variation.write_syntax {
+                            validate_syntax_constraints(module, capability.name(), syntax)?;
+                        }
+                        if variation
+                            .def_val
+                            .as_ref()
+                            .is_some_and(crate::mib::DefVal::is_unset)
+                        {
+                            return Err(unsupported(
+                                capability.name(),
+                                "contains an unresolved variation DEFVAL",
+                            ));
+                        }
+                        validate_oid_default(capability.name(), variation.def_val.as_ref())?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -256,6 +383,50 @@ impl<'a> Definitions<'a> {
             .filter_map(|name| self.object_by_name.get(name.as_str()).copied())
             .collect()
     }
+
+    fn emits_oid_name(&self, name: &str, options: Options) -> bool {
+        self.module_identities
+            .iter()
+            .chain(&self.oid_assignments)
+            .any(|identity| identity.name() == name)
+            || self.objects.iter().any(|object| object.name() == name)
+            || self
+                .notifications
+                .iter()
+                .any(|notification| notification.name() == name)
+            || options.conformance
+                && (self.groups.iter().any(|group| group.name() == name)
+                    || self
+                        .compliances
+                        .iter()
+                        .any(|compliance| compliance.name() == name)
+                    || self
+                        .capabilities
+                        .iter()
+                        .any(|capability| capability.name() == name))
+    }
+}
+
+fn entity_order(
+    left_node: Option<crate::mib::Node<'_>>,
+    left_name: &str,
+    right_node: Option<crate::mib::Node<'_>>,
+    right_name: &str,
+) -> std::cmp::Ordering {
+    left_node
+        .map(|node| node.oid())
+        .cmp(&right_node.map(|node| node.oid()))
+        .then_with(|| left_name.cmp(right_name))
+}
+
+fn validate_entity_oid(
+    module: Module<'_>,
+    name: &str,
+    node: Option<crate::mib::Node<'_>>,
+    references: &[OidRef],
+) -> Result<(), Error> {
+    let node = node.ok_or_else(|| unsupported(name, "has no resolved OID"))?;
+    validate_oid_anchor(module, name, node.oid(), references)
 }
 
 fn validate_oid_anchor(
@@ -312,8 +483,13 @@ impl Imports {
 
     fn add_macro(&mut self, name: &str) {
         let module = match name {
-            "MODULE-IDENTITY" | "OBJECT-IDENTITY" | "OBJECT-TYPE" => "SNMPv2-SMI",
+            "MODULE-IDENTITY" | "OBJECT-IDENTITY" | "OBJECT-TYPE" | "NOTIFICATION-TYPE" => {
+                "SNMPv2-SMI"
+            }
             "TEXTUAL-CONVENTION" => "SNMPv2-TC",
+            "OBJECT-GROUP" | "NOTIFICATION-GROUP" | "MODULE-COMPLIANCE" | "AGENT-CAPABILITIES" => {
+                "SNMPv2-CONF"
+            }
             _ => return,
         };
         self.add(module, name);
@@ -373,11 +549,37 @@ impl Imports {
         }
     }
 
-    fn collect(module: Module<'_>, definitions: &Definitions<'_>) -> Self {
+    fn add_constraints(&mut self, module: Module<'_>, constraints: &SyntaxConstraints) {
+        if !constraints.bits.is_empty() {
+            return;
+        }
+        if let Some(type_id) = constraints.type_id {
+            let typ = module.mib.type_by_id(type_id);
+            if constraints.enums.is_empty()
+                || !typ.name().is_empty() && !is_builtin_type_name(typ.name())
+            {
+                self.add_type(typ);
+            }
+        }
+    }
+
+    fn add_node(&mut self, node: crate::mib::Node<'_>) {
+        if let Some(source) = node.module() {
+            self.add(source.name(), node.name());
+        }
+    }
+
+    fn collect(module: Module<'_>, definitions: &Definitions<'_>, options: Options) -> Self {
         let mut imports = Self::new(module.name());
         for identity in &definitions.module_identities {
             imports.add_macro("MODULE-IDENTITY");
-            if let Some(reference) = declared_anchor(identity.oid(), identity.oid_refs()) {
+            if let Some(reference) = emitted_anchor(
+                module,
+                definitions,
+                options,
+                identity.oid(),
+                identity.oid_refs(),
+            ) {
                 imports.add_oid_ref(module, reference);
             }
         }
@@ -385,7 +587,13 @@ impl Imports {
             if identity.kind() == ModuleIdentityKind::ObjectIdentity {
                 imports.add_macro("OBJECT-IDENTITY");
             }
-            if let Some(reference) = declared_anchor(identity.oid(), identity.oid_refs()) {
+            if let Some(reference) = emitted_anchor(
+                module,
+                definitions,
+                options,
+                identity.oid(),
+                identity.oid_refs(),
+            ) {
                 imports.add_oid_ref(module, reference);
             }
         }
@@ -396,7 +604,8 @@ impl Imports {
         for object in &definitions.objects {
             imports.add_macro("OBJECT-TYPE");
             if let Some(node) = object.node()
-                && let Some(reference) = declared_anchor(node.oid(), object.oid_refs())
+                && let Some(reference) =
+                    emitted_anchor(module, definitions, options, node.oid(), object.oid_refs())
             {
                 imports.add_oid_ref(module, reference);
             }
@@ -430,7 +639,130 @@ impl Imports {
                 imports.add_oid_ref(module, reference);
             }
         }
+        for notification in &definitions.notifications {
+            imports.add_macro("NOTIFICATION-TYPE");
+            if let Some(node) = notification.node()
+                && let Some(reference) = emitted_anchor(
+                    module,
+                    definitions,
+                    options,
+                    node.oid(),
+                    notification.oid_refs(),
+                )
+            {
+                imports.add_oid_ref(module, reference);
+            }
+            for object in notification.objects() {
+                if let Some(source) = object.module() {
+                    imports.add(source.name(), object.name());
+                }
+            }
+        }
+        if !options.conformance {
+            return imports;
+        }
+        for group in &definitions.groups {
+            imports.add_macro(if group.is_notification_group() {
+                "NOTIFICATION-GROUP"
+            } else {
+                "OBJECT-GROUP"
+            });
+            if let Some(node) = group.node()
+                && let Some(reference) =
+                    emitted_anchor(module, definitions, options, node.oid(), group.oid_refs())
+            {
+                imports.add_oid_ref(module, reference);
+            }
+            for member in group.members() {
+                imports.add_node(member);
+            }
+        }
+        for compliance in &definitions.compliances {
+            imports.add_macro("MODULE-COMPLIANCE");
+            if let Some(node) = compliance.node()
+                && let Some(reference) = emitted_anchor(
+                    module,
+                    definitions,
+                    options,
+                    node.oid(),
+                    compliance.oid_refs(),
+                )
+            {
+                imports.add_oid_ref(module, reference);
+            }
+            for clause in compliance.modules() {
+                let target = referenced_module(module, &clause.module_name);
+                for name in &clause.mandatory_groups {
+                    imports.add(target.name(), name);
+                }
+                for group in &clause.groups {
+                    imports.add(target.name(), &group.group);
+                }
+                for object in &clause.objects {
+                    imports.add(target.name(), &object.object);
+                    if let Some(syntax) = &object.syntax {
+                        imports.add_constraints(module, syntax);
+                    }
+                    if let Some(syntax) = &object.write_syntax {
+                        imports.add_constraints(module, syntax);
+                    }
+                }
+            }
+        }
+        for capability in &definitions.capabilities {
+            imports.add_macro("AGENT-CAPABILITIES");
+            if let Some(node) = capability.node()
+                && let Some(reference) = emitted_anchor(
+                    module,
+                    definitions,
+                    options,
+                    node.oid(),
+                    capability.oid_refs(),
+                )
+            {
+                imports.add_oid_ref(module, reference);
+            }
+            for supports in capability.supports() {
+                if let Some(target) = module.mib.module(&supports.module_name) {
+                    for name in &supports.includes {
+                        imports.add(target.name(), name);
+                    }
+                    for variation in &supports.object_variations {
+                        imports.add(target.name(), &variation.object);
+                        for reference in &variation.creation_requires {
+                            imports.add_oid_ref(module, reference);
+                        }
+                        if let Some(syntax) = &variation.syntax {
+                            imports.add_constraints(module, syntax);
+                        }
+                        if let Some(syntax) = &variation.write_syntax {
+                            imports.add_constraints(module, syntax);
+                        }
+                        if let Some(default) = &variation.def_val
+                            && matches!(default.value(), DefValValue::Oid(_))
+                            && let Some(reference) = default.oid_ref()
+                        {
+                            imports.add_oid_ref(module, reference);
+                        }
+                    }
+                    for variation in &supports.notification_variations {
+                        imports.add(target.name(), &variation.notification);
+                    }
+                }
+            }
+        }
         imports
+    }
+}
+
+fn referenced_module<'a>(module: Module<'a>, name: &str) -> Module<'a> {
+    if name.is_empty() {
+        module
+    } else {
+        module
+            .mib
+            .module(name)
+            .expect("validated conformance target module")
     }
 }
 
@@ -448,7 +780,7 @@ impl<W: Write> Emitter<W> {
     }
 
     fn emit_module(&mut self, module: Module<'_>, definitions: &Definitions<'_>) -> io::Result<()> {
-        let imports = Imports::collect(module, definitions);
+        let imports = Imports::collect(module, definitions, self.options);
 
         self.line(0, format_args!("{} DEFINITIONS ::= BEGIN", module.name()))?;
         self.emit_imports(&imports)?;
@@ -479,6 +811,26 @@ impl<W: Write> Emitter<W> {
         for object in &definitions.objects {
             self.blank_line()?;
             self.emit_object(module, definitions, *object)?;
+        }
+
+        for notification in &definitions.notifications {
+            self.blank_line()?;
+            self.emit_notification(module, definitions, *notification)?;
+        }
+
+        if self.options.conformance {
+            for group in &definitions.groups {
+                self.blank_line()?;
+                self.emit_group(module, definitions, *group)?;
+            }
+            for compliance in &definitions.compliances {
+                self.blank_line()?;
+                self.emit_compliance(module, definitions, *compliance)?;
+            }
+            for capability in &definitions.capabilities {
+                self.blank_line()?;
+                self.emit_capability(module, definitions, *capability)?;
+            }
         }
 
         if self.options.reconstructed_sequences {
@@ -536,7 +888,10 @@ impl<W: Write> Emitter<W> {
 
         self.line(
             1,
-            format_args!("::= {}", oid_assignment(module, definitions, identity)),
+            format_args!(
+                "::= {}",
+                oid_assignment(module, definitions, self.options, identity)
+            ),
         )
     }
 
@@ -557,7 +912,10 @@ impl<W: Write> Emitter<W> {
         }
         self.line(
             1,
-            format_args!("::= {}", oid_assignment(module, definitions, identity)),
+            format_args!(
+                "::= {}",
+                oid_assignment(module, definitions, self.options, identity)
+            ),
         )
     }
 
@@ -572,7 +930,7 @@ impl<W: Write> Emitter<W> {
             format_args!(
                 "{} OBJECT IDENTIFIER ::= {}",
                 identity.name(),
-                oid_assignment(module, definitions, identity)
+                oid_assignment(module, definitions, self.options, identity)
             ),
         )
     }
@@ -612,7 +970,7 @@ impl<W: Write> Emitter<W> {
         }
         self.line(
             1,
-            format_args!("MAX-ACCESS {}", canonical_access(object.access())),
+            format_args!("MAX-ACCESS {}", canonical_object_access(object.access())),
         )?;
         self.line(
             1,
@@ -646,22 +1004,236 @@ impl<W: Write> Emitter<W> {
         if let Some(default) = object.default_value()
             && !default.is_unset()
         {
-            self.line(
-                1,
-                format_args!(
-                    "DEFVAL {{ {} }}",
-                    defval_syntax(module, definitions, default)
-                ),
-            )?;
+            self.line(1, format_args!("DEFVAL {{ {} }}", defval_syntax(default)))?;
         }
         let oid = object.node().expect("validated object node").oid();
         self.line(
             1,
             format_args!(
                 "::= {}",
-                object_oid_assignment(module, definitions, object, oid)
+                object_oid_assignment(module, definitions, self.options, object, oid)
             ),
         )
+    }
+
+    fn emit_notification(
+        &mut self,
+        module: Module<'_>,
+        definitions: &Definitions<'_>,
+        notification: Notification<'_>,
+    ) -> io::Result<()> {
+        self.line(0, format_args!("{} NOTIFICATION-TYPE", notification.name()))?;
+        let objects = notification
+            .objects()
+            .map(|object| object.name())
+            .collect::<Vec<_>>();
+        self.name_list(1, "OBJECTS", &objects)?;
+        self.line(
+            1,
+            format_args!("STATUS {}", canonical_status(Some(notification.status()))),
+        )?;
+        self.description_clause(1, notification.description(), false)?;
+        if !notification.reference().is_empty() {
+            self.quoted_clause(1, "REFERENCE", notification.reference())?;
+        }
+        self.entity_oid_assignment(
+            module,
+            definitions,
+            notification.node(),
+            notification.oid_refs(),
+        )
+    }
+
+    fn emit_group(
+        &mut self,
+        module: Module<'_>,
+        definitions: &Definitions<'_>,
+        group: Group<'_>,
+    ) -> io::Result<()> {
+        let (macro_name, members_keyword) = if group.is_notification_group() {
+            ("NOTIFICATION-GROUP", "NOTIFICATIONS")
+        } else {
+            ("OBJECT-GROUP", "OBJECTS")
+        };
+        self.line(0, format_args!("{} {macro_name}", group.name()))?;
+        let members = group
+            .members()
+            .map(|member| member.name())
+            .collect::<Vec<_>>();
+        self.required_name_list(1, members_keyword, &members)?;
+        self.line(
+            1,
+            format_args!("STATUS {}", canonical_status(Some(group.status()))),
+        )?;
+        self.description_clause(1, group.description(), false)?;
+        if !group.reference().is_empty() {
+            self.quoted_clause(1, "REFERENCE", group.reference())?;
+        }
+        self.entity_oid_assignment(module, definitions, group.node(), group.oid_refs())
+    }
+
+    fn emit_compliance(
+        &mut self,
+        module: Module<'_>,
+        definitions: &Definitions<'_>,
+        compliance: Compliance<'_>,
+    ) -> io::Result<()> {
+        self.line(0, format_args!("{} MODULE-COMPLIANCE", compliance.name()))?;
+        self.line(
+            1,
+            format_args!("STATUS {}", canonical_status(Some(compliance.status()))),
+        )?;
+        self.description_clause(1, compliance.description(), false)?;
+        if !compliance.reference().is_empty() {
+            self.quoted_clause(1, "REFERENCE", compliance.reference())?;
+        }
+        for clause in compliance.modules() {
+            if clause.module_name.is_empty() {
+                self.line(1, format_args!("MODULE"))?;
+            } else {
+                self.line(1, format_args!("MODULE {}", clause.module_name))?;
+            }
+            self.name_list(2, "MANDATORY-GROUPS", &clause.mandatory_groups)?;
+            for group in &clause.groups {
+                self.line(2, format_args!("GROUP {}", group.group))?;
+                self.description_clause(2, &group.description, false)?;
+            }
+            for object in &clause.objects {
+                self.line(2, format_args!("OBJECT {}", object.object))?;
+                if let Some(syntax) = &object.syntax {
+                    self.line(
+                        3,
+                        format_args!("SYNTAX {}", syntax_constraints(module, syntax)),
+                    )?;
+                }
+                if let Some(syntax) = &object.write_syntax {
+                    self.line(
+                        3,
+                        format_args!("WRITE-SYNTAX {}", syntax_constraints(module, syntax)),
+                    )?;
+                }
+                if let Some(access) = object.min_access {
+                    self.line(3, format_args!("MIN-ACCESS {}", canonical_access(access)))?;
+                }
+                self.description_clause(3, &object.description, false)?;
+            }
+        }
+        self.entity_oid_assignment(
+            module,
+            definitions,
+            compliance.node(),
+            compliance.oid_refs(),
+        )
+    }
+
+    fn emit_capability(
+        &mut self,
+        module: Module<'_>,
+        definitions: &Definitions<'_>,
+        capability: Capability<'_>,
+    ) -> io::Result<()> {
+        self.line(0, format_args!("{} AGENT-CAPABILITIES", capability.name()))?;
+        self.quoted_clause(1, "PRODUCT-RELEASE", capability.product_release())?;
+        self.line(
+            1,
+            format_args!("STATUS {}", canonical_status(Some(capability.status()))),
+        )?;
+        self.description_clause(1, capability.description(), false)?;
+        if !capability.reference().is_empty() {
+            self.quoted_clause(1, "REFERENCE", capability.reference())?;
+        }
+        for supports in capability.supports() {
+            self.line(1, format_args!("SUPPORTS {}", supports.module_name))?;
+            self.required_name_list(2, "INCLUDES", &supports.includes)?;
+            for variation in &supports.object_variations {
+                self.line(2, format_args!("VARIATION {}", variation.object))?;
+                if let Some(syntax) = &variation.syntax {
+                    self.line(
+                        3,
+                        format_args!("SYNTAX {}", syntax_constraints(module, syntax)),
+                    )?;
+                }
+                if let Some(syntax) = &variation.write_syntax {
+                    self.line(
+                        3,
+                        format_args!("WRITE-SYNTAX {}", syntax_constraints(module, syntax)),
+                    )?;
+                }
+                if let Some(access) = variation.access {
+                    self.line(3, format_args!("ACCESS {}", canonical_access(access)))?;
+                }
+                let creation_requires = variation
+                    .creation_requires
+                    .iter()
+                    .map(|reference| reference.name.as_str())
+                    .collect::<Vec<_>>();
+                self.name_list(3, "CREATION-REQUIRES", &creation_requires)?;
+                if let Some(default) = &variation.def_val {
+                    self.line(3, format_args!("DEFVAL {{ {} }}", defval_syntax(default)))?;
+                }
+                self.description_clause(3, &variation.description, false)?;
+            }
+            for variation in &supports.notification_variations {
+                self.line(2, format_args!("VARIATION {}", variation.notification))?;
+                if let Some(access) = variation.access {
+                    self.line(3, format_args!("ACCESS {}", canonical_access(access)))?;
+                }
+                self.description_clause(3, &variation.description, false)?;
+            }
+        }
+        self.entity_oid_assignment(
+            module,
+            definitions,
+            capability.node(),
+            capability.oid_refs(),
+        )
+    }
+
+    fn entity_oid_assignment(
+        &mut self,
+        module: Module<'_>,
+        definitions: &Definitions<'_>,
+        node: Option<crate::mib::Node<'_>>,
+        references: &[OidRef],
+    ) -> io::Result<()> {
+        let node = node.expect("validated entity OID");
+        self.line(
+            1,
+            format_args!(
+                "::= {}",
+                oid_assignment_from_refs(module, definitions, self.options, node.oid(), references,)
+            ),
+        )
+    }
+
+    fn name_list<T: AsRef<str>>(
+        &mut self,
+        indent: usize,
+        keyword: &str,
+        names: &[T],
+    ) -> io::Result<()> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        let names = names
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.line(indent, format_args!("{keyword} {{ {names} }}"))
+    }
+
+    fn required_name_list<T: AsRef<str>>(
+        &mut self,
+        indent: usize,
+        keyword: &str,
+        names: &[T],
+    ) -> io::Result<()> {
+        if names.is_empty() {
+            self.line(indent, format_args!("{keyword} {{ }}"))
+        } else {
+            self.name_list(indent, keyword, names)
+        }
     }
 
     fn emit_sequence(&mut self, definitions: &Definitions<'_>, row: Object<'_>) -> io::Result<()> {
@@ -745,18 +1317,34 @@ fn canonical_access(access: Access) -> &'static str {
         Access::NotAccessible => "not-accessible",
         Access::AccessibleForNotify => "accessible-for-notify",
         Access::ReadOnly => "read-only",
-        Access::ReadWrite | Access::WriteOnly => "read-write",
+        Access::ReadWrite => "read-write",
+        Access::WriteOnly => "write-only",
         Access::ReadCreate => "read-create",
-        Access::NotImplemented => unreachable!("validated object access"),
+        Access::NotImplemented => "not-implemented",
+    }
+}
+
+fn canonical_object_access(access: Access) -> &'static str {
+    if access == Access::WriteOnly {
+        "read-write"
+    } else {
+        canonical_access(access)
     }
 }
 
 fn oid_assignment(
-    _module: Module<'_>,
-    _definitions: &Definitions<'_>,
+    module: Module<'_>,
+    definitions: &Definitions<'_>,
+    options: Options,
     identity: &ModuleIdentityData,
 ) -> String {
-    oid_assignment_from_refs(identity.oid(), identity.oid_refs())
+    oid_assignment_from_refs(
+        module,
+        definitions,
+        options,
+        identity.oid(),
+        identity.oid_refs(),
+    )
 }
 
 fn declared_anchor<'a>(oid: &Oid, references: &'a [OidRef]) -> Option<&'a OidRef> {
@@ -770,8 +1358,34 @@ fn declared_anchor<'a>(oid: &Oid, references: &'a [OidRef]) -> Option<&'a OidRef
         .max_by_key(|reference| reference.oid().map_or(0, |oid| oid.len()))
 }
 
-fn oid_assignment_from_refs(oid: &Oid, references: &[OidRef]) -> String {
-    if let Some(reference) = declared_anchor(oid, references) {
+fn emitted_anchor<'a>(
+    module: Module<'_>,
+    definitions: &Definitions<'_>,
+    options: Options,
+    oid: &Oid,
+    references: &'a [OidRef],
+) -> Option<&'a OidRef> {
+    references
+        .iter()
+        .filter(|reference| {
+            reference
+                .oid()
+                .is_some_and(|anchor| oid.starts_with(anchor))
+                && reference.module_id().is_some_and(|source| {
+                    source != module.id() || definitions.emits_oid_name(&reference.name, options)
+                })
+        })
+        .max_by_key(|reference| reference.oid().map_or(0, |oid| oid.len()))
+}
+
+fn oid_assignment_from_refs(
+    module: Module<'_>,
+    definitions: &Definitions<'_>,
+    options: Options,
+    oid: &Oid,
+    references: &[OidRef],
+) -> String {
+    if let Some(reference) = emitted_anchor(module, definitions, options, oid, references) {
         let anchor_len = reference.oid().map_or(0, |oid| oid.len());
         let suffix = oid[anchor_len..]
             .iter()
@@ -790,12 +1404,47 @@ fn oid_assignment_from_refs(oid: &Oid, references: &[OidRef]) -> String {
 }
 
 fn object_oid_assignment(
-    _module: Module<'_>,
-    _definitions: &Definitions<'_>,
+    module: Module<'_>,
+    definitions: &Definitions<'_>,
+    options: Options,
     object: Object<'_>,
     oid: &Oid,
 ) -> String {
-    oid_assignment_from_refs(oid, object.oid_refs())
+    oid_assignment_from_refs(module, definitions, options, oid, object.oid_refs())
+}
+
+fn syntax_constraints(module: Module<'_>, syntax: &SyntaxConstraints) -> String {
+    let typ = syntax.type_id.map(|type_id| module.mib.type_by_id(type_id));
+    let prefix = if !syntax.bits.is_empty() {
+        format!("BITS {}", format_named_values(&syntax.bits))
+    } else if !syntax.enums.is_empty() {
+        let name = typ
+            .filter(|typ| !typ.name().is_empty() && !is_builtin_type_name(typ.name()))
+            .map_or("INTEGER", canonical_type_name);
+        format!("{name} {}", format_named_values(&syntax.enums))
+    } else {
+        typ.map_or_else(
+            || "INTEGER".to_owned(),
+            |typ| {
+                if typ.name().is_empty() {
+                    base_type_syntax(typ.effective_base()).to_owned()
+                } else {
+                    canonical_type_name(typ).to_owned()
+                }
+            },
+        )
+    };
+    let sizes = if syntax.declared_sizes.is_empty() {
+        &syntax.sizes
+    } else {
+        &syntax.declared_sizes
+    };
+    let ranges = if syntax.declared_ranges.is_empty() {
+        &syntax.ranges
+    } else {
+        &syntax.declared_ranges
+    };
+    constrained_syntax(&prefix, ranges, sizes)
 }
 
 fn is_builtin_type_name(name: &str) -> bool {
@@ -980,11 +1629,7 @@ fn sequence_field_type(column: Object<'_>) -> String {
     base_type_syntax(typ.effective_base()).to_owned()
 }
 
-fn defval_syntax(
-    _module: Module<'_>,
-    _definitions: &Definitions<'_>,
-    default: &crate::mib::DefVal,
-) -> String {
+fn defval_syntax(default: &crate::mib::DefVal) -> String {
     match default.value() {
         DefValValue::None => String::new(),
         DefValValue::Int(value) => value.to_string(),
@@ -1037,6 +1682,61 @@ fn validate_type(typ: Type<'_>) -> Result<(), Error> {
     validate_base(typ.name(), typ.effective_base())?;
     validate_ranges(typ.name(), typ.ranges())?;
     validate_ranges(typ.name(), typ.sizes())
+}
+
+fn validate_syntax_constraints(
+    module: Module<'_>,
+    definition: &str,
+    syntax: &SyntaxConstraints,
+) -> Result<(), Error> {
+    let type_id = syntax
+        .type_id
+        .ok_or_else(|| unsupported(definition, "contains an unresolved refinement type"))?;
+    let typ = module.mib.type_by_id(type_id);
+    validate_base(definition, typ.effective_base())?;
+    validate_ranges(definition, &syntax.declared_ranges)?;
+    validate_ranges(definition, &syntax.declared_sizes)?;
+    validate_ranges(definition, &syntax.ranges)?;
+    validate_ranges(definition, &syntax.sizes)?;
+    if syntax.ranges_constrained && syntax.declared_ranges.is_empty() && syntax.ranges.is_empty() {
+        return Err(unsupported(
+            definition,
+            "contains an empty refinement range intersection",
+        ));
+    }
+    if syntax.sizes_constrained && syntax.declared_sizes.is_empty() && syntax.sizes.is_empty() {
+        return Err(unsupported(
+            definition,
+            "contains an empty refinement size intersection",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_oid_default(
+    definition: &str,
+    default: Option<&crate::mib::DefVal>,
+) -> Result<(), Error> {
+    let Some(default) = default else {
+        return Ok(());
+    };
+    if let DefValValue::Oid(oid) = default.value()
+        && (!default.oid_ref().is_some_and(|reference| {
+            reference.oid() == Some(oid) && reference.module_id().is_some()
+        }) || oid.is_empty())
+    {
+        return Err(unsupported(
+            definition,
+            "contains a variation OID DEFVAL without a symbolic anchor",
+        ));
+    }
+    if matches!(default.value(), DefValValue::Bytes(_)) && !valid_byte_defval(default.raw()) {
+        return Err(unsupported(
+            definition,
+            "contains a malformed variation byte-string DEFVAL",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_object(definitions: &Definitions<'_>, object: Object<'_>) -> Result<(), Error> {
@@ -1327,5 +2027,109 @@ END
         assert!(output.contains("bRoot\n        FROM DUPLICATE-ANCHOR-MIB"));
         assert!(output.contains("DEFVAL { bRoot }"));
         assert!(output.contains("::= { bRoot 1 }"));
+    }
+
+    #[test]
+    fn creation_requires_provenance_keeps_the_selected_module_version() {
+        let inputs: [(&str, &[u8]); 6] = [
+            (
+                "embedded:SNMPv2-SMI",
+                crate::lower::base_modules::embedded_content("SNMPv2-SMI").unwrap(),
+            ),
+            (
+                "embedded:SNMPv2-CONF",
+                crate::lower::base_modules::embedded_content("SNMPv2-CONF").unwrap(),
+            ),
+            (
+                "target",
+                br#"CREATION-TARGET-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+creationTargetRoot OBJECT IDENTIFIER ::= { enterprises 424301 }
+creationTargetTable OBJECT-TYPE SYNTAX SEQUENCE OF CreationTargetEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Table." ::= { creationTargetRoot 1 }
+creationTargetEntry OBJECT-TYPE SYNTAX CreationTargetEntry MAX-ACCESS not-accessible STATUS current DESCRIPTION "Row." INDEX { creationTargetIndex } ::= { creationTargetTable 1 }
+creationTargetIndex OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-only STATUS current DESCRIPTION "Index." ::= { creationTargetEntry 1 }
+CreationTargetEntry ::= SEQUENCE { creationTargetIndex Integer32 }
+END
+"#,
+            ),
+            (
+                "first",
+                br#"DUPLICATE-CREATION-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+aCreation OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-create STATUS current DESCRIPTION "First." ::= { enterprises 424302 }
+END
+"#,
+            ),
+            (
+                "second",
+                br#"DUPLICATE-CREATION-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+bCreation OBJECT-TYPE SYNTAX Integer32 MAX-ACCESS read-create STATUS current DESCRIPTION "Second." ::= { enterprises 424303 }
+END
+"#,
+            ),
+            (
+                "consumer",
+                br#"VERSION-CREATION-CONSUMER-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI AGENT-CAPABILITIES FROM SNMPv2-CONF bCreation FROM DUPLICATE-CREATION-MIB;
+versionCreationCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Version."
+    SUPPORTS CREATION-TARGET-MIB
+        INCLUDES { }
+        VARIATION creationTargetEntry
+            CREATION-REQUIRES { bCreation }
+            DESCRIPTION "Row."
+    ::= { enterprises 424304 }
+END
+"#,
+            ),
+        ];
+        let mut sources = crate::source::SourceSet::new();
+        let ids = inputs
+            .iter()
+            .map(|(label, bytes)| {
+                sources
+                    .insert(
+                        crate::source::SourceOrigin::memory(*label),
+                        *label,
+                        Arc::from(*bytes),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let config = DiagnosticConfig::silent();
+        let modules = ids
+            .iter()
+            .flat_map(|source_id| {
+                let document = sources.get(*source_id).unwrap();
+                crate::parser::parse(document, &config)
+                    .into_iter()
+                    .map(|module| crate::lower::lower(module, document, &config))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mib = crate::mib::resolver::resolve(
+            modules,
+            sources,
+            crate::ResolverStrictness::Strict,
+            &config,
+        );
+        let consumer = mib.module("VERSION-CREATION-CONSUMER-MIB").unwrap();
+        let selected = consumer.import_source("bCreation").unwrap();
+        let capability = consumer.capability("versionCreationCapabilities").unwrap();
+        let reference = &capability.supports()[0].object_variations[0].creation_requires[0];
+        assert_eq!(reference.module_id(), Some(selected.id()));
+        assert!(selected.object("bCreation").is_some());
+
+        let mut first = Vec::new();
+        write(&mut first, &mib, "VERSION-CREATION-CONSUMER-MIB").unwrap();
+        let mut second = Vec::new();
+        write(&mut second, &mib, "VERSION-CREATION-CONSUMER-MIB").unwrap();
+        assert_eq!(first, second);
+        let output = String::from_utf8(first).unwrap();
+        assert!(output.contains("bCreation\n        FROM DUPLICATE-CREATION-MIB"));
+        assert!(output.contains("CREATION-REQUIRES { bCreation }"));
     }
 }

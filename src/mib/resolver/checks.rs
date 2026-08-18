@@ -3324,51 +3324,8 @@ fn lookup_compliance_member_with_module(
     module_name: &str,
     name: &str,
 ) -> Option<(IrModuleId, NodeId)> {
-    if !module_name.is_empty()
-        && let Some(candidates) = ctx.module_index.get(module_name)
-    {
-        for &candidate in candidates {
-            if let Some(&node_id) = ctx
-                .module_symbol_to_node
-                .get(&candidate)
-                .and_then(|symbols| symbols.get(name))
-            {
-                return Some((candidate, node_id));
-            }
-        }
-    }
-
-    if let Some(&node_id) = ctx
-        .module_symbol_to_node
-        .get(&comp_ir)
-        .and_then(|symbols| symbols.get(name))
-    {
-        return Some((comp_ir, node_id));
-    }
-    if let Some(&source_ir) = ctx
-        .module_imports
-        .get(&comp_ir)
-        .and_then(|imports| imports.get(name))
-        && let Some(&node_id) = ctx
-            .module_symbol_to_node
-            .get(&source_ir)
-            .and_then(|symbols| symbols.get(name))
-    {
-        return Some((source_ir, node_id));
-    }
-
-    if ctx.strictness.allow_global_fallbacks() {
-        for (candidate, _) in ctx.all_modules() {
-            if let Some(&node_id) = ctx
-                .module_symbol_to_node
-                .get(&candidate)
-                .and_then(|symbols| symbols.get(name))
-            {
-                return Some((candidate, node_id));
-            }
-        }
-    }
-    None
+    ctx.lookup_conformance_node(comp_ir, module_name, name)
+        .map(|target| (target.module, target.node))
 }
 
 /// Map status to an ordinal for comparison.

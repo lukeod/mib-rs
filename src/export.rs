@@ -1475,7 +1475,20 @@ pub fn export_payload(mib: &Mib, strictness: ResolverStrictness) -> ExportPayloa
                             let creation_req: Vec<ExportOidRef> = ov
                                 .creation_requires
                                 .iter()
-                                .map(|name| resolve_object_ref(mib, name, &sm.module_name))
+                                .map(|reference| {
+                                    if let Some(module_id) = reference.module_id() {
+                                        make_oid_ref(
+                                            &reference.name,
+                                            mib.raw().module(module_id).name(),
+                                            &reference
+                                                .oid()
+                                                .map(ToString::to_string)
+                                                .unwrap_or_default(),
+                                        )
+                                    } else {
+                                        resolve_object_ref(mib, &reference.name, &sm.module_name)
+                                    }
+                                })
                                 .collect();
 
                             ExportObjectVariation {
@@ -1971,11 +1984,10 @@ END
             "TARGET-MIB",
             "collidingVariationObject",
         );
-        assert_unresolved_scoped_ref(
-            &supports.object_variations[0].creation_requires[0],
-            "TARGET-MIB",
-            "collidingCreation",
-        );
+        let creation = &supports.object_variations[0].creation_requires[0];
+        assert_eq!(creation.module, "COLLISION-MIB");
+        assert_eq!(creation.name, "collidingCreation");
+        assert_eq!(creation.oid, "1.3.6.1.4.1.99990.3");
         assert_unresolved_scoped_ref(
             &supports.notification_variations[0].notification,
             "TARGET-MIB",

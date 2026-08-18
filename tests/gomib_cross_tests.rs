@@ -696,7 +696,11 @@ fn extract_capability_module(
                     .as_ref()
                     .map(|sc| extract_syntax_constraints(mib, sc)),
                 access: variation.access.map(|a| a.to_string()).unwrap_or_default(),
-                creation_requires: variation.creation_requires.clone(),
+                creation_requires: variation
+                    .creation_requires
+                    .iter()
+                    .map(|reference| reference.name.clone())
+                    .collect(),
                 default_value: variation
                     .def_val
                     .as_ref()
