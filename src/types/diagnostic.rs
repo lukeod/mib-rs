@@ -53,9 +53,12 @@ impl fmt::Display for Diagnostic {
 ///
 /// Cloning a report shares immutable source documents; diagnostic values are
 /// cloned because they are small presentation records.
-/// Reports are created only by [`Mib::diagnostic_report`](crate::Mib::diagnostic_report)
-/// or returned in [`LoadError::DiagnosticThreshold`](crate::LoadError::DiagnosticThreshold),
-/// keeping every diagnostic tied to the exact source arena that allocated its IDs.
+/// Reports are returned by [`Mib::diagnostic_report`](crate::Mib::diagnostic_report),
+/// the lossless CST entry points [`cst::parse`](crate::cst::parse) and
+/// [`cst::parse_with_config`](crate::cst::parse_with_config), and
+/// [`LoadError::DiagnosticThreshold`](crate::LoadError::DiagnosticThreshold).
+/// Each report keeps every diagnostic tied to the exact source arena that
+/// allocated its IDs.
 ///
 /// ```compile_fail
 /// use std::sync::Arc;

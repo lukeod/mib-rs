@@ -55,14 +55,15 @@
 //!
 //! ## Compiler pipeline
 //!
-//! The [`ast`], [`parser`], [`lower`], [`ir`], and [`token`]
+//! The [`cst`], [`ast`], [`parser`], [`lower`], [`ir`], and [`token`]
 //! modules expose pre-resolution stages for callers that need
-//! syntax-aware analysis before full resolution. The parser
-//! produces partial ASTs from broken input, which matters for
-//! editor integration where the user is mid-edit. [`SyntaxKind`] is the single
+//! syntax-aware analysis before full resolution. The lossless [`cst`] parser
+//! retains every byte and exposes typed syntax nodes for source tooling. The
+//! semantic [`parser`] produces partial [`ast`] modules for lowering; it omits
+//! trivia and should be used when written layout is not needed. [`SyntaxKind`] is the single
 //! token/node inventory and carries fixed spellings, keyword aliases, and
 //! classification predicates for syntax highlighting and parser dispatch.
-//! See the [`compile`] module and the `tokens` example.
+//! See the [`compile`] module and the `cst` and `tokens` examples.
 //!
 //! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
 //! parse-only and tooling consumers. Checked [`ByteOffset`] and [`SourceRange`]
@@ -74,7 +75,8 @@
 //! report-owned [`DiagnosticEntry`] handles. Entry rendering includes the
 //! source label plus the full start and exclusive end; invalid or unretained
 //! ranges return [`DiagnosticReportError`] instead of fabricated coordinates.
-//! Reports are obtained from a resolved [`Mib`] or a threshold [`LoadError`]
+//! Reports are obtained from a resolved [`Mib`], the lossless [`cst::parse`]
+//! and [`cst::parse_with_config`] entry points, or a threshold [`LoadError`],
 //! and share that compilation's exact source arena; callers cannot combine
 //! diagnostics with an unrelated [`SourceSet`] or resolve raw diagnostic
 //! metadata through a different report.
@@ -831,9 +833,11 @@ pub mod raw {
 
 /// Compiler pipeline APIs exposed before final resolution.
 ///
-/// These modules are useful when building syntax-aware tooling or diagnostics
-/// that need direct access to tokens, parsed AST, lowered IR, or the parser
-/// entry points themselves.
+/// The lossless CST entry points, node wrappers, and token handles are
+/// re-exported directly from this module. The stage modules remain available
+/// for syntax-aware tooling that needs the semantic AST, lowered IR, raw token
+/// streams, or their parser entry points.
 pub mod compile {
-    pub use crate::{ast, cst, ir, lower, parser, syntax, token};
+    pub use crate::cst::{self, *};
+    pub use crate::{ast, ir, lower, parser, syntax, token};
 }

@@ -1,15 +1,27 @@
 //! Immutable lossless concrete syntax trees.
 //!
-//! A [`SyntaxTree`] borrows the exact [`SourceDocument`] from which it was
-//! built. Node and token handles retain that document internally, so source
-//! text is never resolved through a caller-supplied source arena.
+//! Use [`parse`] to retain every source byte in a typed concrete syntax tree.
+//! The returned [`SyntaxTree`] retains the arena containing its exact
+//! [`SourceDocument`], while node and token handles borrow both tree structure
+//! and source text from the tree.
+//! This makes the tree movable without a self-reference and prevents handles
+//! from outliving or cross-resolving their source.
+//!
+//! This CST API represents written syntax, including whitespace, comments,
+//! malformed input, and recovery regions. It does not perform semantic
+//! validation or name and OID resolution. Use [`crate::parser`] for the
+//! semantic AST parser, [`crate::lower`] for lowering, or [`crate::Loader`] for
+//! a resolved MIB.
 
 use std::iter::FusedIterator;
+use std::sync::Arc;
 
-use crate::source::{SourceDocument, SourceRange};
-use crate::syntax::SyntaxKind;
+use crate::source::{
+    SourceCandidate, SourceDocument, SourceId, SourceRange, SourceRangeError, SourceSet,
+};
+pub use crate::syntax::SyntaxKind;
 use crate::token::Token;
-use crate::types::{Diagnostic, DiagnosticConfig};
+use crate::types::{Diagnostic, DiagnosticConfig, DiagnosticReport};
 
 mod body;
 mod parser;
@@ -37,40 +49,43 @@ pub use typed::{
 /// The root is a [`SyntaxKind::SourceFile`] containing typed module structure,
 /// recovery regions, and every lossless lexer token in source order.
 #[derive(Debug)]
-pub struct SyntaxTree<'src> {
-    document: &'src SourceDocument,
+pub struct SyntaxTree {
+    sources: Arc<SourceSet>,
+    document: SourceId,
     root: NodeData,
 }
 
-impl<'src> SyntaxTree<'src> {
+impl SyntaxTree {
     /// Return the exact source document retained by this tree.
-    pub fn document(&self) -> &'src SourceDocument {
-        self.document
+    pub fn document(&self) -> &SourceDocument {
+        self.sources
+            .get(self.document)
+            .expect("a syntax tree retains its source document")
     }
 
     /// Return the source-file root node.
-    pub fn root(&self) -> SyntaxNode<'_, 'src> {
-        SyntaxNode::new(&self.root, self.document)
+    pub fn root(&self) -> SyntaxNode<'_, '_> {
+        SyntaxNode::new(&self.root, self.document())
     }
 
     /// Return the typed source-file root.
-    pub fn source_file(&self) -> SourceFile<'_, 'src> {
+    pub fn source_file(&self) -> SourceFile<'_, '_> {
         SourceFile::cast(self.root()).expect("a syntax tree root is always a source file")
     }
 
     /// Iterate over all nodes in depth-first pre-order, including the root.
-    pub fn nodes(&self) -> DescendantNodes<'_, 'src> {
+    pub fn nodes(&self) -> DescendantNodes<'_, '_> {
         self.root().descendant_nodes()
     }
 
     /// Iterate over all tokens in source order, including EOF.
-    pub fn tokens(&self) -> DescendantTokens<'_, 'src> {
+    pub fn tokens(&self) -> DescendantTokens<'_, '_> {
         self.root().descendant_tokens()
     }
 
     /// Reconstruct the original source bytes from the tree's tokens.
     pub fn reconstruct_text(&self) -> Vec<u8> {
-        let mut text = Vec::with_capacity(self.document.bytes().len());
+        let mut text = Vec::with_capacity(self.document().bytes().len());
         for token in self.tokens() {
             text.extend_from_slice(token.text());
         }
@@ -78,18 +93,104 @@ impl<'src> SyntaxTree<'src> {
     }
 }
 
-#[allow(dead_code, reason = "used by the next CST parsing stage")]
-pub(crate) fn build_lossless_tree<'src>(
-    document: &'src SourceDocument,
+/// Parse one owned source candidate into a lossless concrete syntax tree.
+///
+/// The tree retains the candidate's origin, label, and shared immutable bytes
+/// in its [`SourceDocument`]. The returned diagnostics contain lexer and CST
+/// parser issues; diagnostics do not prevent a tree from being returned. The
+/// returned [`DiagnosticReport`] shares the tree's retained source arena, so
+/// use its report-owned entries to inspect source ranges and positions.
+///
+/// # Errors
+///
+/// Returns [`SourceRangeError::SourceTooLarge`] when the source cannot be
+/// represented by the compiler's byte-coordinate type.
+///
+/// # Example
+///
+/// ```
+/// use std::sync::Arc;
+/// use mib_rs::compile::{Definition, parse};
+/// use mib_rs::{SourceCandidate, SourceOrigin};
+///
+/// let bytes = Arc::<[u8]>::from(
+///     b"EXAMPLE-MIB DEFINITIONS ::= BEGIN\nvalue OBJECT IDENTIFIER ::= { 1 3 }\nEND"
+///         .as_slice(),
+/// );
+/// let source = SourceCandidate::new(
+///     "example-buffer",
+///     SourceOrigin::memory("example-buffer"),
+///     "EXAMPLE-MIB",
+///     Arc::clone(&bytes),
+/// );
+/// let (tree, diagnostics) = parse(source)?;
+///
+/// let module = tree.source_file().modules().next().unwrap();
+/// assert_eq!(module.header().unwrap().name().unwrap().text(), b"EXAMPLE-MIB");
+/// assert!(matches!(
+///     module.definitions().next(),
+///     Some(Definition::ValueAssignment(_))
+/// ));
+/// assert!(diagnostics.is_empty());
+/// for entry in diagnostics.iter() {
+///     // Locations are resolved only through their source-owning report.
+///     assert!(entry.slice().is_ok());
+/// }
+/// assert_eq!(tree.reconstruct_text(), bytes.as_ref());
+/// # Ok::<(), mib_rs::SourceRangeError>(())
+/// ```
+pub fn parse(source: SourceCandidate) -> Result<(SyntaxTree, DiagnosticReport), SourceRangeError> {
+    parse_with_config(source, &DiagnosticConfig::default())
+}
+
+/// Parse one owned source candidate with a specific diagnostic configuration.
+///
+/// This has the same lossless and source-owning behavior as [`parse`]. The
+/// configuration controls which diagnostics are collected and their effective
+/// severities; it does not make the CST parser reject recoverable input.
+///
+/// # Errors
+///
+/// Returns [`SourceRangeError::SourceTooLarge`] when the source cannot be
+/// represented by the compiler's byte-coordinate type.
+pub fn parse_with_config(
+    source: SourceCandidate,
     diag_config: &DiagnosticConfig,
-) -> (SyntaxTree<'src>, Vec<Diagnostic>) {
+) -> Result<(SyntaxTree, DiagnosticReport), SourceRangeError> {
+    let mut sources = SourceSet::new();
+    let document = sources.insert(
+        source.origin().clone(),
+        source.label(),
+        Arc::clone(source.shared_bytes()),
+    )?;
+    let sources = Arc::new(sources);
+    let (tree, diagnostics) = build_lossless_tree(Arc::clone(&sources), document, diag_config);
+    let report = DiagnosticReport::new(diagnostics, sources);
+    Ok((tree, report))
+}
+
+fn build_lossless_tree(
+    sources: Arc<SourceSet>,
+    document_id: SourceId,
+    diag_config: &DiagnosticConfig,
+) -> (SyntaxTree, Vec<Diagnostic>) {
+    let document = sources
+        .get(document_id)
+        .expect("the CST source was retained before parsing");
     let (tokens, mut diagnostics) =
         crate::token::tokenize_lossless_with_config(document, diag_config);
     let tokens = validate_tokens(document, tokens)
         .expect("lossless lexer must produce an ordered, source-complete token stream");
     let (root, parse_diagnostics) = parser::parse(document, &tokens, diag_config);
     diagnostics.extend(parse_diagnostics);
-    (SyntaxTree { document, root }, diagnostics)
+    (
+        SyntaxTree {
+            sources,
+            document: document_id,
+            root,
+        },
+        diagnostics,
+    )
 }
 
 /// A borrowed immutable syntax node.
@@ -400,7 +501,22 @@ mod tests {
     use crate::source::{SourceOrigin, SourceSet};
     use crate::types::{DiagCode, Severity};
 
-    fn with_document<T>(input: &[u8], f: impl FnOnce(&SourceDocument) -> T) -> T {
+    struct TestDocument {
+        sources: Arc<SourceSet>,
+        id: SourceId,
+    }
+
+    impl std::ops::Deref for TestDocument {
+        type Target = SourceDocument;
+
+        fn deref(&self) -> &Self::Target {
+            self.sources
+                .get(self.id)
+                .expect("the test source set retains its document")
+        }
+    }
+
+    fn with_document<T>(input: &[u8], f: impl FnOnce(&TestDocument) -> T) -> T {
         let mut sources = SourceSet::new();
         let id = sources
             .insert(
@@ -409,18 +525,24 @@ mod tests {
                 Arc::from(input),
             )
             .unwrap();
-        f(sources.get(id).unwrap())
+        let document = TestDocument {
+            sources: Arc::new(sources),
+            id,
+        };
+        f(&document)
     }
 
-    fn build(document: &SourceDocument) -> (SyntaxTree<'_>, Vec<Diagnostic>) {
+    fn build(document: &TestDocument) -> (SyntaxTree, Vec<Diagnostic>) {
         build_with_config(document, &DiagnosticConfig::default())
     }
 
-    fn build_with_config<'src>(
-        document: &'src SourceDocument,
+    fn build_with_config(
+        document: &TestDocument,
         config: &DiagnosticConfig,
-    ) -> (SyntaxTree<'src>, Vec<Diagnostic>) {
-        build_lossless_tree(document, config)
+    ) -> (SyntaxTree, Vec<Diagnostic>) {
+        let result = build_lossless_tree(Arc::clone(&document.sources), document.id, config);
+        assert!(std::ptr::eq(result.0.document(), &**document));
+        result
     }
 
     #[test]
@@ -436,6 +558,25 @@ mod tests {
             );
             assert_eq!(tree.reconstruct_text(), b"");
         });
+    }
+
+    #[test]
+    fn public_parse_tree_and_report_share_one_source_arena() {
+        let candidate = SourceCandidate::new(
+            "shared-arena-test",
+            SourceOrigin::memory("shared-arena-test"),
+            "SHARED-ARENA-MIB",
+            Arc::<[u8]>::from(b"SHARED-ARENA-MIB DEFINITIONS ::= BEGIN\n@\nEND".as_slice()),
+        );
+        let (tree, report) = parse(candidate).unwrap();
+
+        assert!(Arc::ptr_eq(&tree.sources, report.shared_sources()));
+        let entry = report
+            .iter()
+            .find(|entry| entry.slice().unwrap() == Some(b"@"))
+            .unwrap();
+        let document = entry.range().unwrap().unwrap().0;
+        assert!(std::ptr::eq(document, tree.document()));
     }
 
     #[test]
