@@ -179,7 +179,7 @@ assert_eq!(encoded.as_ref(), &[7]);
 The optional `mib-rs` binary provides commands for working with MIBs:
 
 ```bash
-cargo install mib-rs
+cargo install mib-rs --features cli
 ```
 
 ### Global options
@@ -262,7 +262,7 @@ mib-rs dump --report silent IF-MIB     # suppress diagnostics on stderr
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `serde` | yes | Serde support and JSON export |
-| `cli` | yes | CLI binary (`mib-rs`); enables `serde` |
+| `cli` | no | CLI binary (`mib-rs`); enables `serde` |
 
 To use the library without defaults:
 
