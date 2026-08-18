@@ -201,6 +201,7 @@ fn create_user_types(ctx: &mut ResolverContext) {
 /// SEQUENCE OF).
 pub(super) fn syntax_to_base_type(syntax: &ir::TypeSyntax) -> BaseType {
     match syntax {
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => BaseType::Unknown,
         ir::TypeSyntax::IntegerEnum { .. } => BaseType::Integer32,
         ir::TypeSyntax::Bits { .. } => BaseType::Bits,
         ir::TypeSyntax::OctetString { .. } => BaseType::OctetString,
@@ -311,7 +312,23 @@ fn resolve_type_bases(ctx: &mut ResolverContext) {
     link_primitive_syntax_parents(ctx, &cycle_type_ids);
     link_rfc1213_types_to_tcs(ctx, &cycle_type_ids);
     inherit_base_types(ctx);
+    normalize_named_values_for_base(ctx);
     compute_effective_constraints(ctx);
+}
+
+/// The grammar represents a named refinement of a referenced type with the
+/// same node used for INTEGER enumerations. Once parent bases are known, move
+/// those direct values to BITS when the referenced type is BITS-based.
+fn normalize_named_values_for_base(ctx: &mut ResolverContext) {
+    for index in 0..ctx.mib.types_slice().len() {
+        let type_id = TypeId::new(index as u32);
+        let typ = ctx.mib.raw().type_(type_id);
+        if typ.base != BaseType::Bits || typ.enums.is_empty() || !typ.bits.is_empty() {
+            continue;
+        }
+        let values = std::mem::take(&mut ctx.mib.type_mut(type_id).enums);
+        ctx.mib.type_mut(type_id).bits = values;
+    }
 }
 
 /// Build a dependency graph of types and resolve parent references in topo order.
@@ -501,6 +518,7 @@ fn extract_type_ref_name(syntax: &ir::TypeSyntax) -> Option<&str> {
                 Some(name)
             }
         }
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => Some(base),
         ir::TypeSyntax::Constrained { base, .. } => extract_type_ref_name(base),
         _ => None,
     }

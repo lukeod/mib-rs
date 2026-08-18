@@ -785,6 +785,9 @@ fn declared_identity(
 ) -> Option<ModuleIdentityData> {
     let definition = &ctx.modules[od.ir_mod.index()].definitions[od.def_idx];
     let oid = ctx.mib.tree().oid_of(node_id).clone();
+    let oid_refs = get_oid_assignment(&ctx.modules[od.ir_mod.index()], od.def_idx)
+        .map(|assignment| ctx.build_oid_refs(od.ir_mod, assignment))
+        .unwrap_or_default();
     let empty = String::new;
 
     let identity = match definition {
@@ -807,6 +810,7 @@ fn declared_identity(
                     range: revision.range,
                 })
                 .collect(),
+            oid_refs,
             range: item.range,
         },
         ir::Definition::ObjectIdentity(item) => ModuleIdentityData {
@@ -820,6 +824,7 @@ fn declared_identity(
             organization: empty(),
             contact_info: empty(),
             revisions: Vec::new(),
+            oid_refs,
             range: item.range,
         },
         ir::Definition::ValueAssignment(item) => ModuleIdentityData {
@@ -833,6 +838,7 @@ fn declared_identity(
             organization: empty(),
             contact_info: empty(),
             revisions: Vec::new(),
+            oid_refs,
             range: item.range,
         },
         _ => return None,

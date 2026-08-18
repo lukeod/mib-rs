@@ -12,7 +12,7 @@ identityOnlyMib MODULE-IDENTITY
         "Example contact"
     DESCRIPTION
         "An identity-only test module.
-        Continued module description."
+  Continued module description."
     REVISION "202601010000Z"
     DESCRIPTION
         "Initial revision."
@@ -24,7 +24,7 @@ identityFirst OBJECT-IDENTITY
     STATUS current
     DESCRIPTION
         "The first identity.
-        Continued first identity."
+                 Continued first identity."
     ::= { identityObjects 1 }
 
 identitySecond OBJECT-IDENTITY

@@ -1,0 +1,181 @@
+WRITER-OBJECTS-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION
+        FROM SNMPv2-TC;
+
+writerObjectsMib MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "Writer tests"
+    CONTACT-INFO "Writer tests"
+    DESCRIPTION "Types and objects."
+    ::= { enterprises 424243 }
+
+writerObjects OBJECT IDENTIFIER ::= { writerObjectsMib 1 }
+
+PlainString ::= OCTET STRING (SIZE (1..8 | 12))
+
+DisplayRange ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d-2"
+    STATUS deprecated
+    DESCRIPTION "A ranged value."
+    REFERENCE "Writer reference."
+    SYNTAX Integer32 (-20..20 | 100)
+
+Mode ::= TEXTUAL-CONVENTION
+    STATUS current
+    DESCRIPTION "An enumeration."
+    SYNTAX INTEGER { off(0), on(1), testing(7) } (0..7)
+
+Flags ::= TEXTUAL-CONVENTION
+    STATUS current
+    DESCRIPTION "Named bits."
+    SYNTAX BITS { first(0), fourth(3), ninth(8) } (SIZE (0..9))
+
+writerScalar OBJECT-TYPE
+    SYNTAX DisplayRange (-10..10)
+    UNITS "hundredths"
+    MAX-ACCESS read-write
+    STATUS current
+    DESCRIPTION "A scalar.
+  Continued scalar."
+    REFERENCE "Scalar reference.
+	Tabbed reference."
+    DEFVAL { 7 }
+    ::= { writerObjects 1 }
+
+writerMode OBJECT-TYPE
+    SYNTAX Mode
+    MAX-ACCESS read-only
+    STATUS deprecated
+    DESCRIPTION "Mode scalar."
+    DEFVAL { on }
+    ::= { writerObjects 2 }
+
+writerFlags OBJECT-TYPE
+    SYNTAX BITS { local(1), remote(5) } (SIZE (1..6))
+    MAX-ACCESS read-create
+    STATUS current
+    DESCRIPTION "Inline bits."
+    DEFVAL { { local, remote } }
+    ::= { writerObjects 3 }
+
+writerText OBJECT-TYPE
+    SYNTAX OCTET STRING (SIZE (0..32))
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Text scalar."
+    DEFVAL { "a ""quoted"" value" }
+    ::= { writerObjects 4 }
+
+writerOid OBJECT-TYPE
+    SYNTAX OBJECT IDENTIFIER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "OID scalar."
+    DEFVAL { writerObjects }
+    ::= { writerObjects 5 }
+
+writerUint OBJECT-TYPE
+    SYNTAX Counter64
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Unsigned default representation."
+    DEFVAL { 18446744073709551615 }
+    ::= { writerObjects 6 }
+
+writerHex OBJECT-TYPE
+    SYNTAX OCTET STRING
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Hex default."
+    DEFVAL { 'FF00'H }
+    ::= { writerObjects 7 }
+
+writerBinary OBJECT-TYPE
+    SYNTAX OCTET STRING
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Binary default."
+    DEFVAL { '10100101'B }
+    ::= { writerObjects 8 }
+
+writerRestricted OBJECT-TYPE
+    SYNTAX Mode { off(0), on(1) } (0..1)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Restricted named enumeration."
+    DEFVAL { off }
+    ::= { writerObjects 9 }
+
+writerTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SpecialEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "A table."
+    ::= { writerObjects 10 }
+
+writerEntry OBJECT-TYPE
+    SYNTAX SpecialEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "A row."
+    INDEX { writerIndex, IMPLIED writerName }
+    ::= { writerTable 1 }
+
+writerIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..100)
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Index."
+    ::= { writerEntry 1 }
+
+writerName OBJECT-TYPE
+    SYNTAX PlainString
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Name."
+    ::= { writerEntry 2 }
+
+writerValue OBJECT-TYPE
+    SYNTAX Flags
+    MAX-ACCESS read-only
+    STATUS obsolete
+    DESCRIPTION "Value."
+    ::= { writerEntry 3 }
+
+writerAugmentTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF WriterAugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Augment table."
+    ::= { writerObjects 11 }
+
+writerAugmentEntry OBJECT-TYPE
+    SYNTAX WriterAugmentEntry
+    MAX-ACCESS not-accessible
+    STATUS current
+    DESCRIPTION "Augment row."
+    AUGMENTS { writerEntry }
+    ::= { writerAugmentTable 1 }
+
+writerExtra OBJECT-TYPE
+    SYNTAX INTEGER { small(-1), large(9) } (-1..9)
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Augment column."
+    ::= { writerAugmentEntry 1 }
+
+SpecialEntry ::= SEQUENCE {
+    writerIndex Integer32,
+    writerName PlainString,
+    writerValue Flags
+}
+
+WriterAugmentEntry ::= SEQUENCE {
+    writerExtra INTEGER
+}
+
+END

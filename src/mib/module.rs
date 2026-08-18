@@ -48,6 +48,7 @@ pub struct ModuleIdentityData {
     pub(crate) organization: String,
     pub(crate) contact_info: String,
     pub(crate) revisions: Vec<Revision>,
+    pub(crate) oid_refs: Vec<OidRef>,
     pub(crate) range: SourceRange,
 }
 
@@ -100,6 +101,27 @@ impl ModuleIdentityData {
     /// Return the revisions for a `MODULE-IDENTITY` in declaration order.
     pub fn revisions(&self) -> &[Revision] {
         &self.revisions
+    }
+
+    /// Return symbolic references with exact resolved module/version provenance.
+    pub fn oid_refs(&self) -> &[OidRef] {
+        &self.oid_refs
+    }
+
+    /// Return the exact symbolic parent reference used by this declaration.
+    pub fn declared_oid_parent(&self) -> Option<&OidRef> {
+        let parent = self.oid.parent()?;
+        self.oid_refs
+            .iter()
+            .rev()
+            .find(|reference| reference.oid() == Some(&parent))
+    }
+
+    /// Return the exact symbolic parent name, or an empty string when the
+    /// assignment used no exact symbolic parent.
+    pub fn declared_oid_parent_name(&self) -> &str {
+        self.declared_oid_parent()
+            .map_or("", |reference| reference.name.as_str())
     }
 
     /// Return the complete source range of the declaration.

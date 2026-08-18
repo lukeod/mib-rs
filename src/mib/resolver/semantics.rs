@@ -13,7 +13,7 @@
 //! - Resolves AUGMENTS references, INDEX object linkage, and
 //!   NOTIFICATION-TYPE OBJECTS references.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ir;
 use crate::mib::Oid;
@@ -35,8 +35,9 @@ use super::context::{IrModuleId, ResolverContext, UnresolvedReason};
 /// Infers node kinds, creates objects/notifications/groups/compliances/capabilities,
 /// resolves INDEX and AUGMENTS references, and validates table structure.
 pub(super) fn resolve_semantics(ctx: &mut ResolverContext) {
+    let declared_structures = collect_declared_object_structures(ctx);
     infer_node_kinds(ctx);
-    create_resolved_objects(ctx);
+    create_resolved_objects(ctx, &declared_structures);
     validate_table_semantics(ctx);
     link_object_indexes(ctx);
     check_augments_nesting(ctx);
@@ -144,7 +145,10 @@ fn infer_node_kinds(ctx: &mut ResolverContext) {
 }
 
 /// Create resolved Object instances from OBJECT-TYPE definitions.
-fn create_resolved_objects(ctx: &mut ResolverContext) {
+fn create_resolved_objects(
+    ctx: &mut ResolverContext,
+    declared_structures: &HashMap<IrModuleId, DeclaredObjectStructure>,
+) {
     let work = ctx.collect_definitions(|def| matches!(def, ir::Definition::ObjectType(_)));
     ctx.mib.objects.reserve(work.len());
 
@@ -184,6 +188,25 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         let oid = ot.oid.clone();
 
         let mut obj = ObjectData::new(name.clone());
+        if let Some(structure) = declared_structures.get(&ir_id) {
+            obj.declared_kind = structure.kind(&name);
+            obj.declared_table_name = structure
+                .row_to_table
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            obj.declared_row_name = structure
+                .table_to_row
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            obj.declared_column_names = structure
+                .row_to_columns
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            obj.declared_structure_error = structure.errors.get(&name).cloned().unwrap_or_default();
+        }
         obj.entity.range = Some(range);
         obj.entity.node = node_id;
         obj.entity.module = Some(resolved_mod);
@@ -205,8 +228,24 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         let obj_name = obj.entity.name.clone();
         let resolved = resolve_type_syntax(ctx, ir_id, &syntax, &obj_name, syntax.range());
         obj.typ = resolved.type_id;
+        let direct_values_are_bits = resolved.type_id.is_some_and(|type_id| {
+            ctx.mib
+                .raw()
+                .type_(type_id)
+                .effective_base(ctx.mib.types_slice())
+                == BaseType::Bits
+        });
+        if direct_values_are_bits && resolved.bits.is_empty() {
+            obj.declared_bits = resolved.enums.clone();
+        } else {
+            obj.declared_enums = resolved.enums.clone();
+            obj.declared_bits = resolved.bits.clone();
+        }
         obj.enums = resolved.enums;
         obj.bits = resolved.bits;
+        if direct_values_are_bits && obj.bits.is_empty() {
+            obj.bits = std::mem::take(&mut obj.enums);
+        }
         obj.sizes = resolved.sizes;
         obj.ranges = resolved.ranges;
         obj.declared_sizes = resolved.declared_sizes;
@@ -229,9 +268,21 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         compute_effective_values(ctx, &mut obj);
 
         // Build OID refs from the OID assignment.
-        obj.entity.oid_refs = build_oid_refs(&oid);
+        obj.entity.oid_refs = ctx.build_oid_refs(ir_id, &oid);
+        let parent_oid = obj
+            .entity
+            .node
+            .and_then(|node| ctx.mib.tree().oid_of(node).parent());
+        obj.declared_oid_parent = parent_oid.as_ref().and_then(|parent_oid| {
+            obj.entity
+                .oid_refs
+                .iter()
+                .rev()
+                .find(|reference| reference.oid() == Some(parent_oid))
+                .cloned()
+        });
 
-        // Store sequence type name for rows.
+        // Store the declared row entry type name on table objects.
         if let ir::TypeSyntax::SequenceOf { entry_type, .. } = &syntax {
             obj.sequence_type_name = entry_type.clone();
         }
@@ -267,6 +318,401 @@ fn create_resolved_objects(ctx: &mut ResolverContext) {
         object_count = created_object_count,
         "created resolved objects",
     );
+}
+
+#[derive(Default)]
+struct DeclaredObjectStructure {
+    kinds: HashMap<String, Kind>,
+    table_to_row: HashMap<String, String>,
+    row_to_table: HashMap<String, String>,
+    row_to_columns: HashMap<String, Vec<String>>,
+    column_to_row: HashMap<String, String>,
+    errors: HashMap<String, String>,
+    #[cfg(test)]
+    work_units: usize,
+}
+
+impl DeclaredObjectStructure {
+    fn kind(&self, name: &str) -> Kind {
+        self.kinds.get(name).copied().unwrap_or(Kind::Unknown)
+    }
+
+    fn mark_error(&mut self, name: &str, reason: impl Into<String>) {
+        self.errors
+            .entry(name.to_owned())
+            .or_insert_with(|| reason.into());
+    }
+}
+
+#[derive(Clone)]
+struct ObjectShape {
+    name: String,
+    syntax_name: String,
+    explicit_parent: String,
+    oid: Option<Oid>,
+    parent_oid: Option<Oid>,
+    indexed: bool,
+}
+
+fn collect_declared_object_structures(
+    ctx: &ResolverContext,
+) -> HashMap<IrModuleId, DeclaredObjectStructure> {
+    ctx.all_modules()
+        .map(|(ir_mod, module)| (ir_mod, collect_module_object_structure(ctx, ir_mod, module)))
+        .collect()
+}
+
+fn collect_module_object_structure(
+    ctx: &ResolverContext,
+    ir_mod: IrModuleId,
+    module: &ir::Module,
+) -> DeclaredObjectStructure {
+    let object_names = module
+        .definitions
+        .iter()
+        .filter_map(|definition| match definition {
+            ir::Definition::ObjectType(object) => Some(object.name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut structure = DeclaredObjectStructure::default();
+    #[cfg(test)]
+    {
+        structure.work_units += module.definitions.len();
+    }
+    let mut objects = HashMap::with_capacity(object_names.len());
+    let mut object_order = Vec::with_capacity(object_names.len());
+    let mut sequence_fields = HashMap::<String, Vec<String>>::new();
+
+    for definition in &module.definitions {
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        match definition {
+            ir::Definition::TypeDef(typ) => {
+                if let ir::TypeSyntax::Sequence { fields, .. } = &typ.syntax {
+                    sequence_fields.insert(
+                        typ.name.clone(),
+                        fields.iter().map(|field| field.name.clone()).collect(),
+                    );
+                }
+            }
+            ir::Definition::ObjectType(object) => {
+                let oid = ctx
+                    .module_symbol_to_node
+                    .get(&ir_mod)
+                    .and_then(|symbols| symbols.get(&object.name))
+                    .map(|node| ctx.mib.tree().oid_of(*node).clone());
+                let parent_oid = oid.as_ref().and_then(Oid::parent);
+                let explicit_parent =
+                    declared_local_parent(&object.oid, module.name.as_str(), &object_names)
+                        .unwrap_or_default();
+                let syntax_name = declared_syntax_name(&object.syntax).unwrap_or_default();
+                let indexed = !object.index.is_empty() || !object.augments.is_empty();
+                let kind = if matches!(object.syntax, ir::TypeSyntax::SequenceOf { .. }) {
+                    Kind::Table
+                } else if indexed {
+                    Kind::Row
+                } else {
+                    Kind::Scalar
+                };
+                structure.kinds.insert(object.name.clone(), kind);
+                objects.insert(
+                    object.name.clone(),
+                    ObjectShape {
+                        name: object.name.clone(),
+                        syntax_name,
+                        explicit_parent,
+                        oid,
+                        parent_oid,
+                        indexed,
+                    },
+                );
+                object_order.push(object.name.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let mut rows_by_explicit_table_and_syntax = HashMap::<(String, String), Vec<String>>::new();
+    let mut rows_by_parent_oid_and_syntax = HashMap::<(Oid, String), Vec<String>>::new();
+    for name in &object_order {
+        let object = &objects[name];
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        if !object.explicit_parent.is_empty() && !object.syntax_name.is_empty() {
+            rows_by_explicit_table_and_syntax
+                .entry((object.explicit_parent.clone(), object.syntax_name.clone()))
+                .or_default()
+                .push(object.name.clone());
+        }
+        if let Some(parent_oid) = &object.parent_oid
+            && !object.syntax_name.is_empty()
+        {
+            rows_by_parent_oid_and_syntax
+                .entry((parent_oid.clone(), object.syntax_name.clone()))
+                .or_default()
+                .push(object.name.clone());
+        }
+    }
+
+    #[cfg(test)]
+    {
+        structure.work_units += object_order.len();
+    }
+    let tables = object_order
+        .iter()
+        .map(|name| &objects[name])
+        .filter(|object| structure.kind(&object.name) == Kind::Table)
+        .cloned()
+        .collect::<Vec<_>>();
+    for table in &tables {
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        if table.syntax_name.is_empty() {
+            continue;
+        }
+        let entry_type = table.syntax_name.as_str();
+        let explicit_key = (table.name.clone(), entry_type.to_owned());
+        let candidates = rows_by_explicit_table_and_syntax
+            .get(&explicit_key)
+            .or_else(|| {
+                table.oid.as_ref().and_then(|oid| {
+                    rows_by_parent_oid_and_syntax.get(&(oid.clone(), entry_type.to_owned()))
+                })
+            });
+        match candidates.map(Vec::as_slice).unwrap_or_default() {
+            [row] => link_table_row(&mut structure, &table.name, row),
+            [] => structure.mark_error(
+                &table.name,
+                format!("has no exact row declaration for entry type {entry_type}"),
+            ),
+            rows => {
+                structure.mark_error(
+                    &table.name,
+                    format!("has ambiguous row declarations: {}", rows.join(", ")),
+                );
+                for row in rows {
+                    structure.mark_error(row, "is associated with multiple table declarations");
+                }
+            }
+        }
+    }
+
+    // Indexed/AUGMENTS objects remain rows even when their table relationship
+    // is malformed or unresolved. Structurally linked children of tables are
+    // rows even when they omit INDEX/AUGMENTS.
+    for name in &object_order {
+        let object = &objects[name];
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        if object.indexed {
+            structure.kinds.insert(object.name.clone(), Kind::Row);
+        }
+    }
+
+    let row_names = structure
+        .kinds
+        .iter()
+        .filter_map(|(name, kind)| (*kind == Kind::Row).then_some(name.clone()))
+        .collect::<HashSet<_>>();
+    #[cfg(test)]
+    {
+        structure.work_units += structure.kinds.len();
+    }
+    let row_order = object_order
+        .iter()
+        .filter(|name| row_names.contains(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    #[cfg(test)]
+    {
+        structure.work_units += object_order.len();
+    }
+    let mut rows_by_oid = HashMap::<Oid, Vec<String>>::new();
+    for row in &row_order {
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        if let Some(oid) = objects.get(row).and_then(|object| object.oid.clone()) {
+            rows_by_oid.entry(oid).or_default().push(row.clone());
+        }
+    }
+
+    for table in &tables {
+        let Some(row) = structure.table_to_row.get(&table.name).cloned() else {
+            continue;
+        };
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        let Some(entry_type) = objects.get(&row).map(|object| object.syntax_name.as_str()) else {
+            continue;
+        };
+        if let Some(fields) = sequence_fields.get(entry_type) {
+            for field in fields {
+                #[cfg(test)]
+                {
+                    structure.work_units += 1;
+                }
+                if objects.contains_key(field) {
+                    link_row_column(&mut structure, &row, field);
+                } else {
+                    structure.mark_error(
+                        &table.name,
+                        format!("entry type {entry_type} names missing column {field}"),
+                    );
+                }
+            }
+        }
+    }
+
+    for name in &object_order {
+        let object = &objects[name];
+        #[cfg(test)]
+        {
+            structure.work_units += 1;
+        }
+        if row_names.contains(&object.explicit_parent) {
+            link_row_column(&mut structure, &object.explicit_parent, &object.name);
+            continue;
+        }
+        if let Some(parent_oid) = &object.parent_oid
+            && let Some(rows) = rows_by_oid.get(parent_oid).map(Vec::as_slice)
+        {
+            match rows {
+                [row] => link_row_column(&mut structure, row, &object.name),
+                [] => {}
+                rows => {
+                    if !structure.column_to_row.contains_key(&object.name) {
+                        structure.mark_error(
+                            &object.name,
+                            format!("has an ambiguous numeric row parent: {}", rows.join(", ")),
+                        );
+                        for row in rows {
+                            structure.mark_error(
+                                row,
+                                format!("has ambiguous numeric child declaration {}", object.name),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for columns in structure.row_to_columns.values_mut() {
+        #[cfg(test)]
+        {
+            structure.work_units += columns.len();
+        }
+        let mut seen = HashSet::new();
+        columns.retain(|column| seen.insert(column.clone()));
+    }
+    structure
+}
+
+fn declared_syntax_name(syntax: &ir::TypeSyntax) -> Option<String> {
+    match syntax {
+        ir::TypeSyntax::TypeRef { name, .. } => Some(name.clone()),
+        ir::TypeSyntax::IntegerEnum { base, .. } if !base.is_empty() => Some(base.clone()),
+        ir::TypeSyntax::Constrained { base, .. } => declared_syntax_name(base),
+        ir::TypeSyntax::SequenceOf { entry_type, .. } => Some(entry_type.clone()),
+        _ => None,
+    }
+}
+
+fn declared_local_parent(
+    oid: &ir::OidAssignment,
+    module_name: &str,
+    object_names: &HashSet<String>,
+) -> Option<String> {
+    oid.components.iter().rev().find_map(|component| {
+        let name = match component {
+            ir::OidComponent::Name { name, .. } | ir::OidComponent::NamedNumber { name, .. } => {
+                name
+            }
+            ir::OidComponent::QualifiedName { module, name, .. }
+            | ir::OidComponent::QualifiedNamedNumber { module, name, .. }
+                if module == module_name =>
+            {
+                name
+            }
+            _ => return None,
+        };
+        object_names.contains(name).then(|| name.clone())
+    })
+}
+
+fn link_table_row(structure: &mut DeclaredObjectStructure, table: &str, row: &str) {
+    if let Some(existing) = structure.table_to_row.get(table)
+        && existing != row
+    {
+        structure.mark_error(table, "has multiple exact row declarations");
+        return;
+    }
+    if let Some(existing) = structure.row_to_table.get(row)
+        && existing != table
+    {
+        structure.mark_error(row, "is associated with multiple table declarations");
+        structure.mark_error(table, "shares its row with another table declaration");
+        return;
+    }
+    structure
+        .table_to_row
+        .insert(table.to_owned(), row.to_owned());
+    structure
+        .row_to_table
+        .insert(row.to_owned(), table.to_owned());
+    structure.kinds.insert(row.to_owned(), Kind::Row);
+}
+
+fn link_row_column(structure: &mut DeclaredObjectStructure, row: &str, column: &str) {
+    if row == column {
+        structure.mark_error(row, "cannot use a row declaration as its own column");
+        return;
+    }
+    if matches!(structure.kind(column), Kind::Table | Kind::Row) {
+        structure.mark_error(
+            row,
+            format!("uses table or row declaration {column} as a sequence field"),
+        );
+        structure.mark_error(column, "is used as a column by conflicting topology");
+        return;
+    }
+    if let Some(existing) = structure.column_to_row.get(column)
+        && existing != row
+    {
+        let existing = existing.clone();
+        structure.mark_error(
+            row,
+            format!("shares column declaration {column} with row {existing}"),
+        );
+        structure.mark_error(
+            &existing,
+            format!("shares column declaration {column} with row {row}"),
+        );
+        structure.mark_error(column, "is linked to multiple row declarations");
+        return;
+    }
+    structure
+        .column_to_row
+        .insert(column.to_owned(), row.to_owned());
+    structure.kinds.insert(column.to_owned(), Kind::Column);
+    structure
+        .row_to_columns
+        .entry(row.to_owned())
+        .or_default()
+        .push(column.to_owned());
 }
 
 /// Resolve type syntax into a SyntaxConstraints, handling type lookups,
@@ -890,7 +1336,7 @@ fn create_resolved_notifications(ctx: &mut ResolverContext) {
 
         // Build OID refs.
         if let Some(oid) = &oid {
-            nd.entity.oid_refs = build_oid_refs(oid);
+            nd.entity.oid_refs = ctx.build_oid_refs(ir_id, oid);
         }
 
         let notif_id = ctx.mib.add_notification(nd);
@@ -976,7 +1422,7 @@ fn create_resolved_groups(ctx: &mut ResolverContext) {
         gd.entity.description = description;
         gd.entity.reference = reference;
         gd.is_notification_group = is_notif;
-        gd.entity.oid_refs = build_oid_refs(&oid);
+        gd.entity.oid_refs = ctx.build_oid_refs(ir_id, &oid);
 
         let mut has_objects = false;
         let mut has_notifications = false;
@@ -1363,7 +1809,7 @@ fn create_resolved_compliances(ctx: &mut ResolverContext) {
         cd.entity.status = status;
         cd.entity.description = description;
         cd.entity.reference = reference;
-        cd.entity.oid_refs = build_oid_refs(&oid);
+        cd.entity.oid_refs = ctx.build_oid_refs(ir_id, &oid);
         cd.modules = comp_modules;
 
         let comp_id = ctx.mib.add_compliance(cd);
@@ -1485,7 +1931,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         cap.entity.description = description;
         cap.entity.reference = reference;
         cap.product_release = product_release;
-        cap.entity.oid_refs = build_oid_refs(&oid);
+        cap.entity.oid_refs = ctx.build_oid_refs(ir_id, &oid);
 
         for sd in &supports_data {
             let mut obj_vars = Vec::new();
@@ -1652,7 +2098,8 @@ fn convert_defval(
                         ctx.mark_import_used(ir_mod, label);
                     }
                     let oid = ctx.mib.tree().oid_of(node_id).clone();
-                    return DefVal::oid(oid, label.clone());
+                    let reference = ctx.oid_ref_for_name(ir_mod, label, defval_range);
+                    return DefVal::oid_with_ref(oid, label.clone(), reference);
                 }
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
@@ -1677,7 +2124,8 @@ fn convert_defval(
                     ctx.mark_import_used(ir_mod, name);
                 }
                 let oid = ctx.mib.tree().oid_of(node_id).clone();
-                DefVal::oid(oid, name.clone())
+                let reference = ctx.oid_ref_for_name(ir_mod, name, defval_range);
+                DefVal::oid_with_ref(oid, name.clone(), reference)
             } else {
                 ctx.emit_diagnostic(
                     crate::types::DiagCode::DefvalUnresolved,
@@ -1692,7 +2140,15 @@ fn convert_defval(
             // Try to resolve the OID from components.
             let raw = format_oid_components(components);
             if let Some(oid) = resolve_defval_oid(ctx, ir_mod, components, defval_range) {
-                DefVal::oid(oid, raw)
+                let references = ctx.build_oid_component_refs(ir_mod, components);
+                if components.len() == 1
+                    && let [reference] = references.as_slice()
+                    && reference.oid() == Some(&oid)
+                {
+                    DefVal::oid_with_ref(oid, raw, reference.clone())
+                } else {
+                    DefVal::oid(oid, raw)
+                }
             } else {
                 DefVal::unset()
             }
@@ -1929,30 +2385,13 @@ fn is_sequence_type_def(ctx: &ResolverContext, ir_mod: IrModuleId, name: &str) -
     false
 }
 
-fn build_oid_refs(oid: &ir::OidAssignment) -> Vec<OidRef> {
-    let mut refs = Vec::new();
-    for comp in &oid.components {
-        match comp {
-            ir::OidComponent::Name { name, range }
-            | ir::OidComponent::NamedNumber { name, range, .. }
-            | ir::OidComponent::QualifiedName { name, range, .. }
-            | ir::OidComponent::QualifiedNamedNumber { name, range, .. } => {
-                refs.push(OidRef {
-                    name: name.clone(),
-                    range: *range,
-                });
-            }
-            _ => {}
-        }
-    }
-    refs
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use super::{hex_decode, resolve_defval_oid, resolve_type_syntax};
+    use super::{
+        collect_module_object_structure, hex_decode, resolve_defval_oid, resolve_type_syntax,
+    };
     use crate::ir::{self, Module};
     use crate::mib::resolver::context::{IrModuleId, ResolverContext};
     use crate::mib::typedef::TypeData;
@@ -2113,5 +2552,56 @@ mod tests {
             assert_eq!(constraints.type_id, Some(expected), "primitive {name}");
         }
         assert!(ctx.mib.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn declared_structure_indexing_has_linear_work_bound() {
+        fn measure(tables: usize) -> (usize, usize) {
+            let mut source = String::from(
+                "STRUCTURE-WORK-MIB DEFINITIONS ::= BEGIN\nroot OBJECT IDENTIFIER ::= { 1 3 6 }\n",
+            );
+            for index in 0..tables {
+                source.push_str(&format!(
+                    "t{index} OBJECT-TYPE SYNTAX SEQUENCE OF E{index} ACCESS not-accessible STATUS mandatory ::= {{ root {} }}\n",
+                    index + 1
+                ));
+                source.push_str(&format!(
+                    "e{index} OBJECT-TYPE SYNTAX E{index} ACCESS not-accessible STATUS mandatory INDEX {{ c{index} }} ::= {{ t{index} 1 }}\n"
+                ));
+                source.push_str(&format!(
+                    "c{index} OBJECT-TYPE SYNTAX INTEGER ACCESS read-only STATUS mandatory ::= {{ e{index} 1 }}\n"
+                ));
+                source.push_str(&format!("E{index} ::= SEQUENCE {{ c{index} INTEGER }}\n"));
+            }
+            source.push_str("END\n");
+
+            let mut sources = SourceSet::new();
+            let source_id = sources
+                .insert(
+                    SourceOrigin::memory("structure-work"),
+                    "structure-work",
+                    Arc::from(source.into_bytes()),
+                )
+                .unwrap();
+            let config = DiagnosticConfig::silent();
+            let document = sources.get(source_id).unwrap();
+            let parsed = crate::parser::parse(document, &config)
+                .into_iter()
+                .next()
+                .unwrap();
+            let module = crate::lower::lower(parsed, document, &config);
+            let definition_count = module.definitions.len();
+            let ctx = ResolverContext::new(ResolverStrictness::Normal, config, sources);
+            let structure = collect_module_object_structure(&ctx, IrModuleId(0), &module);
+            assert_eq!(structure.table_to_row.len(), tables);
+            assert_eq!(structure.row_to_columns.len(), tables);
+            assert!(structure.work_units <= definition_count * 8);
+            (definition_count, structure.work_units)
+        }
+
+        let (small_definitions, small_work) = measure(64);
+        let (large_definitions, large_work) = measure(128);
+        assert_eq!(large_definitions, small_definitions * 2 - 1);
+        assert!(large_work <= small_work * 2);
     }
 }

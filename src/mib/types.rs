@@ -316,6 +316,7 @@ pub struct DefVal {
     pub(crate) kind: DefValKind,
     pub(crate) value: DefValValue,
     pub(crate) raw: String,
+    pub(crate) oid_ref: Option<OidRef>,
 }
 
 /// The interpreted value of a DEFVAL clause.
@@ -348,6 +349,7 @@ impl DefVal {
             kind: DefValKind::Unset,
             value: DefValValue::None,
             raw: String::new(),
+            oid_ref: None,
         }
     }
 
@@ -357,6 +359,7 @@ impl DefVal {
             kind: DefValKind::Int,
             value: DefValValue::Int(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -366,6 +369,7 @@ impl DefVal {
             kind: DefValKind::Uint,
             value: DefValValue::Uint(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -375,6 +379,7 @@ impl DefVal {
             kind: DefValKind::String,
             value: DefValValue::String(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -384,6 +389,7 @@ impl DefVal {
             kind: DefValKind::Bytes,
             value: DefValValue::Bytes(v),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -393,6 +399,7 @@ impl DefVal {
             kind: DefValKind::Enum,
             value: DefValValue::Enum(label),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -402,6 +409,7 @@ impl DefVal {
             kind: DefValKind::Bits,
             value: DefValValue::Bits(labels),
             raw,
+            oid_ref: None,
         }
     }
 
@@ -411,6 +419,16 @@ impl DefVal {
             kind: DefValKind::Oid,
             value: DefValValue::Oid(oid),
             raw,
+            oid_ref: None,
+        }
+    }
+
+    pub(crate) fn oid_with_ref(oid: Oid, raw: String, oid_ref: OidRef) -> Self {
+        DefVal {
+            kind: DefValKind::Oid,
+            value: DefValValue::Oid(oid),
+            raw,
+            oid_ref: Some(oid_ref),
         }
     }
 
@@ -427,6 +445,11 @@ impl DefVal {
     /// Return the interpreted [`DefValValue`].
     pub fn value(&self) -> &DefValValue {
         &self.value
+    }
+
+    /// Return the exact symbolic OID reference used by this default value.
+    pub fn oid_ref(&self) -> Option<&OidRef> {
+        self.oid_ref.as_ref()
     }
 
     /// Return `true` if no default value was specified.
@@ -669,6 +692,20 @@ pub struct OidRef {
     pub name: String,
     /// Source location of this reference.
     pub range: SourceRange,
+    pub(crate) module: Option<ModuleId>,
+    pub(crate) oid: Option<Oid>,
+}
+
+impl OidRef {
+    /// Return the exact resolved defining module/version, when known.
+    pub fn module_id(&self) -> Option<ModuleId> {
+        self.module
+    }
+
+    /// Return the resolved numeric OID of the referenced symbol, when known.
+    pub fn oid(&self) -> Option<&Oid> {
+        self.oid.as_ref()
+    }
 }
 
 // Arena index types for the resolved model.

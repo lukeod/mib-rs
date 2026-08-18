@@ -269,6 +269,112 @@ impl ResolverContext {
         None
     }
 
+    /// Retain symbolic OID references with the exact module version selected
+    /// by module scope, import resolution, or foundation fallback.
+    pub fn build_oid_refs(&self, mod_id: IrModuleId, oid: &ir::OidAssignment) -> Vec<OidRef> {
+        self.build_oid_component_refs(mod_id, &oid.components)
+    }
+
+    pub fn build_oid_component_refs(
+        &self,
+        mod_id: IrModuleId,
+        components: &[ir::OidComponent],
+    ) -> Vec<OidRef> {
+        components
+            .iter()
+            .filter_map(|component| {
+                let (name, range, target) = match component {
+                    ir::OidComponent::Name { name, range }
+                    | ir::OidComponent::NamedNumber { name, range, .. } => {
+                        (name, *range, self.oid_ref_target(mod_id, name))
+                    }
+                    ir::OidComponent::QualifiedName {
+                        module,
+                        name,
+                        range,
+                    }
+                    | ir::OidComponent::QualifiedNamedNumber {
+                        module,
+                        name,
+                        range,
+                        ..
+                    } => (
+                        name,
+                        *range,
+                        self.module_index.get(module).and_then(|versions| {
+                            versions.iter().copied().find(|version| {
+                                self.module_symbol_to_node
+                                    .get(version)
+                                    .is_some_and(|symbols| symbols.contains_key(name))
+                            })
+                        }),
+                    ),
+                    ir::OidComponent::Number { .. } => return None,
+                };
+                let node = target.and_then(|target| {
+                    self.module_symbol_to_node
+                        .get(&target)
+                        .and_then(|symbols| symbols.get(name))
+                        .copied()
+                });
+                Some(OidRef {
+                    name: name.clone(),
+                    range,
+                    module: target.and_then(|target| self.module_to_resolved.get(&target).copied()),
+                    oid: node.map(|node| self.mib.tree().oid_of(node).clone()),
+                })
+            })
+            .collect()
+    }
+
+    pub fn oid_ref_for_name(&self, mod_id: IrModuleId, name: &str, range: SourceRange) -> OidRef {
+        let target = self.oid_ref_target(mod_id, name);
+        let node = target.and_then(|target| {
+            self.module_symbol_to_node
+                .get(&target)
+                .and_then(|symbols| symbols.get(name))
+                .copied()
+        });
+        OidRef {
+            name: name.to_owned(),
+            range,
+            module: target.and_then(|target| self.module_to_resolved.get(&target).copied()),
+            oid: node.map(|node| self.mib.tree().oid_of(node).clone()),
+        }
+    }
+
+    fn oid_ref_target(&self, mod_id: IrModuleId, name: &str) -> Option<IrModuleId> {
+        if self
+            .module_symbol_to_node
+            .get(&mod_id)
+            .is_some_and(|symbols| symbols.contains_key(name))
+        {
+            return Some(mod_id);
+        }
+        if let Some(target) = self
+            .module_imports
+            .get(&mod_id)
+            .and_then(|imports| imports.get(name))
+            .copied()
+        {
+            return Some(target);
+        }
+        if matches!(name, "iso" | "ccitt" | "joint-iso-ccitt") {
+            return self.snmpv2_smi;
+        }
+        if self.strictness.allow_constrained_fallbacks() {
+            return [self.snmpv2_smi, self.rfc1155_smi]
+                .into_iter()
+                .flatten()
+                .find(|target| {
+                    self.module_symbol_to_node
+                        .get(target)
+                        .is_some_and(|symbols| symbols.contains_key(name))
+                });
+        }
+        None
+    }
+
     /// Look up an object by name within a module's scope (local defs, then imports).
     ///
     /// Returns `(ObjectId, used_import)` where `used_import` is true if the

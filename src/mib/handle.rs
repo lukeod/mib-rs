@@ -569,6 +569,11 @@ impl<'a> Module<'a> {
 }
 
 impl<'a> Object<'a> {
+    /// Return symbolic OID references with exact resolved provenance.
+    pub fn oid_refs(self) -> &'a [OidRef] {
+        self.data().oid_refs()
+    }
+
     /// Return the object name.
     pub fn name(self) -> &'a str {
         self.data().name()
@@ -629,6 +634,15 @@ impl<'a> Object<'a> {
         self.data().kind(self.mib.tree())
     }
 
+    /// Return this module declaration's exact structural kind.
+    ///
+    /// This remains stable when another module's declaration wins the same
+    /// OID in the global tree. [`Self::kind`] retains the legacy global-tree
+    /// behavior.
+    pub fn declared_kind(self) -> Kind {
+        self.data().declared_kind()
+    }
+
     /// Return the effective display hint from the type chain.
     pub fn effective_display_hint(self) -> &'a str {
         self.data().effective_display_hint()
@@ -682,6 +696,48 @@ impl<'a> Object<'a> {
     /// Return the effective BITS definitions from the type chain.
     pub fn effective_bits(self) -> &'a [NamedValue] {
         self.data().effective_bits()
+    }
+
+    /// Return enumeration values declared directly in this object's syntax.
+    pub fn declared_enums(self) -> &'a [NamedValue] {
+        self.data().declared_enums()
+    }
+
+    /// Return BITS values declared directly in this object's syntax.
+    pub fn declared_bits(self) -> &'a [NamedValue] {
+        self.data().declared_bits()
+    }
+
+    /// Return the declared entry type name from a table's `SEQUENCE OF`
+    /// syntax, or an empty string for other object kinds.
+    pub fn sequence_type_name(self) -> &'a str {
+        self.data().sequence_type_name()
+    }
+
+    /// Return the exact table declaration name associated with this row.
+    pub fn declared_table_name(self) -> &'a str {
+        self.data().declared_table_name()
+    }
+
+    /// Return the exact row declaration name associated with this table.
+    pub fn declared_row_name(self) -> &'a str {
+        self.data().declared_row_name()
+    }
+
+    /// Return the exact column declaration names associated with this row.
+    pub fn declared_column_names(self) -> &'a [String] {
+        self.data().declared_column_names()
+    }
+
+    /// Return the exact symbolic OID parent used by this declaration.
+    pub fn declared_oid_parent(self) -> Option<&'a OidRef> {
+        self.data().declared_oid_parent()
+    }
+
+    /// Return the exact symbolic OID parent name, or an empty string when the
+    /// assignment used no exact symbolic parent.
+    pub fn declared_oid_parent_name(self) -> &'a str {
+        self.data().declared_oid_parent_name()
     }
 
     /// Parse and validate this object's effective DISPLAY-HINT, returning a

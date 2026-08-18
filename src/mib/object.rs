@@ -63,6 +63,7 @@ impl EntityData {
 #[derive(Debug, Clone)]
 pub struct ObjectData {
     pub(crate) entity: EntityData,
+    pub(crate) declared_kind: Kind,
     pub(crate) typ: Option<TypeId>,
     pub(crate) access: Access,
     pub(crate) units: String,
@@ -84,13 +85,21 @@ pub struct ObjectData {
     pub(crate) ranges_constrained: bool,
     pub(crate) enums: Vec<NamedValue>,
     pub(crate) bits: Vec<NamedValue>,
+    pub(crate) declared_enums: Vec<NamedValue>,
+    pub(crate) declared_bits: Vec<NamedValue>,
     pub(crate) sequence_type_name: String,
+    pub(crate) declared_table_name: String,
+    pub(crate) declared_row_name: String,
+    pub(crate) declared_column_names: Vec<String>,
+    pub(crate) declared_oid_parent: Option<OidRef>,
+    pub(crate) declared_structure_error: String,
 }
 
 impl ObjectData {
     pub(crate) fn new(name: String) -> Self {
         Self {
             entity: EntityData::new(name),
+            declared_kind: Kind::Unknown,
             typ: None,
             access: Access::NotAccessible,
             units: String::new(),
@@ -112,7 +121,14 @@ impl ObjectData {
             ranges_constrained: false,
             enums: Vec::new(),
             bits: Vec::new(),
+            declared_enums: Vec::new(),
+            declared_bits: Vec::new(),
             sequence_type_name: String::new(),
+            declared_table_name: String::new(),
+            declared_row_name: String::new(),
+            declared_column_names: Vec::new(),
+            declared_oid_parent: None,
+            declared_structure_error: String::new(),
         }
     }
 }
@@ -201,6 +217,14 @@ impl ObjectData {
         }
     }
 
+    /// Return this module declaration's exact structural kind.
+    ///
+    /// Unlike [`Self::kind`], this value is independent of which declaration
+    /// won a shared-OID collision in the global OID tree.
+    pub fn declared_kind(&self) -> Kind {
+        self.declared_kind
+    }
+
     /// Return the effective display hint, inherited from the resolved type chain.
     ///
     /// This is pre-computed during resolution, so it does not require
@@ -267,9 +291,51 @@ impl ObjectData {
         &self.bits
     }
 
+    /// Return enumeration values declared directly in this object's syntax.
+    pub fn declared_enums(&self) -> &[NamedValue] {
+        &self.declared_enums
+    }
+
+    /// Return BITS values declared directly in this object's syntax.
+    pub fn declared_bits(&self) -> &[NamedValue] {
+        &self.declared_bits
+    }
+
     /// Return the SEQUENCE type name from the table definition.
     pub fn sequence_type_name(&self) -> &str {
         &self.sequence_type_name
+    }
+
+    /// Return the exact table declaration associated with this row.
+    pub fn declared_table_name(&self) -> &str {
+        &self.declared_table_name
+    }
+
+    /// Return the exact row declaration associated with this table.
+    pub fn declared_row_name(&self) -> &str {
+        &self.declared_row_name
+    }
+
+    /// Return the exact column declarations associated with this row.
+    pub fn declared_column_names(&self) -> &[String] {
+        &self.declared_column_names
+    }
+
+    /// Return the exact symbolic OID parent used by this declaration.
+    pub fn declared_oid_parent(&self) -> Option<&OidRef> {
+        self.declared_oid_parent.as_ref()
+    }
+
+    /// Return the exact symbolic OID parent name, or an empty string when the
+    /// assignment used no exact symbolic parent.
+    pub fn declared_oid_parent_name(&self) -> &str {
+        self.declared_oid_parent
+            .as_ref()
+            .map_or("", |reference| reference.name.as_str())
+    }
+
+    pub(crate) fn declared_structure_error(&self) -> &str {
+        &self.declared_structure_error
     }
 
     /// Return the INDEX clause entries.
