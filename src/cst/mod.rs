@@ -24,9 +24,11 @@ use crate::token::Token;
 use crate::types::{Diagnostic, DiagnosticConfig, DiagnosticReport};
 
 mod body;
+mod navigation;
 mod parser;
 mod typed;
 
+pub use navigation::{ClauseKind, CursorClause, CursorContext};
 pub use typed::{
     AccessClause, AgentCapabilitiesDefinition, AugmentsClause, BitsSyntax, ChoiceSyntax,
     ComplianceGroup, ComplianceModule, ComplianceObject, ComplianceRefinement, ConstrainedSyntax,
@@ -113,6 +115,15 @@ impl SyntaxTree {
             data,
             document: self.document(),
         })
+    }
+
+    /// Return the syntactic context at a byte offset.
+    ///
+    /// The offset follows the same byte-coordinate and validity rules as
+    /// [`Self::token_at`]. See [`CursorContext`] for the containment and exact
+    /// boundary rules used by this query.
+    pub fn cursor_context(&self, offset: ByteOffset) -> Option<CursorContext<'_, '_>> {
+        navigation::cursor_context(self, offset)
     }
 
     /// Reconstruct the original source bytes from the tree's tokens.

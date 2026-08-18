@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use mib_rs::compile::{
-    CstNode, Definition, Module, SourceFile, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken,
-    SyntaxTree, parse, parse_with_config,
+    ClauseKind, CstNode, CursorClause, CursorContext, Definition, Module, SourceFile,
+    SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken, SyntaxTree, parse, parse_with_config,
 };
 use mib_rs::{ByteOffset, DiagnosticConfig, SourceCandidate, SourceOrigin};
 
@@ -74,6 +74,20 @@ fn documented_compile_reexports_form_a_usable_public_api() {
         tree.token_at(tree.document().len()).unwrap().kind(),
         SyntaxKind::EofToken
     );
+
+    let context: CursorContext<'_, '_> = tree.cursor_context(ByteOffset::new(0)).unwrap();
+    assert!(context.module().is_some());
+    let oid_offset = ByteOffset::try_from(
+        SOURCE
+            .windows(b"1 3 6".len())
+            .position(|window| window == b"1 3 6")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(tree.cursor_context(oid_offset).unwrap().oid().is_some());
+    let no_clause: Option<CursorClause<'_, '_>> = context.clause();
+    assert!(no_clause.is_none());
+    let _: Option<ClauseKind> = no_clause.map(CursorClause::kind);
 }
 
 #[test]
