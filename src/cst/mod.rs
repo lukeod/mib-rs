@@ -26,9 +26,11 @@ use crate::types::{Diagnostic, DiagnosticConfig, DiagnosticReport};
 mod body;
 mod navigation;
 mod parser;
+mod tooling;
 mod typed;
 
 pub use navigation::{ClauseKind, CursorClause, CursorContext};
+pub use tooling::{LocatedRange, SourcePairError, SymbolAtPosition, SymbolNavigator};
 pub use typed::{
     AccessClause, AgentCapabilitiesDefinition, AugmentsClause, BitsSyntax, ChoiceSyntax,
     ComplianceGroup, ComplianceModule, ComplianceObject, ComplianceRefinement, ConstrainedSyntax,
