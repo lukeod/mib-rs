@@ -421,6 +421,46 @@ define_syntax_kinds! {
         Imports => ("IMPORTS_NODE", "imports");
         ImportGroup => ("IMPORT_GROUP", "import group");
         UnparsedRegion => ("UNPARSED_REGION", "unparsed region");
+
+        SyntaxClause => ("SYNTAX_CLAUSE", "SYNTAX clause");
+        AccessClause => ("ACCESS_CLAUSE", "access clause");
+        StatusClause => ("STATUS_CLAUSE", "STATUS clause");
+        DescriptionClause => ("DESCRIPTION_CLAUSE", "DESCRIPTION clause");
+        ReferenceClause => ("REFERENCE_CLAUSE", "REFERENCE clause");
+        UnitsClause => ("UNITS_CLAUSE", "UNITS clause");
+        DisplayHintClause => ("DISPLAY_HINT_CLAUSE", "DISPLAY-HINT clause");
+        IndexClause => ("INDEX_CLAUSE", "INDEX clause");
+        IndexItem => ("INDEX_ITEM", "index item");
+        AugmentsClause => ("AUGMENTS_CLAUSE", "AUGMENTS clause");
+        DefvalClause => ("DEFVAL_CLAUSE", "DEFVAL clause");
+        DefvalContent => ("DEFVAL_CONTENT", "DEFVAL content");
+        ObjectsClause => ("OBJECTS_CLAUSE", "OBJECTS clause");
+        NotificationsClause => ("NOTIFICATIONS_CLAUSE", "NOTIFICATIONS clause");
+        RevisionClause => ("REVISION_CLAUSE", "REVISION clause");
+        LastUpdatedClause => ("LAST_UPDATED_CLAUSE", "LAST-UPDATED clause");
+        OrganizationClause => ("ORGANIZATION_CLAUSE", "ORGANIZATION clause");
+        ContactInfoClause => ("CONTACT_INFO_CLAUSE", "CONTACT-INFO clause");
+        EnterpriseClause => ("ENTERPRISE_CLAUSE", "ENTERPRISE clause");
+        VariablesClause => ("VARIABLES_CLAUSE", "VARIABLES clause");
+        ProductReleaseClause => ("PRODUCT_RELEASE_CLAUSE", "PRODUCT-RELEASE clause");
+
+        OidAssignment => ("OID_ASSIGNMENT", "OID assignment");
+        OidComponent => ("OID_COMPONENT", "OID component");
+
+        TypeRefSyntax => ("TYPE_REF_SYNTAX", "type reference syntax");
+        IntegerEnumSyntax => ("INTEGER_ENUM_SYNTAX", "integer enumeration syntax");
+        BitsSyntax => ("BITS_SYNTAX", "BITS syntax");
+        ConstrainedSyntax => ("CONSTRAINED_SYNTAX", "constrained type syntax");
+        Constraint => ("CONSTRAINT", "constraint");
+        Range => ("RANGE", "constraint range");
+        NamedNumber => ("NAMED_NUMBER", "named number");
+        SequenceOfSyntax => ("SEQUENCE_OF_SYNTAX", "SEQUENCE OF syntax");
+        SequenceSyntax => ("SEQUENCE_SYNTAX", "SEQUENCE syntax");
+        SequenceField => ("SEQUENCE_FIELD", "SEQUENCE or CHOICE field");
+        ChoiceSyntax => ("CHOICE_SYNTAX", "CHOICE syntax");
+        TaggedSyntax => ("TAGGED_SYNTAX", "tagged syntax");
+        OctetStringSyntax => ("OCTET_STRING_SYNTAX", "OCTET STRING syntax");
+        ObjectIdentifierSyntax => ("OBJECT_IDENTIFIER_SYNTAX", "OBJECT IDENTIFIER syntax");
         Error => ("ERROR_NODE", "error node");
     }
     forbidden {
@@ -458,10 +498,10 @@ mod tests {
 
     #[test]
     fn inventory_and_categories_are_exhaustive() {
-        assert_eq!(SyntaxKind::ALL.len(), 116);
+        assert_eq!(SyntaxKind::ALL.len(), 153);
         assert_eq!(
             SyntaxKind::ALL.iter().filter(|kind| kind.is_node()).count(),
-            7
+            44
         );
         assert_eq!(
             SyntaxKind::ALL

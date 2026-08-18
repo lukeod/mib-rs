@@ -11,11 +11,19 @@ use crate::syntax::SyntaxKind;
 use crate::token::Token;
 use crate::types::{Diagnostic, DiagnosticConfig};
 
+mod body;
 mod parser;
 mod typed;
 
 pub use typed::{
-    CstNode, ErrorRegion, ImportGroup, Imports, Module, ModuleHeader, SourceFile, UnparsedRegion,
+    AccessClause, AugmentsClause, BitsSyntax, ChoiceSyntax, ConstrainedSyntax, Constraint,
+    ContactInfoClause, CstNode, DefvalClause, DefvalContent, DescriptionClause, DisplayHintClause,
+    EnterpriseClause, ErrorRegion, ImportGroup, Imports, IndexClause, IndexItem, IntegerEnumSyntax,
+    LastUpdatedClause, Module, ModuleHeader, NamedNumber, NotificationsClause,
+    ObjectIdentifierSyntax, ObjectsClause, OctetStringSyntax, OidAssignment, OidComponent,
+    OrganizationClause, ProductReleaseClause, Range, ReferenceClause, RevisionClause,
+    SequenceField, SequenceOfSyntax, SequenceSyntax, SourceFile, StatusClause, SyntaxClause,
+    TaggedSyntax, TypeRefSyntax, UnitsClause, UnparsedRegion, VariablesClause,
 };
 
 /// An immutable lossless syntax tree for one source document.
@@ -379,10 +387,12 @@ fn validate_tokens(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
     use std::sync::Arc;
 
     use super::*;
     use crate::source::{SourceOrigin, SourceSet};
+    use crate::types::{DiagCode, Severity};
 
     fn with_document<T>(input: &[u8], f: impl FnOnce(&SourceDocument) -> T) -> T {
         let mut sources = SourceSet::new();
@@ -397,7 +407,14 @@ mod tests {
     }
 
     fn build(document: &SourceDocument) -> (SyntaxTree<'_>, Vec<Diagnostic>) {
-        build_lossless_tree(document, &DiagnosticConfig::default())
+        build_with_config(document, &DiagnosticConfig::default())
+    }
+
+    fn build_with_config<'src>(
+        document: &'src SourceDocument,
+        config: &DiagnosticConfig,
+    ) -> (SyntaxTree<'src>, Vec<Diagnostic>) {
+        build_lossless_tree(document, config)
     }
 
     #[test]
@@ -525,6 +542,7 @@ mod tests {
                 SyntaxKind::Imports,
                 SyntaxKind::ImportGroup,
                 SyntaxKind::UnparsedRegion,
+                SyntaxKind::TypeRefSyntax,
             ];
             assert_eq!(
                 tree.nodes().map(SyntaxNode::kind).collect::<Vec<_>>(),
@@ -816,6 +834,883 @@ mod tests {
             assert!(tree.source_file().modules().next().unwrap().end().is_some());
             assert_eq!(tree.reconstruct_text(), input);
         });
+    }
+
+    #[test]
+    fn common_clause_wrappers_retain_valid_values() {
+        let input = br#"CLAUSE-MIB DEFINITIONS ::= BEGIN
+item OBJECT-TYPE
+    SYNTAX INTEGER (0..10)
+    UNITS "widgets"
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "description"
+    REFERENCE "reference"
+    INDEX { IMPLIED indexObject, OCTET STRING }
+    AUGMENTS { parentEntry }
+    DEFVAL { { enabled, disabled } }
+    ::= { ROOT-MIB.root(1) 2 leaf }
+notice NOTIFICATION-TYPE
+    OBJECTS { item, other }
+    NOTIFICATIONS { notice }
+    VARIABLES { item }
+    ::= { item 3 }
+identity MODULE-IDENTITY
+    LAST-UPDATED "202608180000Z"
+    ORGANIZATION "org"
+    CONTACT-INFO "contact"
+    REVISION "202608180000Z"
+    DESCRIPTION "revision"
+    ::= { item 4 }
+legacy TRAP-TYPE
+    ENTERPRISE item
+    VARIABLES { item }
+    DESCRIPTION "trap"
+    ::= 1
+Text ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "d"
+    STATUS current
+    DESCRIPTION "text"
+    REFERENCE "reference"
+    SYNTAX BITS { enabled(0), disabled(1) }
+caps AGENT-CAPABILITIES
+    PRODUCT-RELEASE "release"
+    STATUS current
+    DESCRIPTION "caps"
+    ::= { item 5 }
+END"#;
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+            let syntax = tree
+                .nodes()
+                .filter_map(SyntaxClause::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(syntax.len(), 2);
+            assert!(syntax.iter().all(|clause| clause.type_syntax().is_some()));
+            let access = tree.nodes().find_map(AccessClause::cast).unwrap();
+            assert_eq!(access.keyword().unwrap().text(), b"MAX-ACCESS");
+            assert_eq!(access.value().unwrap().text(), b"read-only");
+            assert!(tree.nodes().find_map(StatusClause::cast).is_some());
+            assert!(tree.nodes().find_map(DescriptionClause::cast).is_some());
+            assert!(tree.nodes().find_map(ReferenceClause::cast).is_some());
+            assert!(tree.nodes().find_map(UnitsClause::cast).is_some());
+            assert!(tree.nodes().find_map(DisplayHintClause::cast).is_some());
+            assert!(tree.nodes().find_map(LastUpdatedClause::cast).is_some());
+            assert!(tree.nodes().find_map(OrganizationClause::cast).is_some());
+            assert!(tree.nodes().find_map(ContactInfoClause::cast).is_some());
+            assert!(tree.nodes().find_map(RevisionClause::cast).is_some());
+            assert!(tree.nodes().find_map(EnterpriseClause::cast).is_some());
+            assert!(tree.nodes().find_map(ProductReleaseClause::cast).is_some());
+
+            let index = tree.nodes().find_map(IndexClause::cast).unwrap();
+            let items = index.items().collect::<Vec<_>>();
+            assert_eq!(items.len(), 2);
+            assert!(items[0].implied().is_some());
+            assert_eq!(items[0].object().unwrap().text(), b"indexObject");
+            assert_eq!(items[1].object().unwrap().text(), b"OCTET");
+            assert_eq!(items[1].string_keyword().unwrap().text(), b"STRING");
+            assert_eq!(
+                tree.nodes()
+                    .find_map(AugmentsClause::cast)
+                    .unwrap()
+                    .target()
+                    .unwrap()
+                    .text(),
+                b"parentEntry"
+            );
+            assert_eq!(
+                tree.nodes()
+                    .find_map(ObjectsClause::cast)
+                    .unwrap()
+                    .names()
+                    .count(),
+                2
+            );
+            assert!(tree.nodes().find_map(NotificationsClause::cast).is_some());
+            assert!(tree.nodes().find_map(VariablesClause::cast).is_some());
+
+            let defval = tree.nodes().find_map(DefvalClause::cast).unwrap();
+            let content = defval.content().unwrap();
+            assert!(content.l_brace().is_some());
+            assert!(content.r_brace().is_some());
+            assert_eq!(
+                content.tokens().map(SyntaxToken::text).collect::<Vec<_>>(),
+                [
+                    b" ".as_slice(),
+                    b"{".as_slice(),
+                    b" ".as_slice(),
+                    b"enabled".as_slice(),
+                    b",".as_slice(),
+                    b" ".as_slice(),
+                    b"disabled".as_slice(),
+                    b" ".as_slice(),
+                    b"}".as_slice(),
+                    b" ".as_slice()
+                ]
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn common_clause_wrappers_preserve_missing_and_malformed_parts() {
+        let input = b"BROKEN-CLAUSE-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX\n MAX-ACCESS\n STATUS @bad\n DESCRIPTION\n INDEX { IMPLIED }\n AUGMENTS { one, two }\n DEFVAL { { one }\n OBJECTS { first, @bad\nnext OBJECT IDENTIFIER ::= { root 1 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let syntax = tree.nodes().find_map(SyntaxClause::cast).unwrap();
+            assert!(syntax.type_syntax().is_none());
+            let access = tree.nodes().find_map(AccessClause::cast).unwrap();
+            assert!(access.value().is_none());
+            let status = tree.nodes().find_map(StatusClause::cast).unwrap();
+            assert!(status.value().is_none());
+            assert_eq!(status.recovery_regions().count(), 1);
+            let description = tree.nodes().find_map(DescriptionClause::cast).unwrap();
+            assert!(description.value().is_none());
+            let index = tree.nodes().find_map(IndexClause::cast).unwrap();
+            let item = index.items().next().unwrap();
+            assert!(item.implied().is_some());
+            assert!(item.object().is_none());
+            assert!(index.r_brace().is_some());
+            let augments = tree.nodes().find_map(AugmentsClause::cast).unwrap();
+            assert_eq!(augments.target().unwrap().text(), b"one");
+            let defval = tree.nodes().find_map(DefvalClause::cast).unwrap();
+            assert!(defval.content().unwrap().r_brace().is_none());
+            let objects = tree.nodes().find_map(ObjectsClause::cast).unwrap();
+            assert!(objects.r_brace().is_none());
+            assert_eq!(objects.recovery_regions().count(), 1);
+            // Recovery stops before the later complete definition.
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 1);
+            assert!(oids[0].r_brace().is_some());
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn every_common_clause_family_retains_truncated_values() {
+        let input = b"TRUNCATED-CLAUSE-MIB DEFINITIONS ::= BEGIN\nidentity MODULE-IDENTITY\n LAST-UPDATED\n ORGANIZATION\n CONTACT-INFO\n REVISION\n DESCRIPTION\n REFERENCE\n ::= { root 1 }\ntc ::= TEXTUAL-CONVENTION\n DISPLAY-HINT\n STATUS\n DESCRIPTION\n REFERENCE\n SYNTAX INTEGER\nobject OBJECT-TYPE\n SYNTAX INTEGER\n UNITS\n MAX-ACCESS\n DEFVAL\n ::= { root 2 }\ntrap TRAP-TYPE\n ENTERPRISE\n VARIABLES { item\n ::= 1\nnotice NOTIFICATION-TYPE\n OBJECTS { item\n ::= { root 3 }\ngroup NOTIFICATION-GROUP\n NOTIFICATIONS { notice\n STATUS current\n DESCRIPTION \"group\"\n ::= { root 4 }\ncaps AGENT-CAPABILITIES\n PRODUCT-RELEASE\n STATUS current\n DESCRIPTION \"caps\"\n ::= { root 5 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+
+            assert!(
+                tree.nodes()
+                    .find_map(LastUpdatedClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(OrganizationClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ContactInfoClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(RevisionClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(DescriptionClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ReferenceClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(DisplayHintClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(StatusClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(UnitsClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(AccessClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(DefvalClause::cast)
+                    .unwrap()
+                    .content()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(EnterpriseClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(VariablesClause::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ObjectsClause::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(NotificationsClause::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ProductReleaseClause::cast)
+                    .unwrap()
+                    .value()
+                    .is_none()
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn oid_assignment_and_component_wrappers_cover_all_forms() {
+        let input = b"OID-CST-MIB DEFINITIONS ::= BEGIN\nvalue OBJECT IDENTIFIER ::= { 1 iso org(3) OTHER-MIB.root OTHER-MIB.branch(7) }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let syntax = tree.nodes().find_map(ObjectIdentifierSyntax::cast).unwrap();
+            assert!(syntax.object().is_some());
+            assert!(syntax.identifier().is_some());
+            let oid = tree.nodes().find_map(OidAssignment::cast).unwrap();
+            let components = oid.components().collect::<Vec<_>>();
+            assert_eq!(components.len(), 5);
+            assert_eq!(components[0].number().unwrap().text(), b"1");
+            assert_eq!(components[1].name().unwrap().text(), b"iso");
+            assert_eq!(components[2].name().unwrap().text(), b"org");
+            assert_eq!(components[2].number().unwrap().text(), b"3");
+            assert_eq!(components[3].module().unwrap().text(), b"OTHER-MIB");
+            assert_eq!(components[3].name().unwrap().text(), b"root");
+            assert_eq!(components[4].number().unwrap().text(), b"7");
+            assert!(oid.r_brace().is_some());
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+
+        let truncated = b"OID-CST-MIB DEFINITIONS ::= BEGIN\nfirst OBJECT IDENTIFIER ::= { root( ) OTHER. }\nsecond OBJECT IDENTIFIER ::= { root(1)\nEND";
+        with_document(truncated, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 2);
+            assert!(oids[0].r_brace().is_some());
+            assert!(
+                oids[0]
+                    .components()
+                    .any(|component| component.number().is_none())
+            );
+            assert!(oids[1].r_brace().is_none());
+            assert_eq!(tree.reconstruct_text(), truncated);
+        });
+    }
+
+    #[test]
+    fn named_numbers_and_constraint_wrappers_are_nested_and_lossless() {
+        let input = b"TYPE-CST-MIB DEFINITIONS ::= BEGIN\nEnum ::= INTEGER { up(1), down(-1) }\nRestricted ::= Enum { first(4), second(5) }\nFlags ::= BITS { a(0), b(1) }\nSized ::= OCTET STRING (SIZE (0..16 | 32))\nRanged ::= INTEGER (-1..MAX | 8)\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let enums = tree
+                .nodes()
+                .filter_map(IntegerEnumSyntax::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(enums.len(), 2);
+            assert_eq!(enums[0].values().count(), 2);
+            assert_eq!(enums[1].base().unwrap().text(), b"Enum");
+            let bits = tree.nodes().find_map(BitsSyntax::cast).unwrap();
+            assert_eq!(bits.values().count(), 2);
+            let named = tree.nodes().find_map(NamedNumber::cast).unwrap();
+            assert!(named.label().is_some());
+            assert!(named.value().is_some());
+            let constrained = tree
+                .nodes()
+                .filter_map(ConstrainedSyntax::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(constrained.len(), 2);
+            let size = constrained[0].constraint().unwrap();
+            assert!(size.size().is_some());
+            assert_eq!(size.ranges().count(), 2);
+            let ranged = constrained[1].constraint().unwrap();
+            let ranges = ranged.ranges().collect::<Vec<_>>();
+            assert_eq!(ranges.len(), 2);
+            assert_eq!(ranges[0].min().unwrap().text(), b"-1");
+            assert_eq!(ranges[0].max().unwrap().text(), b"MAX");
+            assert!(ranges[1].dot_dot().is_none());
+            assert!(tree.nodes().find_map(OctetStringSyntax::cast).is_some());
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+
+        let malformed = b"TYPE-CST-MIB DEFINITIONS ::= BEGIN\nBadEnum ::= INTEGER { one(), two(x) }\nBadBits ::= BITS { flag(x) }\nBadRange ::= INTEGER (0.. | @bad)\nAfter ::= INTEGER\nEND";
+        with_document(malformed, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let values = tree
+                .nodes()
+                .filter_map(NamedNumber::cast)
+                .collect::<Vec<_>>();
+            assert!(values.iter().any(|value| value.value().is_none()));
+            assert!(
+                values
+                    .iter()
+                    .any(|value| value.recovery_regions().count() == 1)
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(BitsSyntax::cast)
+                    .unwrap()
+                    .values()
+                    .any(|value| value.recovery_regions().count() == 1)
+            );
+            let ranges = tree.nodes().filter_map(Range::cast).collect::<Vec<_>>();
+            assert!(
+                ranges
+                    .iter()
+                    .any(|range| { range.dot_dot().is_some() && range.max().is_none() })
+            );
+            assert!(
+                tree.nodes()
+                    .filter_map(TypeRefSyntax::cast)
+                    .any(|syntax| syntax.name().unwrap().text() == b"INTEGER")
+            );
+            assert_eq!(tree.reconstruct_text(), malformed);
+        });
+    }
+
+    #[test]
+    fn composite_and_tagged_type_wrappers_recover_to_later_types() {
+        let input = b"COMPOSITE-CST-MIB DEFINITIONS ::= BEGIN\nRows ::= SEQUENCE OF Row\nRow ::= SEQUENCE { first INTEGER, second OCTET STRING }\nUnion ::= CHOICE { number INTEGER, text OCTET STRING }\nTagged ::= [APPLICATION 4] IMPLICIT OCTET STRING\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let sequence_of = tree.nodes().find_map(SequenceOfSyntax::cast).unwrap();
+            assert_eq!(sequence_of.entry_type().unwrap().text(), b"Row");
+            let sequence = tree.nodes().find_map(SequenceSyntax::cast).unwrap();
+            assert_eq!(sequence.fields().count(), 2);
+            let field = tree.nodes().find_map(SequenceField::cast).unwrap();
+            assert!(field.name().is_some());
+            assert!(field.type_syntax().is_some());
+            let choice = tree.nodes().find_map(ChoiceSyntax::cast).unwrap();
+            assert_eq!(choice.fields().count(), 2);
+            let tagged = tree.nodes().find_map(TaggedSyntax::cast).unwrap();
+            assert_eq!(tagged.tag_class().unwrap().text(), b"APPLICATION");
+            assert_eq!(tagged.tag_number().unwrap().text(), b"4");
+            assert!(tagged.implicit().is_some());
+            assert!(tagged.inner().is_some());
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+
+        let malformed = b"COMPOSITE-CST-MIB DEFINITIONS ::= BEGIN\nBadRows ::= SEQUENCE OF\nBadRow ::= SEQUENCE { missing, good INTEGER }\nBadChoice ::= CHOICE { alt }\nBadTag ::= [APPLICATION ] IMPLICIT\nBadOctets ::= OCTET\nBadOidType ::= OBJECT\nAfter ::= INTEGER\nEND";
+        with_document(malformed, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let sequence_of = tree.nodes().find_map(SequenceOfSyntax::cast).unwrap();
+            assert!(sequence_of.entry_type().is_none());
+            let fields = tree
+                .nodes()
+                .filter_map(SequenceField::cast)
+                .collect::<Vec<_>>();
+            assert!(fields.iter().any(|field| field.type_syntax().is_none()));
+            let tagged = tree.nodes().find_map(TaggedSyntax::cast).unwrap();
+            assert!(tagged.tag_number().is_none());
+            assert!(tagged.inner().is_none());
+            assert!(
+                tree.nodes()
+                    .find_map(OctetStringSyntax::cast)
+                    .unwrap()
+                    .string()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ObjectIdentifierSyntax::cast)
+                    .unwrap()
+                    .identifier()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .filter_map(TypeRefSyntax::cast)
+                    .any(|syntax| syntax.name().unwrap().text() == b"INTEGER")
+            );
+            assert_eq!(tree.reconstruct_text(), malformed);
+        });
+    }
+
+    #[test]
+    fn unterminated_constraints_and_field_types_stop_at_definition_boundaries() {
+        let input = b"BOUNDARY-CST-MIB DEFINITIONS ::= BEGIN\nconstrained OBJECT-TYPE\n SYNTAX INTEGER (0..10\n STATUS current\n DESCRIPTION \"constraint survived\"\n ::= { root 1 }\nsequence OBJECT-TYPE\n SYNTAX SEQUENCE { field INTEGER\n STATUS current\n DESCRIPTION \"sequence survived\"\n ::= { root 2 }\nchoice OBJECT-TYPE\n SYNTAX CHOICE { alternative OCTET STRING\n STATUS current\n DESCRIPTION \"choice survived\"\n ::= { root 3 }\nafter OBJECT IDENTIFIER ::= { root 4 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+
+            let constraint = tree.nodes().find_map(Constraint::cast).unwrap();
+            assert!(constraint.r_paren().is_none());
+            assert!(
+                tree.nodes()
+                    .find_map(SequenceSyntax::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert!(
+                tree.nodes()
+                    .find_map(ChoiceSyntax::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert_eq!(tree.nodes().filter_map(StatusClause::cast).count(), 3);
+            assert_eq!(tree.nodes().filter_map(DescriptionClause::cast).count(), 3);
+
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 4);
+            assert!(oids.iter().all(|oid| oid.r_brace().is_some()));
+            assert_eq!(
+                oids[3].components().next().unwrap().name().unwrap().text(),
+                b"root"
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn type_and_oid_contexts_distinguish_declarations_from_values() {
+        let input = b"CONTEXT-CST-MIB DEFINITIONS ::= BEGIN\nfoo SomeType ::= otherValue\nFoo ::= SomeType\ntaggedValue [APPLICATION 1] IMPLICIT SomeType ::= otherTagged\nTaggedType ::= [APPLICATION 2] IMPLICIT SomeType\nbitsValue BITS ::= { first, second }\nactual OBJECT IDENTIFIER ::= { ROOT-MIB.root 1 }\nobject OBJECT-TYPE\n SYNTAX INTEGER\n ::= { actual 2 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+            let type_names = tree
+                .nodes()
+                .filter_map(TypeRefSyntax::cast)
+                .map(|syntax| syntax.name().unwrap().text())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                type_names
+                    .iter()
+                    .filter(|name| **name == b"SomeType")
+                    .count(),
+                4
+            );
+            assert!(!type_names.iter().any(|name| {
+                matches!(*name, b"otherValue" | b"otherTagged" | b"first" | b"second")
+            }));
+            assert!(type_names.iter().any(|name| *name == b"BITS"));
+            assert_eq!(tree.nodes().filter_map(TaggedSyntax::cast).count(), 2);
+
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 2);
+            let qualified = oids[0].components().next().unwrap();
+            assert_eq!(qualified.module().unwrap().text(), b"ROOT-MIB");
+            assert_eq!(qualified.name().unwrap().text(), b"root");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn oid_assignment_context_is_not_reused_by_a_stray_assignment() {
+        let input = b"STALE-OID-CST-MIB DEFINITIONS ::= BEGIN\ngood OBJECT IDENTIFIER ::= { root 1 }\n::= { stray 2 }\nEND";
+        with_document(input, |document| {
+            let (tree, _) = build(document);
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 1);
+            assert!(oids[0].r_brace().is_some());
+            assert!(
+                !oids[0]
+                    .components()
+                    .any(|part| { part.name().is_some_and(|name| name.text() == b"stray") })
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn definition_assignment_context_is_consumed_once_and_resets_at_next_definition() {
+        let input = b"STALE-CST-MIB DEFINITIONS ::= BEGIN\nGoodType ::= SomeType\n::= OtherType\nbroken OBJECT IDENTIFIER ::= { root 3\nlater OBJECT IDENTIFIER ::= { root 4 }\nLaterType ::= FinalType\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+
+            let oids = tree
+                .nodes()
+                .filter_map(OidAssignment::cast)
+                .collect::<Vec<_>>();
+            assert_eq!(oids.len(), 2);
+            assert!(oids[0].r_brace().is_none());
+            assert!(oids[1].r_brace().is_some());
+
+            let type_names = tree
+                .nodes()
+                .filter_map(TypeRefSyntax::cast)
+                .map(|syntax| syntax.name().unwrap().text())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                type_names,
+                [b"SomeType".as_slice(), b"FinalType".as_slice()]
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn balanced_defval_content_does_not_create_nested_definition_boundaries() {
+        let input = b"NESTED-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX INTEGER\n DEFVAL {\n  fake ::= INTEGER\n }\n ::= { root 1 }\nlater OBJECT IDENTIFIER ::= { root 2 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+            let content = tree.nodes().find_map(DefvalContent::cast).unwrap();
+            assert!(content.r_brace().is_some());
+            let content_text = content.tokens().fold(Vec::new(), |mut text, token| {
+                text.extend_from_slice(token.text());
+                text
+            });
+            assert_eq!(content_text, b"\n  fake ::= INTEGER\n ");
+            assert_eq!(
+                tree.nodes()
+                    .filter_map(TypeRefSyntax::cast)
+                    .filter(|syntax| syntax.name().is_some_and(|name| name.text() == b"INTEGER"))
+                    .count(),
+                1
+            );
+            assert_eq!(tree.nodes().filter_map(OidAssignment::cast).count(), 2);
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn unclosed_nested_content_recovers_at_a_confident_later_definition() {
+        let input = b"UNCLOSED-NESTED-CST-MIB DEFINITIONS ::= BEGIN\nbroken OBJECT-TYPE\n SYNTAX INTEGER\n DEFVAL { value\nlater OBJECT IDENTIFIER ::= { root 2 }\nAfter ::= FinalType\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            assert!(
+                tree.nodes()
+                    .find_map(DefvalContent::cast)
+                    .unwrap()
+                    .r_brace()
+                    .is_none()
+            );
+            assert_eq!(tree.nodes().filter_map(OidAssignment::cast).count(), 1);
+            assert!(tree.nodes().filter_map(TypeRefSyntax::cast).any(|syntax| {
+                syntax
+                    .name()
+                    .is_some_and(|name| name.text() == b"FinalType")
+            }));
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn definition_context_work_is_linear_for_many_assignments() {
+        const DEFINITION_COUNT: usize = 4_000;
+
+        let mut input = String::from("LINEAR-CST-MIB DEFINITIONS ::= BEGIN\n");
+        for index in 0..DEFINITION_COUNT {
+            writeln!(input, "Type{index} ::= INTEGER").unwrap();
+        }
+        input.push_str("END");
+
+        with_document(input.as_bytes(), |document| {
+            super::body::reset_definition_context_work();
+            let (tree, diagnostics) = build(document);
+            let work = super::body::definition_context_work();
+            let token_count = tree.tokens().count();
+
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            assert_eq!(
+                tree.nodes().filter_map(TypeRefSyntax::cast).count(),
+                DEFINITION_COUNT
+            );
+            assert!(
+                work <= token_count * 4,
+                "definition-context work {work} exceeded linear bound for {token_count} tokens"
+            );
+            assert_eq!(tree.reconstruct_text(), input.as_bytes());
+        });
+    }
+
+    #[test]
+    fn defval_content_tokens_include_nested_recovery_tokens_exactly_once() {
+        let input = b"DEFVAL-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX INTEGER\n DEFVAL { first @\n second }\n ::= { root 1 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let content = tree
+                .nodes()
+                .find_map(DefvalContent::cast)
+                .expect("DEFVAL content");
+            let tokens = content.tokens().collect::<Vec<_>>();
+            assert!(
+                tokens
+                    .iter()
+                    .any(|token| token.kind() == SyntaxKind::ErrorToken)
+            );
+            let concatenated = tokens.iter().fold(Vec::new(), |mut bytes, token| {
+                bytes.extend_from_slice(token.text());
+                bytes
+            });
+            assert_eq!(concatenated, b" first @\n second ");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn body_parse_diagnostics_honor_ignore_and_severity_override() {
+        let input = b"CONFIG-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX INTEGER (0..10\n STATUS current\n ::= { root 1 }\nEND";
+        with_document(input, |document| {
+            let mut ignored = DiagnosticConfig::default();
+            ignored.ignore.push(DiagCode::ParseError.as_code().into());
+            let (tree, diagnostics) = build_with_config(document, &ignored);
+            assert!(diagnostics.is_empty());
+            assert_eq!(tree.nodes().filter_map(StatusClause::cast).count(), 1);
+            assert_eq!(tree.reconstruct_text(), input);
+
+            let mut overridden = DiagnosticConfig::default();
+            overridden
+                .overrides
+                .insert(DiagCode::ParseError, Severity::Warning);
+            let (tree, diagnostics) = build_with_config(document, &overridden);
+            assert!(!diagnostics.is_empty());
+            assert!(diagnostics.iter().all(|diagnostic| {
+                diagnostic.code == DiagCode::ParseError && diagnostic.severity == Severity::Warning
+            }));
+            assert_eq!(tree.nodes().filter_map(OidAssignment::cast).count(), 1);
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn all_cst04_wrappers_have_valid_and_recovered_coverage() {
+        const CST04_KINDS: &[SyntaxKind] = &[
+            SyntaxKind::SyntaxClause,
+            SyntaxKind::AccessClause,
+            SyntaxKind::StatusClause,
+            SyntaxKind::DescriptionClause,
+            SyntaxKind::ReferenceClause,
+            SyntaxKind::UnitsClause,
+            SyntaxKind::DisplayHintClause,
+            SyntaxKind::IndexClause,
+            SyntaxKind::IndexItem,
+            SyntaxKind::AugmentsClause,
+            SyntaxKind::DefvalClause,
+            SyntaxKind::DefvalContent,
+            SyntaxKind::ObjectsClause,
+            SyntaxKind::NotificationsClause,
+            SyntaxKind::RevisionClause,
+            SyntaxKind::LastUpdatedClause,
+            SyntaxKind::OrganizationClause,
+            SyntaxKind::ContactInfoClause,
+            SyntaxKind::EnterpriseClause,
+            SyntaxKind::VariablesClause,
+            SyntaxKind::ProductReleaseClause,
+            SyntaxKind::OidAssignment,
+            SyntaxKind::OidComponent,
+            SyntaxKind::TypeRefSyntax,
+            SyntaxKind::IntegerEnumSyntax,
+            SyntaxKind::BitsSyntax,
+            SyntaxKind::ConstrainedSyntax,
+            SyntaxKind::Constraint,
+            SyntaxKind::Range,
+            SyntaxKind::NamedNumber,
+            SyntaxKind::SequenceOfSyntax,
+            SyntaxKind::SequenceSyntax,
+            SyntaxKind::SequenceField,
+            SyntaxKind::ChoiceSyntax,
+            SyntaxKind::TaggedSyntax,
+            SyntaxKind::OctetStringSyntax,
+            SyntaxKind::ObjectIdentifierSyntax,
+        ];
+
+        let valid = br#"COVERAGE-CST-MIB DEFINITIONS ::= BEGIN
+item OBJECT-TYPE
+ SYNTAX INTEGER { one(1), two(2) } (0..2)
+ UNITS "units"
+ MAX-ACCESS read-only
+ STATUS current
+ DESCRIPTION "description"
+ REFERENCE "reference"
+ INDEX { IMPLIED index }
+ AUGMENTS { row }
+ DEFVAL { one }
+ ::= { ROOT-MIB.root(1) 1 }
+notice NOTIFICATION-TYPE
+ OBJECTS { item }
+ NOTIFICATIONS { notice }
+ STATUS current
+ DESCRIPTION "notice"
+ ::= { item 2 }
+identity MODULE-IDENTITY
+ LAST-UPDATED "202608180000Z"
+ ORGANIZATION "org"
+ CONTACT-INFO "contact"
+ REVISION "202608180000Z"
+ DESCRIPTION "revision"
+ ::= { item 3 }
+trap TRAP-TYPE
+ ENTERPRISE item
+ VARIABLES { item }
+ DESCRIPTION "trap"
+ ::= 1
+Text ::= TEXTUAL-CONVENTION
+ DISPLAY-HINT "d"
+ STATUS current
+ DESCRIPTION "text"
+ SYNTAX BITS { flag(0) }
+caps AGENT-CAPABILITIES
+ PRODUCT-RELEASE "release"
+ STATUS current
+ DESCRIPTION "caps"
+ ::= { item 4 }
+Rows ::= SEQUENCE OF Row
+Row ::= SEQUENCE { field OCTET STRING }
+Union ::= CHOICE { alternative INTEGER }
+Tagged ::= [APPLICATION 4] IMPLICIT OCTET STRING
+OidType ::= OBJECT IDENTIFIER
+Plain ::= INTEGER
+END"#;
+
+        let recovered = b"COVERAGE-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX\n UNITS\n MAX-ACCESS\n STATUS\n DESCRIPTION\n REFERENCE\n INDEX { IMPLIED }\n AUGMENTS { one, two }\n DEFVAL { @\n }\n ::= { root() }\nnotice NOTIFICATION-TYPE\n OBJECTS { item, @\n }\n NOTIFICATIONS { @\n }\n STATUS current\n DESCRIPTION \"notice\"\n ::= { item 2 }\nidentity MODULE-IDENTITY\n LAST-UPDATED\n ORGANIZATION\n CONTACT-INFO\n REVISION\n DESCRIPTION\n ::= { item 3 }\ntrap TRAP-TYPE\n ENTERPRISE\n VARIABLES { @\n }\n DESCRIPTION \"trap\"\n ::= 1\nText ::= TEXTUAL-CONVENTION\n DISPLAY-HINT\n STATUS current\n DESCRIPTION \"text\"\n SYNTAX BITS { flag(x) }\ncaps AGENT-CAPABILITIES\n PRODUCT-RELEASE\n STATUS current\n DESCRIPTION \"caps\"\n ::= { item 4 }\nBadEnum ::= INTEGER { one() }\nBadRange ::= INTEGER (0..\nBadRows ::= SEQUENCE OF\nBadRow ::= SEQUENCE { field\nBadChoice ::= CHOICE { alternative\nBadTag ::= [APPLICATION ] IMPLICIT\nBadOctets ::= OCTET\nBadOidType ::= OBJECT\nAfter ::= INTEGER\nEND";
+
+        for (name, input, should_recover) in [
+            ("valid", valid.as_slice(), false),
+            ("recovered", recovered.as_slice(), true),
+        ] {
+            with_document(input, |document| {
+                let (tree, diagnostics) = build(document);
+                assert_eq!(
+                    !diagnostics.is_empty(),
+                    should_recover,
+                    "case={name}: {diagnostics:#?}"
+                );
+                for kind in CST04_KINDS {
+                    assert!(
+                        tree.nodes().any(|node| node.kind() == *kind),
+                        "case={name}: missing {kind:?}"
+                    );
+                }
+                if should_recover {
+                    assert!(tree.nodes().any(|node| node.kind() == SyntaxKind::Error));
+                    assert!(
+                        tree.nodes()
+                            .find_map(SyntaxClause::cast)
+                            .unwrap()
+                            .type_syntax()
+                            .is_none()
+                    );
+                    assert!(
+                        tree.nodes()
+                            .find_map(SequenceOfSyntax::cast)
+                            .unwrap()
+                            .entry_type()
+                            .is_none()
+                    );
+                    assert!(
+                        tree.nodes()
+                            .find_map(TaggedSyntax::cast)
+                            .unwrap()
+                            .inner()
+                            .is_none()
+                    );
+                } else {
+                    assert!(
+                        tree.nodes()
+                            .find_map(SyntaxClause::cast)
+                            .unwrap()
+                            .keyword()
+                            .is_some()
+                    );
+                    assert!(
+                        tree.nodes()
+                            .find_map(ConstrainedSyntax::cast)
+                            .unwrap()
+                            .base()
+                            .is_some()
+                    );
+                    assert!(
+                        tree.nodes()
+                            .find_map(SequenceSyntax::cast)
+                            .unwrap()
+                            .fields()
+                            .next()
+                            .unwrap()
+                            .type_syntax()
+                            .is_some()
+                    );
+                    assert!(
+                        tree.nodes()
+                            .find_map(OidAssignment::cast)
+                            .unwrap()
+                            .components()
+                            .all(|component| component.recovery_regions().next().is_none())
+                    );
+                }
+                assert_eq!(tree.reconstruct_text(), input, "case={name}");
+            });
+        }
     }
 
     #[test]

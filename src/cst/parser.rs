@@ -87,7 +87,7 @@ impl Parser<'_> {
         }
 
         let body_end = end_token.unwrap_or(module_end);
-        self.push_unparsed(&mut children, cursor, body_end);
+        self.push_structured_body(&mut children, cursor, body_end);
         if let Some(end) = end_token {
             children.push(ElementData::Token(self.tokens[end]));
         } else {
@@ -539,6 +539,25 @@ impl Parser<'_> {
             children.push(ElementData::Node(
                 self.node(SyntaxKind::UnparsedRegion, body),
             ));
+        }
+    }
+
+    fn push_structured_body(&mut self, children: &mut Vec<ElementData>, start: usize, end: usize) {
+        if start == end {
+            return;
+        }
+        if self.only_trivia(start, end) {
+            self.push_plain(children, start, end);
+        } else {
+            let body = super::body::parse_region(
+                self.document,
+                self.tokens,
+                self.diag_config,
+                &mut self.diagnostics,
+                start,
+                end,
+            );
+            children.push(ElementData::Node(body));
         }
     }
 
