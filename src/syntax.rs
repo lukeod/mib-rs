@@ -6,8 +6,8 @@
 //! parser, and tooling APIs cannot drift apart.
 //!
 //! [`SyntaxKind::Whitespace`], [`SyntaxKind::OpaqueText`], and
-//! [`SyntaxKind::SourceFile`] reserve the first lossless-CST vocabulary. The
-//! current lexer does not emit whitespace or skipped opaque bodies yet.
+//! [`SyntaxKind::SourceFile`] form the first lossless-CST vocabulary. The
+//! lossless lexer emits the token kinds; tree construction is a separate stage.
 
 use std::fmt;
 

@@ -2,7 +2,8 @@
 //!
 //! Converts raw source bytes into a stream of [`Token`]s. Handles
 //! SMIv1/SMIv2 syntax including `--` comments, hex/binary string literals,
-//! MACRO body skipping, and EXPORTS body skipping.
+//! MACRO body skipping, and EXPORTS body skipping. A separate lossless mode
+//! retains whitespace, comments, skipped bodies, and recovery text.
 
 pub mod token;
 
@@ -20,6 +21,16 @@ enum LexerState {
     InComment,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LexerMode {
+    Semantic,
+    Lossless,
+}
+
+fn is_identifier_body_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+}
+
 /// Tokenizer for SMIv1/SMIv2 MIB source text.
 ///
 /// Operates on raw bytes and produces [`Token`]s. The lexer tracks internal
@@ -33,6 +44,7 @@ pub struct Lexer<'src, 'cfg> {
     source: &'src [u8],
     pos: usize,
     state: LexerState,
+    mode: LexerMode,
     comment_start: usize,
     diagnostics: Vec<Diagnostic>,
     diag_config: &'cfg DiagnosticConfig,
@@ -41,11 +53,32 @@ pub struct Lexer<'src, 'cfg> {
 impl<'src, 'cfg> Lexer<'src, 'cfg> {
     /// Create a new lexer over a retained source document.
     pub fn new(document: &'src SourceDocument, diag_config: &'cfg DiagnosticConfig) -> Self {
+        Self::with_mode(document, diag_config, LexerMode::Semantic)
+    }
+
+    /// Create a lexer that retains every source byte in its token stream.
+    ///
+    /// In addition to semantic tokens, this mode emits whitespace and comments
+    /// as trivia tokens, skipped `MACRO` and `EXPORTS` bodies as opaque text,
+    /// and lexer recovery regions as error tokens.
+    pub fn new_lossless(
+        document: &'src SourceDocument,
+        diag_config: &'cfg DiagnosticConfig,
+    ) -> Self {
+        Self::with_mode(document, diag_config, LexerMode::Lossless)
+    }
+
+    fn with_mode(
+        document: &'src SourceDocument,
+        diag_config: &'cfg DiagnosticConfig,
+        mode: LexerMode,
+    ) -> Self {
         Lexer {
             document,
             source: document.bytes(),
             pos: 0,
             state: LexerState::Normal,
+            mode,
             comment_start: 0,
             diagnostics: Vec::new(),
             diag_config,
@@ -74,8 +107,16 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         loop {
             match self.state {
                 LexerState::InComment => return self.emit_comment(),
-                LexerState::InMacro => return self.skip_macro_body(),
-                LexerState::InExports => return self.skip_exports_body(),
+                LexerState::InMacro => {
+                    if let Some(tok) = self.skip_macro_body() {
+                        return tok;
+                    }
+                }
+                LexerState::InExports => {
+                    if let Some(tok) = self.skip_exports_body() {
+                        return tok;
+                    }
+                }
                 LexerState::Normal => {
                     if let Some(tok) = self.next_normal_token() {
                         return tok;
@@ -112,6 +153,12 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         {
             self.advance();
         }
+    }
+
+    fn scan_whitespace(&mut self) -> Token {
+        let start = self.pos;
+        self.skip_whitespace();
+        self.token(SyntaxKind::Whitespace, start)
     }
 
     fn skip_line_ending(&mut self) {
@@ -172,6 +219,13 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
     /// Returns None to signal retry (skipped junk or entered comment state).
     fn next_normal_token(&mut self) -> Option<Token> {
+        if self.mode == LexerMode::Lossless
+            && self
+                .peek()
+                .is_some_and(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        {
+            return Some(self.scan_whitespace());
+        }
         self.skip_whitespace();
 
         let start = self.pos;
@@ -254,8 +308,15 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             span,
             format!("unexpected character: 0x{:02x}", b),
         );
-        self.skip_to_eol();
-        None
+        if self.mode == LexerMode::Lossless {
+            while self.peek().is_some_and(|b| !matches!(b, b'\n' | b'\r')) {
+                self.advance();
+            }
+            Some(self.token(SyntaxKind::ErrorToken, start))
+        } else {
+            self.skip_to_eol();
+            None
+        }
     }
 
     // -- Identifier/keyword scanning --
@@ -483,7 +544,9 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
         match self.source.get(self.pos + 3) {
             None | Some(b'\n') | Some(b'\r') => {
                 self.pos += 3;
-                self.skip_line_ending();
+                if self.mode == LexerMode::Semantic {
+                    self.skip_line_ending();
+                }
                 true
             }
             _ => false,
@@ -495,8 +558,10 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
     fn emit_comment(&mut self) -> Token {
         self.skip_comment_body(true);
         let tok = self.token(SyntaxKind::Comment, self.comment_start);
-        // Consume trailing newline if present (not part of comment span).
-        if let Some(b) = self.peek()
+        // Semantic mode historically consumes the trailing newline. Lossless
+        // mode leaves it for the following whitespace token.
+        if self.mode == LexerMode::Semantic
+            && let Some(b) = self.peek()
             && (b == b'\n' || b == b'\r')
         {
             self.skip_line_ending();
@@ -536,7 +601,8 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
     // -- MACRO body skipping --
 
-    fn skip_macro_body(&mut self) -> Token {
+    fn skip_macro_body(&mut self) -> Option<Token> {
+        let opaque_start = self.pos;
         let mut in_quoted_string = false;
 
         loop {
@@ -545,7 +611,11 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             if self.is_eof() {
                 let start = self.pos;
                 self.state = LexerState::Normal;
-                return self.token(SyntaxKind::EofToken, start);
+                return if self.mode == LexerMode::Lossless && start > opaque_start {
+                    Some(self.token(SyntaxKind::OpaqueText, opaque_start))
+                } else {
+                    Some(self.token(SyntaxKind::EofToken, start))
+                };
             }
 
             if self.peek() == Some(b'"') {
@@ -560,21 +630,25 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
             }
 
             if self.remaining().starts_with(b"END") {
-                // Check preceding character is a delimiter (not alphanumeric or hyphen).
-                let prev_is_delimiter = self.pos == 0
-                    || (!self.source[self.pos - 1].is_ascii_alphanumeric()
-                        && self.source[self.pos - 1] != b'-');
+                // Check that END is not embedded in an identifier body.
+                let prev_is_delimiter =
+                    self.pos == 0 || !is_identifier_body_byte(self.source[self.pos - 1]);
                 if prev_is_delimiter {
                     let saved = self.pos;
                     self.pos += 3;
                     let is_delimiter = match self.peek() {
                         None => true,
                         Some(b'-') => self.peek_at(1) == Some(b'-'),
-                        Some(b) => !b.is_ascii_alphanumeric() && b != b'-',
+                        Some(b) => !is_identifier_body_byte(b),
                     };
                     if is_delimiter {
                         self.state = LexerState::Normal;
-                        return self.token(SyntaxKind::KwEnd, saved);
+                        if self.mode == LexerMode::Lossless {
+                            self.pos = saved;
+                            return (saved > opaque_start)
+                                .then(|| self.token(SyntaxKind::OpaqueText, opaque_start));
+                        }
+                        return Some(self.token(SyntaxKind::KwEnd, saved));
                     }
                     self.pos = saved;
                 }
@@ -591,19 +665,28 @@ impl<'src, 'cfg> Lexer<'src, 'cfg> {
 
     // -- EXPORTS body skipping --
 
-    fn skip_exports_body(&mut self) -> Token {
+    fn skip_exports_body(&mut self) -> Option<Token> {
+        let opaque_start = self.pos;
         loop {
             match self.peek() {
                 None => {
                     let start = self.pos;
                     self.state = LexerState::Normal;
-                    return self.token(SyntaxKind::EofToken, start);
+                    return if self.mode == LexerMode::Lossless && start > opaque_start {
+                        Some(self.token(SyntaxKind::OpaqueText, opaque_start))
+                    } else {
+                        Some(self.token(SyntaxKind::EofToken, start))
+                    };
                 }
                 Some(b';') => {
                     let start = self.pos;
-                    self.advance();
                     self.state = LexerState::Normal;
-                    return self.token(SyntaxKind::Semicolon, start);
+                    if self.mode == LexerMode::Lossless {
+                        return (start > opaque_start)
+                            .then(|| self.token(SyntaxKind::OpaqueText, opaque_start));
+                    }
+                    self.advance();
+                    return Some(self.token(SyntaxKind::Semicolon, start));
                 }
                 _ if self.is_comment_start() => {
                     self.skip_comment_inline();
@@ -644,12 +727,16 @@ mod tests {
     use std::sync::Arc;
 
     fn with_document<T>(input: &str, f: impl FnOnce(&SourceDocument) -> T) -> T {
+        with_bytes_document(input.as_bytes(), f)
+    }
+
+    fn with_bytes_document<T>(input: &[u8], f: impl FnOnce(&SourceDocument) -> T) -> T {
         let mut sources = SourceSet::new();
         let id = sources
             .insert(
                 SourceOrigin::memory("lexer-test"),
                 "lexer-test",
-                Arc::from(input.as_bytes()),
+                Arc::from(input),
             )
             .unwrap();
         f(sources.get(id).unwrap())
@@ -671,6 +758,33 @@ mod tests {
 
     fn kinds(tokens: &[Token]) -> Vec<SyntaxKind> {
         tokens.iter().map(|t| t.kind).collect()
+    }
+
+    fn assert_lossless(input: &[u8]) -> (Vec<Token>, Vec<Diagnostic>) {
+        let cfg = DiagnosticConfig::verbose();
+        with_bytes_document(input, |document| {
+            let (tokens, diagnostics) = crate::token::tokenize_lossless_with_config(document, &cfg);
+            let mut cursor = 0;
+            let mut reconstructed = Vec::with_capacity(input.len());
+
+            for token in &tokens {
+                let range = token.span.byte_range();
+                assert_eq!(token.span.source(), document.id());
+                assert_eq!(range.start, cursor, "gap or overlap before {token:?}");
+                if token.kind == SyntaxKind::EofToken {
+                    assert_eq!(range, input.len()..input.len());
+                } else {
+                    assert!(range.start < range.end, "empty non-EOF token: {token:?}");
+                    reconstructed.extend_from_slice(document.slice(token.span).unwrap());
+                    cursor = range.end;
+                }
+            }
+
+            assert_eq!(tokens.last().unwrap().kind, SyntaxKind::EofToken);
+            assert_eq!(cursor, input.len());
+            assert_eq!(reconstructed, input);
+            (tokens, diagnostics)
+        })
     }
 
     fn text_of<'a>(source: &'a str, token: &Token) -> &'a str {
@@ -1331,5 +1445,277 @@ END
         assert_eq!(tokens[0].span.end().get(), 3);
         assert_eq!(tokens[1].span.start().get(), 4);
         assert_eq!(tokens[1].span.end().get(), 7);
+    }
+
+    #[test]
+    fn lossless_adjacent_trivia_and_comment_at_eof() {
+        let input = b"x \t--one----two--\r\n y--tail";
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Whitespace,
+                SyntaxKind::Comment,
+                SyntaxKind::Comment,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Comment,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(&input[tokens[1].span.byte_range()], b" \t");
+        assert_eq!(&input[tokens[2].span.byte_range()], b"--one--");
+        assert_eq!(&input[tokens[3].span.byte_range()], b"--two--");
+        assert_eq!(&input[tokens[4].span.byte_range()], b"\r\n ");
+        assert_eq!(&input[tokens[6].span.byte_range()], b"--tail");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn lossless_preserves_each_line_ending_form() {
+        let input = b"a\rb\nc\r\nd";
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(&input[tokens[1].span.byte_range()], b"\r");
+        assert_eq!(&input[tokens[3].span.byte_range()], b"\n");
+        assert_eq!(&input[tokens[5].span.byte_range()], b"\r\n");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn lossless_preserves_invalid_byte_recovery() {
+        let input = b"x \xff rest\r\nz";
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::Whitespace,
+                SyntaxKind::ErrorToken,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(&input[tokens[2].span.byte_range()], b"\xff rest");
+        assert_eq!(&input[tokens[3].span.byte_range()], b"\r\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagCode::UnexpectedCharacter);
+        assert_eq!(diagnostics[0].range.unwrap().byte_range(), 2..3);
+
+        let cfg = DiagnosticConfig::verbose();
+        with_bytes_document(input, |document| {
+            let (semantic, semantic_diagnostics) = Lexer::new(document, &cfg).tokenize();
+            assert_eq!(
+                kinds(&semantic),
+                vec![
+                    SyntaxKind::LowercaseIdent,
+                    SyntaxKind::LowercaseIdent,
+                    SyntaxKind::EofToken,
+                ]
+            );
+            assert_eq!(semantic_diagnostics, diagnostics);
+        });
+    }
+
+    #[test]
+    fn lossless_preserves_exports_and_macro_bodies_as_opaque_text() {
+        let input =
+            b"EXPORTS foo -- semi; --\r\nbar; MACRO ::= BEGIN \"END\" -- END\r\nstuff END next";
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::KwExports,
+                SyntaxKind::OpaqueText,
+                SyntaxKind::Semicolon,
+                SyntaxKind::Whitespace,
+                SyntaxKind::KwMacro,
+                SyntaxKind::OpaqueText,
+                SyntaxKind::KwEnd,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(
+            &input[tokens[1].span.byte_range()],
+            b" foo -- semi; --\r\nbar"
+        );
+        assert_eq!(
+            &input[tokens[5].span.byte_range()],
+            b" ::= BEGIN \"END\" -- END\r\nstuff "
+        );
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn macro_end_inside_underscore_identifier_does_not_terminate_body() {
+        let input = b"MACRO ::= BEGIN END_SUFFIX PREFIX_END FOO_END_BAR END next";
+        let terminating_end = input.len() - b"END next".len();
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            kinds(&tokens),
+            vec![
+                SyntaxKind::KwMacro,
+                SyntaxKind::OpaqueText,
+                SyntaxKind::KwEnd,
+                SyntaxKind::Whitespace,
+                SyntaxKind::LowercaseIdent,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(
+            &input[tokens[1].span.byte_range()],
+            b" ::= BEGIN END_SUFFIX PREFIX_END FOO_END_BAR "
+        );
+        assert_eq!(tokens[2].span.start().as_usize(), terminating_end);
+        assert!(diagnostics.is_empty());
+
+        let cfg = DiagnosticConfig::verbose();
+        with_bytes_document(input, |document| {
+            let (semantic, semantic_diagnostics) = Lexer::new(document, &cfg).tokenize();
+            assert_eq!(
+                kinds(&semantic),
+                vec![
+                    SyntaxKind::KwMacro,
+                    SyntaxKind::KwEnd,
+                    SyntaxKind::LowercaseIdent,
+                    SyntaxKind::EofToken,
+                ]
+            );
+            assert_eq!(semantic[1].span.start().as_usize(), terminating_end);
+            assert!(semantic_diagnostics.is_empty());
+        });
+    }
+
+    #[test]
+    fn lossless_handles_empty_skipped_bodies() {
+        let (exports_tokens, exports_diagnostics) = assert_lossless(b"EXPORTS;");
+        assert_eq!(
+            kinds(&exports_tokens),
+            vec![
+                SyntaxKind::KwExports,
+                SyntaxKind::Semicolon,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert!(exports_diagnostics.is_empty());
+
+        // A separator is required for MACRO and END to be distinct keywords;
+        // that separator is the complete opaque body in this minimal case.
+        let input = b"MACRO END";
+        let (macro_tokens, macro_diagnostics) = assert_lossless(input);
+        assert_eq!(
+            kinds(&macro_tokens),
+            vec![
+                SyntaxKind::KwMacro,
+                SyntaxKind::OpaqueText,
+                SyntaxKind::KwEnd,
+                SyntaxKind::EofToken,
+            ]
+        );
+        assert_eq!(&input[macro_tokens[1].span.byte_range()], b" ");
+        assert!(macro_diagnostics.is_empty());
+    }
+
+    #[test]
+    fn lossless_resumes_after_skipped_bodies_across_modules() {
+        let input = b"FIRST DEFINITIONS ::= BEGIN\n\
+EXPORTS firstSymbol;\n\
+END\n\
+SECOND DEFINITIONS ::= BEGIN\n\
+Legacy MACRO ::= BEGIN\n\
+END\n\
+END";
+        let (tokens, diagnostics) = assert_lossless(input);
+
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == SyntaxKind::KwDefinitions)
+                .count(),
+            2
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == SyntaxKind::KwBegin)
+                .count(),
+            2
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == SyntaxKind::KwEnd)
+                .count(),
+            3
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == SyntaxKind::OpaqueText)
+                .count(),
+            2
+        );
+        let second = tokens
+            .iter()
+            .find(|token| {
+                token.kind == SyntaxKind::UppercaseIdent
+                    && &input[token.span.byte_range()] == b"SECOND"
+            })
+            .expect("the second module header should be tokenized after EXPORTS");
+        assert!(
+            second.span.start().as_usize()
+                > tokens
+                    .iter()
+                    .find(|token| token.kind == SyntaxKind::Semicolon)
+                    .unwrap()
+                    .span
+                    .end()
+                    .as_usize()
+        );
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn lossless_preserves_opaque_body_at_eof() {
+        for input in [
+            b"EXPORTS foo, bar".as_slice(),
+            b"MACRO ::= BEGIN body".as_slice(),
+        ] {
+            let (tokens, diagnostics) = assert_lossless(input);
+            assert_eq!(
+                kinds(&tokens),
+                vec![
+                    if input.starts_with(b"EXPORTS") {
+                        SyntaxKind::KwExports
+                    } else {
+                        SyntaxKind::KwMacro
+                    },
+                    SyntaxKind::OpaqueText,
+                    SyntaxKind::EofToken,
+                ]
+            );
+            assert!(diagnostics.is_empty());
+        }
     }
 }
