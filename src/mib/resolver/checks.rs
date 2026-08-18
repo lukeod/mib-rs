@@ -3478,13 +3478,24 @@ fn check_includes_groups(ctx: &mut ResolverContext) {
                         });
                     }
 
-                    match lookup_compliance_member(
+                    match lookup_compliance_member_with_module(
                         ctx,
                         ir_id,
                         &supports.module_name,
                         &reference.name,
                     ) {
-                        Some(node_id) if ctx.mib.tree().get(node_id).group.is_none() => {
+                        Some((declaring_ir, _))
+                            if ctx
+                                .module_to_resolved
+                                .get(&declaring_ir)
+                                .and_then(|&module_id| {
+                                    ctx.mib
+                                        .raw()
+                                        .module(module_id)
+                                        .group_by_name(&reference.name)
+                                })
+                                .is_none() =>
+                        {
                             diags.push(Diag {
                                 code: DiagCode::IncludesUnresolved,
                                 ir_id: Some(ir_id),

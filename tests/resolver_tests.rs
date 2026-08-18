@@ -103,6 +103,14 @@ sharedOidObject OBJECT-TYPE
     ::= { capabilitiesTarget 5 }
 
 sharedOidNode OBJECT IDENTIFIER ::= { capabilitiesTarget 5 }
+
+sharedIncludesNode OBJECT IDENTIFIER ::= { capabilitiesTarget 6 }
+
+sharedIncludesGroup OBJECT-GROUP
+    OBJECTS { existingObject }
+    STATUS current
+    DESCRIPTION "Group sharing an OID with a plain node."
+    ::= { capabilitiesTarget 6 }
 END
 "#[..],
         ),
@@ -133,7 +141,7 @@ referenceCapabilities AGENT-CAPABILITIES
             existingNotificationGroup,
             missingGroup,
             missingGroup,
-            existingObject
+            existingObject, sharedIncludesNode, sharedIncludesGroup
         }
         VARIATION existingObject
             CREATION-REQUIRES {
@@ -395,7 +403,7 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
     }));
 
     let unresolved = diagnostics_for(&mib, DiagCode::IncludesUnresolved);
-    assert_eq!(unresolved.len(), 3);
+    assert_eq!(unresolved.len(), 4);
     assert!(unresolved.iter().all(|diagnostic| {
         diagnostic.severity == Severity::Warning
             && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
@@ -411,6 +419,15 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
         diagnostic.message.contains("existingObject")
             && diagnostic.message.contains("not an OBJECT-GROUP")
     }));
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message
+            == "INCLUDES symbol \"sharedIncludesNode\" in module \"CAPABILITIES-TARGET-MIB\" is not an OBJECT-GROUP or NOTIFICATION-GROUP"
+    }));
+    assert!(
+        unresolved
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("sharedIncludesGroup"))
+    );
 
     let duplicate_entries: Vec<_> = report
         .iter()
@@ -444,7 +461,7 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
         .iter()
         .filter(|entry| entry.diagnostic().code == DiagCode::IncludesUnresolved)
         .collect();
-    assert_eq!(unresolved_entries.len(), 3);
+    assert_eq!(unresolved_entries.len(), 4);
     assert_eq!(
         unresolved_entries[0].slice().unwrap(),
         Some(&b"missingGroup"[..])
@@ -456,6 +473,10 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
     assert_eq!(
         unresolved_entries[2].slice().unwrap(),
         Some(&b"existingObject"[..])
+    );
+    assert_eq!(
+        unresolved_entries[3].slice().unwrap(),
+        Some(&b"sharedIncludesNode"[..])
     );
     assert_ne!(
         unresolved_entries[0].diagnostic().range,
@@ -470,6 +491,23 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
         .unwrap()
         .expect("wrong-kind diagnostic should have a range");
     assert_eq!(wrong_kind_start.line(), 25);
+    let (shared_oid_wrong_kind_start, _) = unresolved_entries[3]
+        .byte_positions()
+        .unwrap()
+        .expect("shared-OID wrong-kind diagnostic should have a range");
+    assert_eq!(shared_oid_wrong_kind_start.line(), 25);
+
+    let target_module = mib
+        .module_by_name("CAPABILITIES-TARGET-MIB")
+        .expect("target module should resolve");
+    let target_module = mib.raw().module(target_module);
+    let shared_node = target_module
+        .node_by_name("sharedIncludesNode")
+        .expect("shared OID node should resolve");
+    let shared_group = target_module
+        .group_by_name("sharedIncludesGroup")
+        .expect("shared OID group should resolve");
+    assert_eq!(mib.raw().group(shared_group).node(), Some(shared_node));
 
     let capability = mib
         .capability("referenceCapabilities")
@@ -483,6 +521,8 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
             "missingGroup",
             "missingGroup",
             "existingObject",
+            "sharedIncludesNode",
+            "sharedIncludesGroup",
         ]
     );
 }
