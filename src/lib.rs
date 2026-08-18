@@ -767,6 +767,7 @@
 //!
 //! The JSON export example requires the `serde` feature.
 pub mod ast;
+pub mod cst;
 pub mod error;
 #[cfg(feature = "serde")]
 pub mod export;
@@ -834,5 +835,5 @@ pub mod raw {
 /// that need direct access to tokens, parsed AST, lowered IR, or the parser
 /// entry points themselves.
 pub mod compile {
-    pub use crate::{ast, ir, lower, parser, syntax, token};
+    pub use crate::{ast, cst, ir, lower, parser, syntax, token};
 }

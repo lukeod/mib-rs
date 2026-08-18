@@ -5,9 +5,10 @@
 //! categories, display names, and libsmi names are declared together so lexer,
 //! parser, and tooling APIs cannot drift apart.
 //!
-//! [`SyntaxKind::Whitespace`], [`SyntaxKind::OpaqueText`], and
-//! [`SyntaxKind::SourceFile`] form the first lossless-CST vocabulary. The
-//! lossless lexer emits the token kinds; tree construction is a separate stage.
+//! [`SyntaxKind::Whitespace`], [`SyntaxKind::OpaqueText`],
+//! [`SyntaxKind::SourceFile`], and [`SyntaxKind::Error`] form the first
+//! lossless-CST vocabulary. The lossless lexer emits the token kinds; tree
+//! construction is a separate stage.
 
 use std::fmt;
 
@@ -415,6 +416,7 @@ define_syntax_kinds! {
     }
     nodes {
         SourceFile => ("SOURCE_FILE", "source file");
+        Error => ("ERROR_NODE", "error node");
     }
     forbidden {
         "ABSENT", "ANY", "BIT", "BOOLEAN", "BY", "COMPONENT", "COMPONENTS",
@@ -451,10 +453,10 @@ mod tests {
 
     #[test]
     fn inventory_and_categories_are_exhaustive() {
-        assert_eq!(SyntaxKind::ALL.len(), 110);
+        assert_eq!(SyntaxKind::ALL.len(), 111);
         assert_eq!(
             SyntaxKind::ALL.iter().filter(|kind| kind.is_node()).count(),
-            1
+            2
         );
         assert_eq!(
             SyntaxKind::ALL
@@ -499,6 +501,7 @@ mod tests {
             82
         );
         assert_eq!(SyntaxKind::SourceFile.category(), SyntaxCategory::Node);
+        assert_eq!(SyntaxKind::Error.category(), SyntaxCategory::Node);
         assert!(SyntaxKind::Whitespace.is_trivia());
         assert!(SyntaxKind::Comment.is_trivia());
         assert!(!SyntaxKind::OpaqueText.is_trivia());
