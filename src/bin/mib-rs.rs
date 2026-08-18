@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::Parser;
@@ -229,6 +232,36 @@ enum Command {
         #[arg(long)]
         no_descriptions: bool,
     },
+    /// Emit canonical SMIv2 text for resolved modules
+    #[command(
+        long_about = "Emit canonical SMIv2 text for resolved modules.\n\nWithout --output-dir, exactly one module must be selected and is written to stdout. Directory mode sorts modules by name, renders all output before touching files, then atomically replaces <MODULE>.mib files in that order. If a later filesystem operation fails, files completed earlier remain replaced."
+    )]
+    Normalize {
+        /// Module names to normalize (omit to select all available modules)
+        modules: Vec<String>,
+        /// Write atomically replaced <MODULE>.mib files to this directory.
+        /// If a later file fails, files completed earlier remain replaced.
+        #[arg(short = 'o', long = "output-dir", value_name = "DIR")]
+        output_dir: Option<PathBuf>,
+        /// Omit DESCRIPTION clauses
+        #[arg(long)]
+        no_descriptions: bool,
+        /// Omit conformance definitions
+        #[arg(long)]
+        no_conformance: bool,
+        /// Omit reconstructed SEQUENCE definitions
+        #[arg(long)]
+        no_sequences: bool,
+        /// Use strict resolver mode
+        #[arg(long, conflicts_with = "permissive")]
+        strict: bool,
+        /// Use permissive resolver mode
+        #[arg(long, conflicts_with = "strict")]
+        permissive: bool,
+        /// Reporting level
+        #[arg(long, default_value = "default")]
+        report: CliReportingLevel,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -339,6 +372,26 @@ fn main() {
             oid,
             compact,
             no_descriptions,
+        ),
+        Command::Normalize {
+            modules,
+            output_dir,
+            no_descriptions,
+            no_conformance,
+            no_sequences,
+            strict,
+            permissive,
+            report,
+        } => cmd_normalize(
+            &cli.paths,
+            modules,
+            output_dir.as_deref(),
+            no_descriptions,
+            no_conformance,
+            no_sequences,
+            strict,
+            permissive,
+            report,
         ),
     };
 
@@ -2614,6 +2667,211 @@ fn match_base_type_obj(obj: &mib_rs::mib::Object<'_>, base_lower: &str) -> bool 
         Some(ty) => ty.effective_base().to_string().to_lowercase() == *base_lower,
         None => false,
     }
+}
+
+// --- normalize ---
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_normalize(
+    paths: &[String],
+    mut modules: Vec<String>,
+    output_dir: Option<&Path>,
+    no_descriptions: bool,
+    no_conformance: bool,
+    no_sequences: bool,
+    strict: bool,
+    permissive: bool,
+    report: CliReportingLevel,
+) -> i32 {
+    modules.sort();
+    modules.dedup();
+    if output_dir.is_none() && modules.len() > 1 {
+        eprintln!(
+            "error: stdout normalization requires exactly one module; use --output-dir for multiple modules"
+        );
+        return 2;
+    }
+
+    let requested = modules.clone();
+    let strictness = resolve_strictness(strict, permissive, ResolverStrictness::Normal);
+    let mib = match load_mib(
+        paths,
+        modules,
+        strictness,
+        DiagnosticConfig::for_reporting(report.into()),
+    ) {
+        Ok(mib) => mib,
+        Err(code) => return code,
+    };
+
+    for entry in mib.diagnostic_report().iter() {
+        eprintln!("{}", render_diagnostic(entry));
+    }
+
+    for name in &requested {
+        if mib.module(name).is_none() {
+            eprintln!("error: module not found after loading: {name}");
+            return 2;
+        }
+    }
+
+    let mut selected = if requested.is_empty() {
+        mib.user_modules()
+            .map(|module| module.name().to_owned())
+            .collect::<Vec<_>>()
+    } else {
+        requested
+            .iter()
+            .filter_map(|name| mib.module(name).map(|module| module.name().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    selected.sort();
+    selected.dedup();
+
+    if selected.is_empty() {
+        eprintln!("error: no modules selected for normalization");
+        return 2;
+    }
+    if output_dir.is_none() && selected.len() != 1 {
+        eprintln!(
+            "error: stdout normalization selected {} modules; specify one module or use --output-dir",
+            selected.len()
+        );
+        return 2;
+    }
+
+    let options = mib_rs::writer::Options::default()
+        .with_descriptions(!no_descriptions)
+        .with_conformance(!no_conformance)
+        .with_reconstructed_sequences(!no_sequences);
+    let mut rendered = Vec::with_capacity(selected.len());
+    for name in selected {
+        let mut bytes = Vec::new();
+        if let Err(error) = mib_rs::writer::write_with_options(&mut bytes, &mib, &name, options) {
+            eprintln!("error: failed to normalize {name}: {error}");
+            return 2;
+        }
+        rendered.push((name, bytes));
+    }
+
+    let output_status = match output_dir {
+        Some(directory) => write_normalized_directory(directory, &rendered),
+        None => {
+            let (_, bytes) = &rendered[0];
+            let stdout = io::stdout();
+            let mut destination = stdout.lock();
+            if let Err(error) = destination
+                .write_all(bytes)
+                .and_then(|()| destination.flush())
+            {
+                eprintln!("error: failed to write normalized module to stdout: {error}");
+                2
+            } else {
+                0
+            }
+        }
+    };
+
+    if output_status == 0 && mib.has_errors() {
+        1
+    } else {
+        output_status
+    }
+}
+
+fn write_normalized_directory(directory: &Path, rendered: &[(String, Vec<u8>)]) -> i32 {
+    let mut targets = Vec::with_capacity(rendered.len());
+    let mut collision_keys = HashMap::new();
+    for (name, bytes) in rendered {
+        let filename = match normalized_filename(name) {
+            Ok(filename) => filename,
+            Err(error) => {
+                eprintln!("error: cannot derive output filename for module {name:?}: {error}");
+                return 2;
+            }
+        };
+        let collision_key = filename.to_ascii_lowercase();
+        if let Some(previous) = collision_keys.insert(collision_key, name) {
+            eprintln!(
+                "error: module names {previous:?} and {name:?} map to colliding output filenames"
+            );
+            return 2;
+        }
+        targets.push((name, bytes, directory.join(filename)));
+    }
+
+    if let Err(error) = fs::create_dir_all(directory) {
+        eprintln!(
+            "error: failed to create output directory {}: {error}",
+            directory.display()
+        );
+        return 2;
+    }
+
+    for (name, bytes, target) in targets {
+        if let Err(error) = atomic_replace(&target, bytes) {
+            eprintln!(
+                "error: failed to write normalized module {name} to {}: {error}",
+                target.display()
+            );
+            return 2;
+        }
+    }
+    0
+}
+
+fn normalized_filename(module_name: &str) -> Result<String, &'static str> {
+    if module_name.is_empty() {
+        return Err("module name is empty");
+    }
+    if matches!(module_name, "." | "..")
+        || module_name
+            .bytes()
+            .any(|byte| matches!(byte, b'/' | b'\\' | 0))
+    {
+        return Err("module name contains a path component");
+    }
+    Ok(format!("{module_name}.mib"))
+}
+
+fn atomic_replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "output path has no parent"))?;
+    let filename = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid output filename"))?;
+
+    let mut attempt = 0_u32;
+    let (temporary, mut file) = loop {
+        let temporary = parent.join(format!(".{filename}.tmp-{}-{attempt}", process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                attempt = attempt.checked_add(1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::AlreadyExists, "temporary filename exhausted")
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+
+    let write_result = file.write_all(contents).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary, target) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
