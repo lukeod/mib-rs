@@ -425,8 +425,8 @@ pub struct AgentCapabilities {
 pub struct SupportsModule {
     /// Name of the supported module.
     pub module_name: String,
-    /// Names of included conformance groups.
-    pub includes: Vec<String>,
+    /// Included conformance group references.
+    pub includes: Vec<NameRef>,
     /// Object/notification variations.
     pub variations: Vec<Variation>,
     /// Source range of this `SUPPORTS` clause.

@@ -1058,7 +1058,7 @@ fn lower_supports_module(
 
     ir::SupportsModule {
         module_name: s.module_name.name.clone(),
-        includes: ident_names(&s.includes),
+        includes: name_refs(&s.includes),
         variations,
         range: s.span,
     }
@@ -1557,6 +1557,57 @@ END
             .unwrap()
             .line();
         assert_ne!(first_notification_line, second_notification_line);
+    }
+
+    #[test]
+    fn capabilities_includes_retain_identifier_ranges() {
+        let source = br#"CAPABILITIES-RANGES-MIB DEFINITIONS ::= BEGIN
+testCapabilities AGENT-CAPABILITIES
+    PRODUCT-RELEASE "test"
+    STATUS current
+    DESCRIPTION "Test capabilities."
+    SUPPORTS TARGET-MIB
+        INCLUDES {
+            firstGroup,
+            secondGroup
+        }
+    ::= { 1 3 6 1 }
+END
+"#;
+        let mut sources = SourceSet::new();
+        let source_id = sources
+            .insert(
+                SourceOrigin::memory("capabilities-ranges"),
+                "capabilities-ranges",
+                Arc::from(&source[..]),
+            )
+            .unwrap();
+        let document = sources.get(source_id).unwrap();
+        let config = DiagnosticConfig::verbose();
+        let parsed = crate::parser::parse(document, &config)
+            .into_iter()
+            .next()
+            .expect("module should parse");
+        let lowered = lower(parsed, document, &config);
+
+        let ir::Definition::AgentCapabilities(capabilities) = &lowered.definitions[0] else {
+            panic!("expected agent capabilities");
+        };
+        let includes = &capabilities.supports[0].includes;
+        assert_eq!(includes.len(), 2);
+        assert_eq!(includes[0].name, "firstGroup");
+        assert_eq!(includes[1].name, "secondGroup");
+        assert_eq!(document.slice(includes[0].range).unwrap(), b"firstGroup");
+        assert_eq!(document.slice(includes[1].range).unwrap(), b"secondGroup");
+        let first_line = document
+            .byte_position(includes[0].range.start())
+            .unwrap()
+            .line();
+        let second_line = document
+            .byte_position(includes[1].range.start())
+            .unwrap()
+            .line();
+        assert_ne!(first_line, second_line);
     }
 
     #[test]

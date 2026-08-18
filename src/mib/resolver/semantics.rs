@@ -1415,7 +1415,7 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
         // resolution work can mutate ctx without borrow-ending placeholders.
         struct SupportsData {
             module_name: String,
-            includes: Vec<String>,
+            includes: Vec<ir::NameRef>,
             variations: Vec<VariationData>,
             range: SourceRange,
         }
@@ -1545,7 +1545,11 @@ fn create_resolved_capabilities(ctx: &mut ResolverContext) {
 
             cap.supports.push(CapabilitiesModule {
                 module_name: sd.module_name.clone(),
-                includes: sd.includes.clone(),
+                includes: sd
+                    .includes
+                    .iter()
+                    .map(|reference| reference.name.clone())
+                    .collect(),
                 object_variations: obj_vars,
                 notification_variations: notif_vars,
                 range: sd.range,

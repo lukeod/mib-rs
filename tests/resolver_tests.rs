@@ -59,9 +59,9 @@ fn load_capabilities_reference_fixture() -> mib_rs::Mib {
             "CAPABILITIES-TARGET-MIB",
             &br#"CAPABILITIES-TARGET-MIB DEFINITIONS ::= BEGIN
 IMPORTS
-    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE, Integer32, enterprises
         FROM SNMPv2-SMI
-    OBJECT-GROUP
+    OBJECT-GROUP, NOTIFICATION-GROUP
         FROM SNMPv2-CONF;
 
 capabilitiesTarget MODULE-IDENTITY
@@ -83,6 +83,17 @@ existingGroup OBJECT-GROUP
     STATUS current
     DESCRIPTION "Existing group."
     ::= { capabilitiesTarget 2 }
+
+existingNotification NOTIFICATION-TYPE
+    STATUS current
+    DESCRIPTION "Existing notification."
+    ::= { capabilitiesTarget 3 }
+
+existingNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { existingNotification }
+    STATUS current
+    DESCRIPTION "Existing notification group."
+    ::= { capabilitiesTarget 4 }
 END
 "#[..],
         ),
@@ -108,8 +119,12 @@ referenceCapabilities AGENT-CAPABILITIES
     DESCRIPTION "Capabilities reference checks."
     SUPPORTS CAPABILITIES-TARGET-MIB
         INCLUDES {
-            existingGroup, existingGroup,
-            missingGroup, missingGroup
+            existingGroup,
+            existingGroup,
+            existingNotificationGroup,
+            missingGroup,
+            missingGroup,
+            existingObject
         }
         VARIATION existingObject
             CREATION-REQUIRES {
@@ -347,6 +362,7 @@ END
 #[test]
 fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
     let mib = load_capabilities_reference_fixture();
+    let report = mib.diagnostic_report();
 
     let duplicate = diagnostics_for(&mib, DiagCode::IncludesDuplicate);
     assert_eq!(duplicate.len(), 2);
@@ -366,12 +382,96 @@ fn capabilities_includes_report_duplicates_and_each_unresolved_occurrence() {
     }));
 
     let unresolved = diagnostics_for(&mib, DiagCode::IncludesUnresolved);
-    assert_eq!(unresolved.len(), 2);
+    assert_eq!(unresolved.len(), 3);
     assert!(unresolved.iter().all(|diagnostic| {
         diagnostic.severity == Severity::Warning
-            && diagnostic.message.contains("missingGroup")
             && diagnostic.message.contains("CAPABILITIES-TARGET-MIB")
     }));
+    assert_eq!(
+        unresolved
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("missingGroup"))
+            .count(),
+        2
+    );
+    assert!(unresolved.iter().any(|diagnostic| {
+        diagnostic.message.contains("existingObject")
+            && diagnostic.message.contains("not an OBJECT-GROUP")
+    }));
+
+    let duplicate_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::IncludesDuplicate)
+        .collect();
+    assert_eq!(duplicate_entries.len(), 2);
+    assert_eq!(
+        duplicate_entries[0].slice().unwrap(),
+        Some(&b"existingGroup"[..])
+    );
+    assert_eq!(
+        duplicate_entries[1].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_ne!(
+        duplicate_entries[0].diagnostic().range,
+        duplicate_entries[1].diagnostic().range
+    );
+    let (resolved_duplicate_start, _) = duplicate_entries[0]
+        .byte_positions()
+        .unwrap()
+        .expect("resolved duplicate should have a range");
+    let (unresolved_duplicate_start, _) = duplicate_entries[1]
+        .byte_positions()
+        .unwrap()
+        .expect("unresolved duplicate should have a range");
+    assert_eq!(resolved_duplicate_start.line(), 21);
+    assert_eq!(unresolved_duplicate_start.line(), 24);
+
+    let unresolved_entries: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::IncludesUnresolved)
+        .collect();
+    assert_eq!(unresolved_entries.len(), 3);
+    assert_eq!(
+        unresolved_entries[0].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[1].slice().unwrap(),
+        Some(&b"missingGroup"[..])
+    );
+    assert_eq!(
+        unresolved_entries[2].slice().unwrap(),
+        Some(&b"existingObject"[..])
+    );
+    assert_ne!(
+        unresolved_entries[0].diagnostic().range,
+        unresolved_entries[1].diagnostic().range
+    );
+    assert_ne!(
+        unresolved_entries[1].diagnostic().range,
+        unresolved_entries[2].diagnostic().range
+    );
+    let (wrong_kind_start, _) = unresolved_entries[2]
+        .byte_positions()
+        .unwrap()
+        .expect("wrong-kind diagnostic should have a range");
+    assert_eq!(wrong_kind_start.line(), 25);
+
+    let capability = mib
+        .capability("referenceCapabilities")
+        .expect("capability should resolve");
+    assert_eq!(
+        capability.supports()[0].includes,
+        [
+            "existingGroup",
+            "existingGroup",
+            "existingNotificationGroup",
+            "missingGroup",
+            "missingGroup",
+            "existingObject",
+        ]
+    );
 }
 
 #[test]

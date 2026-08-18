@@ -3355,8 +3355,8 @@ fn check_group_unreferenced(ctx: &mut ResolverContext) {
                 }
                 ir::Definition::AgentCapabilities(ac) => {
                     for sup in &ac.supports {
-                        for name in &sup.includes {
-                            referenced_groups.insert(name.clone());
+                        for reference in &sup.includes {
+                            referenced_groups.insert(reference.name.clone());
                         }
                     }
                 }
@@ -3419,29 +3419,48 @@ fn check_includes_groups(ctx: &mut ResolverContext) {
 
             for supports in &capabilities.supports {
                 let mut seen = HashSet::with_capacity(supports.includes.len());
-                for name in &supports.includes {
-                    if !seen.insert(name.as_str()) {
+                for reference in &supports.includes {
+                    if !seen.insert(reference.name.as_str()) {
                         diags.push(Diag {
                             code: DiagCode::IncludesDuplicate,
                             ir_id: Some(ir_id),
-                            span: Some(supports.range),
+                            span: Some(reference.range),
                             message: format!(
                                 "duplicate INCLUDES group {:?} in SUPPORTS {}",
-                                name, supports.module_name
+                                reference.name, supports.module_name
                             ),
                         });
                     }
 
-                    if lookup_compliance_member(ctx, ir_id, &supports.module_name, name).is_none() {
-                        diags.push(Diag {
-                            code: DiagCode::IncludesUnresolved,
-                            ir_id: Some(ir_id),
-                            span: Some(supports.range),
-                            message: format!(
-                                "INCLUDES group {:?} not found in module {:?}",
-                                name, supports.module_name
-                            ),
-                        });
+                    match lookup_compliance_member(
+                        ctx,
+                        ir_id,
+                        &supports.module_name,
+                        &reference.name,
+                    ) {
+                        Some(node_id) if ctx.mib.tree().get(node_id).group.is_none() => {
+                            diags.push(Diag {
+                                code: DiagCode::IncludesUnresolved,
+                                ir_id: Some(ir_id),
+                                span: Some(reference.range),
+                                message: format!(
+                                    "INCLUDES symbol {:?} in module {:?} is not an OBJECT-GROUP or NOTIFICATION-GROUP",
+                                    reference.name, supports.module_name
+                                ),
+                            });
+                        }
+                        None => {
+                            diags.push(Diag {
+                                code: DiagCode::IncludesUnresolved,
+                                ir_id: Some(ir_id),
+                                span: Some(reference.range),
+                                message: format!(
+                                    "INCLUDES group {:?} not found in module {:?}",
+                                    reference.name, supports.module_name
+                                ),
+                            });
+                        }
+                        Some(_) => {}
                     }
                 }
             }
