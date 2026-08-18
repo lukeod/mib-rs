@@ -11,7 +11,7 @@ use crate::source::SourceRange;
 pub struct OidAssignment {
     /// Ordered list of OID components (symbolic or numeric).
     pub components: Vec<OidComponent>,
-    /// Source range covering the entire `{ ... }` assignment.
+    /// Source-qualified range covering the entire `{ ... }` assignment.
     pub range: SourceRange,
 }
 
@@ -19,21 +19,31 @@ pub struct OidAssignment {
 #[derive(Debug, Clone)]
 pub enum OidComponent {
     /// Symbolic name reference, e.g. `internet`.
-    Name { name: String, range: SourceRange },
+    Name {
+        name: String,
+        /// Source-qualified range covering the symbolic name.
+        range: SourceRange,
+    },
     /// Numeric arc, e.g. `1` or `31`.
-    Number { value: u32, range: SourceRange },
+    Number {
+        value: u32,
+        /// Source-qualified range covering the numeric literal.
+        range: SourceRange,
+    },
     /// Name with number, e.g. `org(3)`.
     NamedNumber {
         name: String,
         number: u32,
-        /// Exact source range of `name`, excluding the numeric annotation.
+        /// Source-qualified range covering `name` but not the numeric annotation.
         name_range: SourceRange,
+        /// Source-qualified range covering `name(number)`.
         range: SourceRange,
     },
     /// Module-qualified reference, e.g. `SNMPv2-SMI.enterprises`.
     QualifiedName {
         module: String,
         name: String,
+        /// Source-qualified range covering `module.name`.
         range: SourceRange,
     },
     /// Module-qualified name with number, e.g. `SNMPv2-SMI.enterprises(1)`.
@@ -41,14 +51,15 @@ pub enum OidComponent {
         module: String,
         name: String,
         number: u32,
-        /// Exact source range of `module.name`, excluding the numeric annotation.
+        /// Source-qualified range covering `module.name` but not the numeric annotation.
         name_range: SourceRange,
+        /// Source-qualified range covering `module.name(number)`.
         range: SourceRange,
     },
 }
 
 impl OidComponent {
-    /// Returns the source range of this component.
+    /// Returns the source-qualified range covering this component.
     pub fn range(&self) -> SourceRange {
         match self {
             OidComponent::Name { range, .. }

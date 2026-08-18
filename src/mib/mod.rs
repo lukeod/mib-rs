@@ -21,6 +21,19 @@
 //! - [`Compliance`] - a MODULE-COMPLIANCE definition
 //! - [`Capability`] - an AGENT-CAPABILITIES definition
 //! - [`Index`] - an index component of a table row
+//!
+//! # Source navigation
+//!
+//! [`Module::semantic_at`] and [`Module::semantic_at_position`] map source
+//! locations to resolved definitions and references. Pair these queries with a
+//! lossless concrete syntax tree through [`crate::cst::SymbolNavigator`] when
+//! an editor needs both written and resolved context.
+//!
+//! # Resolution traces
+//!
+//! [`Mib::trace_symbol`] explains a domain-specific symbol lookup. Its
+//! [`ResolutionTrace`] result records candidates, import provenance, fallback
+//! policy, the selected target, and related unresolved references.
 
 pub mod capability;
 pub mod compliance;

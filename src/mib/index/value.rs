@@ -8,15 +8,25 @@ use crate::mib::Oid;
 /// Stable semantic kind of an index value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IndexValueKind {
+    /// A non-negative `Integer32` value encoded in one OID arc.
     Integer32,
+    /// An `Unsigned32` value encoded in one OID arc.
     Unsigned32,
+    /// A `Gauge32` value encoded in one OID arc.
     Gauge32,
+    /// A `TimeTicks` value encoded in one OID arc.
     TimeTicks,
+    /// A compatibility `Counter32` value encoded in one OID arc.
     Counter32,
+    /// An IPv4 address encoded as four octet-valued arcs.
     IpAddress,
+    /// An `OCTET STRING` value.
     OctetString,
+    /// A `BITS` value represented by its encoded octets.
     Bits,
+    /// An `Opaque` value represented by its octets.
     Opaque,
+    /// An `OBJECT IDENTIFIER` value represented by its arcs.
     ObjectIdentifier,
 }
 
@@ -29,15 +39,25 @@ impl fmt::Display for IndexValueKind {
 /// Owned semantic table-index value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexValue {
+    /// Stores a non-negative `Integer32` value.
     Integer32(i32),
+    /// Stores an `Unsigned32` value.
     Unsigned32(u32),
+    /// Stores a `Gauge32` value.
     Gauge32(u32),
+    /// Stores a `TimeTicks` value.
     TimeTicks(u32),
+    /// Stores a compatibility `Counter32` value.
     Counter32(u32),
+    /// Stores the four octets of an IPv4 address.
     IpAddress([u8; 4]),
+    /// Stores the octets of an `OCTET STRING` value.
     OctetString(Vec<u8>),
+    /// Stores the encoded octets of a `BITS` value.
     Bits(Vec<u8>),
+    /// Stores the octets of an `Opaque` value.
     Opaque(Vec<u8>),
+    /// Stores the arcs of an `OBJECT IDENTIFIER` value.
     ObjectIdentifier(Oid),
 }
 
@@ -69,15 +89,25 @@ impl IndexValue {
 /// Borrowed semantic table-index value used by canonical encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexValueRef<'a> {
+    /// Borrows no data for a non-negative `Integer32` value.
     Integer32(i32),
+    /// Borrows no data for an `Unsigned32` value.
     Unsigned32(u32),
+    /// Borrows no data for a `Gauge32` value.
     Gauge32(u32),
+    /// Borrows no data for a `TimeTicks` value.
     TimeTicks(u32),
+    /// Borrows no data for a compatibility `Counter32` value.
     Counter32(u32),
+    /// Borrows no data for the four octets of an IPv4 address.
     IpAddress([u8; 4]),
+    /// Borrows the octets of an `OCTET STRING` value.
     OctetString(&'a [u8]),
+    /// Borrows the encoded octets of a `BITS` value.
     Bits(&'a [u8]),
+    /// Borrows the octets of an `Opaque` value.
     Opaque(&'a [u8]),
+    /// Borrows the arcs of an `OBJECT IDENTIFIER` value.
     ObjectIdentifier(&'a [u32]),
 }
 

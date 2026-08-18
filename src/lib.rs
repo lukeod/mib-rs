@@ -65,6 +65,13 @@
 //! classification predicates for syntax highlighting and parser dispatch.
 //! See the [`compile`] module and the `cst` and `tokens` examples.
 //!
+//! For editor integrations, [`cst::SyntaxTree::cursor_context`] returns the
+//! written construct at a byte offset. [`Module::semantic_at`] and
+//! [`Module::semantic_at_position`] return the resolved definition or
+//! reference at the same location. [`cst::SymbolNavigator`] validates that a
+//! syntax tree and resolved module describe the same source before combining
+//! their results.
+//!
 //! [`SourceDocument`] and [`SourceSet`] provide immutable source storage for
 //! parse-only and tooling consumers. Checked [`ByteOffset`] and [`SourceRange`]
 //! values identify byte coordinates without sentinel values. [`BytePosition`]
@@ -80,6 +87,17 @@
 //! and share that compilation's exact source arena; callers cannot combine
 //! diagnostics with an unrelated [`SourceSet`] or resolve raw diagnostic
 //! metadata through a different report.
+//!
+//! ## Canonical output and resolution traces
+//!
+//! Use [`writer::write`] or [`writer::write_with_options`] to emit one resolved
+//! module as deterministic canonical SMIv2 text. The writer reports definitions
+//! that cannot be represented without changing their meaning.
+//!
+//! Use [`Mib::trace_symbol`] with a [`types::ResolutionDomain`] to explain how
+//! the resolver selected a definition. The returned [`mib::ResolutionTrace`]
+//! includes candidates, import provenance, applicable fallback tiers, and
+//! unresolved references.
 //!
 //! # Loading MIBs
 //!
@@ -757,6 +775,7 @@
 //! The repository's [`examples` directory](https://github.com/lukeod/mib-rs/tree/main/examples)
 //! contains runnable programs for loading, queries, OID walks, tables, types,
 //! notifications, diagnostics, source configuration, raw data, tokenization,
+//! lossless and semantic navigation, resolution tracing, canonical writing,
 //! and JSON export.
 //!
 //! Run an example by name:
@@ -765,6 +784,10 @@
 //! cargo run --example basic
 //! cargo run --example tables
 //! cargo run --example diagnostics
+//! cargo run --example cst
+//! cargo run --example navigation
+//! cargo run --example trace
+//! cargo run --example writer
 //! ```
 //!
 //! The JSON export example requires the `serde` feature.

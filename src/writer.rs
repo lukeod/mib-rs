@@ -14,6 +14,20 @@
 //!
 //! Writes are streaming and non-atomic. If the destination returns an I/O
 //! error, it may already contain a prefix of the module.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use mib_rs::{Loader, writer};
+//!
+//! let mib = Loader::new()
+//!     .system_paths()
+//!     .modules(["IF-MIB"])
+//!     .load()?;
+//! let mut output = Vec::new();
+//! writer::write(&mut output, &mib, "IF-MIB")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

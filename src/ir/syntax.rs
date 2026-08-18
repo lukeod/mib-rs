@@ -16,46 +16,61 @@ use super::oid::OidComponent;
 #[derive(Debug, Clone)]
 pub enum TypeSyntax {
     /// Reference to a named type, e.g. `Integer32`.
-    TypeRef { name: String, range: SourceRange },
+    TypeRef {
+        name: String,
+        /// Source-qualified range covering the type name.
+        range: SourceRange,
+    },
     /// INTEGER with named values, e.g. `INTEGER { up(1), down(2) }`.
     IntegerEnum {
         base: String,
-        /// Exact source range of the optional named base type.
+        /// Source-qualified range covering the optional named base type.
         base_range: Option<SourceRange>,
         named_numbers: Vec<NamedNumber>,
+        /// Source-qualified range covering the complete type expression.
         range: SourceRange,
     },
     /// `BITS` type with named bit positions.
     Bits {
         named_bits: Vec<NamedBit>,
+        /// Source-qualified range covering the complete `BITS` expression.
         range: SourceRange,
     },
     /// Type with a subtype constraint applied.
     Constrained {
         base: Box<TypeSyntax>,
         constraint: Constraint,
+        /// Source-qualified range covering the base type and constraint.
         range: SourceRange,
     },
     /// `SEQUENCE OF` entry-type reference (table types).
     SequenceOf {
         entry_type: String,
-        /// Exact source range of `entry_type`.
+        /// Source-qualified range covering `entry_type`.
         entry_type_range: SourceRange,
+        /// Source-qualified range covering the complete `SEQUENCE OF` expression.
         range: SourceRange,
     },
     /// `SEQUENCE` with named fields (table row definition).
     Sequence {
         fields: Vec<SequenceField>,
+        /// Source-qualified range covering the complete `SEQUENCE` expression.
         range: SourceRange,
     },
     /// Explicit `OCTET STRING` type.
-    OctetString { range: SourceRange },
+    OctetString {
+        /// Source-qualified range covering `OCTET STRING`.
+        range: SourceRange,
+    },
     /// `OBJECT IDENTIFIER` type.
-    ObjectIdentifier { range: SourceRange },
+    ObjectIdentifier {
+        /// Source-qualified range covering `OBJECT IDENTIFIER`.
+        range: SourceRange,
+    },
 }
 
 impl TypeSyntax {
-    /// Returns the source range of this type syntax node.
+    /// Returns the source-qualified range covering this type syntax node.
     pub fn range(&self) -> SourceRange {
         match self {
             TypeSyntax::TypeRef { range, .. }
@@ -77,7 +92,7 @@ pub struct NamedNumber {
     pub name: String,
     /// Numeric value assigned to the label.
     pub value: i64,
-    /// Source range covering `name(value)`.
+    /// Source-qualified range covering `name(value)`.
     pub range: SourceRange,
 }
 
@@ -88,7 +103,7 @@ pub struct NamedBit {
     pub name: String,
     /// Zero-based bit position.
     pub position: u32,
-    /// Source range covering `name(position)`.
+    /// Source-qualified range covering `name(position)`.
     pub range: SourceRange,
 }
 
@@ -99,7 +114,7 @@ pub struct SequenceField {
     pub name: String,
     /// Field type expression.
     pub syntax: TypeSyntax,
-    /// Source range of the field.
+    /// Source-qualified range covering the field declaration.
     pub range: SourceRange,
 }
 
@@ -109,17 +124,19 @@ pub enum Constraint {
     /// `SIZE(...)` constraint on string or sequence length.
     Size {
         ranges: Vec<Range>,
+        /// Source-qualified range covering the complete `SIZE` constraint.
         range: SourceRange,
     },
     /// Value range constraint, e.g. `(0..65535)`.
     Range {
         ranges: Vec<Range>,
+        /// Source-qualified range covering the complete value constraint.
         range: SourceRange,
     },
 }
 
 impl Constraint {
-    /// Returns the source range of this constraint.
+    /// Returns the source-qualified range covering this constraint.
     pub fn range(&self) -> SourceRange {
         match self {
             Constraint::Size { range, .. } | Constraint::Range { range, .. } => *range,
@@ -137,7 +154,7 @@ pub struct Range {
     pub min: RangeValue,
     /// Upper bound, if this is a range rather than an exact value.
     pub max: Option<RangeValue>,
-    /// Source range of this range element.
+    /// Source-qualified range covering this range element.
     pub range: SourceRange,
 }
 

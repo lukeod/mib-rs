@@ -22,6 +22,9 @@ occur in minor releases with no attempt to maintain backward compatibility.
 - **Display-hint formatting**: RFC 2579 value formatting, numeric scaling, and octet-string rendering
 - **Table support**: Rows, columns, indexes (including augmented/implied)
 - **Diagnostics**: Configurable strictness levels with collected diagnostics instead of fail-fast
+- **Lossless CST tooling**: Preserves source text and recovery regions in typed syntax nodes, with cursor context and source-safe semantic navigation
+- **Resolution tracing**: Explains domain-specific symbol selection, import provenance, fallbacks, and unresolved references
+- **Canonical SMIv2 writer**: Emits deterministic SMIv2 text from resolved modules
 - **Parallel bulk loading**: Loading all discoverable modules uses available CPUs; selected-module loading and resolution are sequential
 - **Embedded foundation modules**: RFC-derived source fallbacks, byte-synchronized with gomib and deliberately adapted, for SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, RFC1155-SMI, and others
 - **System path discovery**: Auto-detects net-snmp and libsmi MIB directories
@@ -225,6 +228,17 @@ mib-rs find "if*" --format json        # JSON output
 # Inspect a symbol in detail
 mib-rs inspect ifTable
 mib-rs inspect IF-MIB::ifEntry
+
+# Explain symbol resolution in a specific reference domain
+mib-rs trace IF-MIB::ifDescr --domain object
+mib-rs trace ifDescr --domain object -m IF-MIB --strictness strict
+# Domains: type, oid, object, group-member, index, notification-object, conformance
+
+# Emit canonical SMIv2 (stdout requires exactly one selected module)
+mib-rs normalize IF-MIB > IF-MIB.mib
+mib-rs normalize IF-MIB SNMPv2-MIB --output-dir normalized
+mib-rs normalize IF-MIB --no-descriptions --no-conformance --no-sequences
+# Omit module names with --output-dir to normalize all available user modules
 
 # List available modules
 mib-rs list

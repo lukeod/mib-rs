@@ -13,7 +13,7 @@ use super::schema::{
 };
 use super::value::{IndexValue, IndexValueKind, IndexValueRef};
 
-/// Maximum subidentifier count of a complete SMI instance OID.
+/// Maximum arc count of a complete SMI instance OID.
 pub const MAX_INSTANCE_OID_ARCS: usize = 128;
 
 /// Whether known MIB constraint violations fail exact decoding.
@@ -46,7 +46,7 @@ pub struct DecodeOptions {
 }
 
 impl DecodeOptions {
-    /// Construct options bounded by a complete suffix length.
+    /// Constructs options bounded by a complete suffix length in OID arcs.
     #[must_use]
     pub const fn new(max_suffix_arcs: usize) -> Self {
         Self {
@@ -57,28 +57,28 @@ impl DecodeOptions {
         }
     }
 
-    /// Set the maximum arcs copied into one semantic value.
+    /// Sets the maximum OID arcs copied into one semantic value.
     #[must_use]
     pub const fn with_max_value_arcs(mut self, maximum: usize) -> Self {
         self.max_value_arcs = maximum;
         self
     }
 
-    /// Set the maximum schema component count accepted by this operation.
+    /// Sets the maximum schema component count accepted by this operation.
     #[must_use]
     pub const fn with_max_components(mut self, maximum: usize) -> Self {
         self.max_components = maximum;
         self
     }
 
-    /// Set constraint enforcement or reporting.
+    /// Sets constraint enforcement or reporting.
     #[must_use]
     pub const fn with_constraint_mode(mut self, mode: ConstraintMode) -> Self {
         self.constraint_mode = mode;
         self
     }
 
-    /// Maximum accepted suffix length.
+    /// Returns the maximum accepted suffix length in OID arcs.
     #[must_use]
     pub const fn max_suffix_arcs(self) -> usize {
         self.max_suffix_arcs
@@ -94,7 +94,7 @@ pub struct EncodeOptions {
 }
 
 impl EncodeOptions {
-    /// Construct strict options bounded by a complete suffix length.
+    /// Constructs strict options bounded by a complete suffix length in OID arcs.
     #[must_use]
     pub const fn new(max_suffix_arcs: usize) -> Self {
         Self {
@@ -104,21 +104,21 @@ impl EncodeOptions {
         }
     }
 
-    /// Set the maximum arcs read from one semantic value.
+    /// Sets the maximum OID arcs read from one semantic value.
     #[must_use]
     pub const fn with_max_value_arcs(mut self, maximum: usize) -> Self {
         self.max_value_arcs = maximum;
         self
     }
 
-    /// Set handling for values not decidable from incomplete metadata.
+    /// Sets handling for values not decidable from incomplete metadata.
     #[must_use]
     pub const fn with_incomplete_constraints(mut self, mode: IncompleteConstraintMode) -> Self {
         self.incomplete_constraints = mode;
         self
     }
 
-    /// Maximum emitted suffix length.
+    /// Returns the maximum emitted suffix length in OID arcs.
     #[must_use]
     pub const fn max_suffix_arcs(self) -> usize {
         self.max_suffix_arcs
@@ -128,12 +128,27 @@ impl EncodeOptions {
 /// A known conflict between one exact value and effective MIB metadata.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexConstraintViolation {
+    /// An integer lies outside the normalized effective range alternatives.
     #[error("integer value {value} is outside the effective range")]
-    IntegerRange { value: i64 },
+    IntegerRange {
+        /// Contains the rejected integer.
+        value: i64,
+    },
+    /// An integer is absent from the normalized effective enumeration.
     #[error("integer value {value} is not in the effective enumeration")]
-    IntegerEnumeration { value: i64 },
+    IntegerEnumeration {
+        /// Contains the rejected integer.
+        value: i64,
+    },
+    /// A value's length violates its effective `SIZE` constraint.
+    ///
+    /// `length` counts octets for octet-valued types and OID arcs for
+    /// `OBJECT IDENTIFIER` values.
     #[error("value length {length} is outside the effective SIZE constraint")]
-    Length { length: usize },
+    Length {
+        /// Contains the rejected length in octets or OID arcs.
+        length: usize,
+    },
 }
 
 /// A reported constraint violation associated with a component position.
@@ -144,13 +159,13 @@ pub struct ReportedIndexViolation {
 }
 
 impl ReportedIndexViolation {
-    /// Zero-based effective INDEX component position.
+    /// Returns the zero-based effective `INDEX` component position.
     #[must_use]
     pub const fn component_position(&self) -> usize {
         self.component_position
     }
 
-    /// Typed known constraint conflict.
+    /// Returns the known constraint conflict.
     #[must_use]
     pub const fn violation(&self) -> &IndexConstraintViolation {
         &self.violation
@@ -168,25 +183,25 @@ pub struct DecodedRowIndex<'schema, 'suffix> {
 }
 
 impl<'schema, 'suffix> DecodedRowIndex<'schema, 'suffix> {
-    /// Schema used for the operation.
+    /// Returns the schema used for the operation.
     #[must_use]
     pub const fn schema(&self) -> &'schema IndexSchema {
         self.schema
     }
 
-    /// Exact input suffix, all of which was consumed.
+    /// Returns the exact input suffix, all of which was consumed.
     #[must_use]
     pub const fn raw_arcs(&self) -> &'suffix [u32] {
         self.suffix
     }
 
-    /// Ordered semantic values.
+    /// Returns semantic values in effective `INDEX` clause order.
     #[must_use]
     pub const fn values(&self) -> &[IndexValue] {
         &self.values
     }
 
-    /// Ephemeral component views combining schema, value, and raw arcs.
+    /// Iterates component views in effective `INDEX` clause order.
     #[must_use]
     pub fn components(&self) -> DecodedIndexComponents<'_, 'schema, 'suffix> {
         DecodedIndexComponents {
@@ -195,7 +210,7 @@ impl<'schema, 'suffix> DecodedRowIndex<'schema, 'suffix> {
         }
     }
 
-    /// Known constraint conflicts returned in report mode.
+    /// Returns known constraint conflicts collected in report mode.
     #[must_use]
     pub const fn violations(&self) -> &[ReportedIndexViolation] {
         &self.violations
@@ -212,31 +227,33 @@ pub struct DecodedIndexComponent<'a, 'schema, 'suffix> {
 }
 
 impl<'a, 'schema, 'suffix> DecodedIndexComponent<'a, 'schema, 'suffix> {
-    /// Owned schema metadata for this position.
+    /// Returns the owned schema metadata for this position.
     #[must_use]
     pub const fn schema(&self) -> &'schema IndexComponentSchema {
         self.schema
     }
 
-    /// Component name.
+    /// Returns the component name.
     #[must_use]
     pub fn name(&self) -> &'schema str {
         self.schema.name()
     }
 
-    /// Decoded semantic value.
+    /// Returns the decoded semantic value.
     #[must_use]
     pub const fn value(&self) -> &'a IndexValue {
         self.value
     }
 
-    /// Absolute half-open suffix range occupied by this component.
+    /// Returns the zero-based, half-open range occupied in the complete suffix.
+    ///
+    /// The range includes a length prefix when the component uses one.
     #[must_use]
     pub fn arc_range(&self) -> Range<usize> {
         self.arc_range.clone()
     }
 
-    /// Exact raw arcs, including a length prefix when present.
+    /// Returns the exact raw arcs, including a length prefix when present.
     #[must_use]
     pub const fn raw_arcs(&self) -> &'suffix [u32] {
         self.raw_arcs
@@ -284,21 +301,27 @@ pub struct DecodedPrefixComponent<'suffix> {
 }
 
 impl<'suffix> DecodedPrefixComponent<'suffix> {
+    /// Returns the zero-based effective `INDEX` component position.
     #[must_use]
     pub const fn position(&self) -> usize {
         self.position
     }
 
+    /// Returns the decoded semantic value.
     #[must_use]
     pub const fn value(&self) -> &IndexValue {
         &self.value
     }
 
+    /// Returns the zero-based, half-open range occupied in the complete suffix.
+    ///
+    /// The range includes a length prefix when the component uses one.
     #[must_use]
     pub fn arc_range(&self) -> Range<usize> {
         self.arc_range.clone()
     }
 
+    /// Returns the exact raw arcs, including a length prefix when present.
     #[must_use]
     pub const fn raw_arcs(&self) -> &'suffix [u32] {
         self.raw_arcs
@@ -308,22 +331,67 @@ impl<'suffix> DecodedPrefixComponent<'suffix> {
 /// Stable reason exact decoding failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexDecodeErrorKind {
+    /// The complete suffix exceeds the operation's arc limit.
     #[error("suffix has {actual} arcs, exceeding the operation limit of {maximum}")]
-    SuffixTooLong { actual: usize, maximum: usize },
+    SuffixTooLong {
+        /// Contains the supplied suffix length in OID arcs.
+        actual: usize,
+        /// Contains the configured suffix limit in OID arcs.
+        maximum: usize,
+    },
+    /// The schema exceeds the operation's component limit.
     #[error("schema has {actual} components, exceeding the operation limit of {maximum}")]
-    TooManyComponents { actual: usize, maximum: usize },
+    TooManyComponents {
+        /// Contains the schema's component count.
+        actual: usize,
+        /// Contains the configured component limit.
+        maximum: usize,
+    },
+    /// The remaining suffix cannot contain the complete component.
+    ///
+    /// `needed` and `available` count arcs from the component's starting offset.
     #[error("component needs {needed} arcs but only {available} remain")]
-    Truncated { needed: usize, available: usize },
+    Truncated {
+        /// Contains the complete component width in OID arcs.
+        needed: usize,
+        /// Contains the available component width in OID arcs.
+        available: usize,
+    },
+    /// A length prefix exceeds the per-value arc limit or cannot fit in `usize`.
     #[error("declared length {declared} exceeds the value limit of {maximum}")]
-    LengthPrefixTooLarge { declared: u32, maximum: usize },
+    LengthPrefixTooLarge {
+        /// Contains the length declared by the prefix in OID arcs.
+        declared: u32,
+        /// Contains the configured per-value limit in OID arcs.
+        maximum: usize,
+    },
+    /// A fixed or implied value exceeds the per-value arc limit.
     #[error("value has {actual} arcs, exceeding the value limit of {maximum}")]
-    ValueTooLong { actual: usize, maximum: usize },
+    ValueTooLong {
+        /// Contains the supplied value length in OID arcs.
+        actual: usize,
+        /// Contains the configured per-value limit in OID arcs.
+        maximum: usize,
+    },
+    /// An octet-valued component contains an arc greater than 255.
     #[error("arc value {value} is not an octet")]
-    InvalidOctet { value: u32 },
+    InvalidOctet {
+        /// Contains the rejected OID arc.
+        value: u32,
+    },
+    /// An `Integer32` component contains an arc greater than `i32::MAX`.
     #[error("arc value {value} is outside the non-negative Integer32 index domain")]
-    Integer32OutOfDomain { value: u32 },
+    Integer32OutOfDomain {
+        /// Contains the rejected OID arc.
+        value: u32,
+    },
+    /// The complete schema decoded successfully but did not consume the suffix.
     #[error("{count} trailing arcs remain")]
-    TrailingArcs { count: usize },
+    TrailingArcs {
+        /// Contains the unconsumed suffix length in OID arcs.
+        count: usize,
+    },
+    /// A decoded value conflicts with known effective MIB constraints.
     #[error("{0}")]
     ConstraintViolation(IndexConstraintViolation),
 }
@@ -340,32 +408,50 @@ pub struct IndexDecodeError<'suffix> {
 }
 
 impl<'suffix> IndexDecodeError<'suffix> {
+    /// Returns the stable failure reason.
     #[must_use]
     pub const fn kind(&self) -> &IndexDecodeErrorKind {
         &self.kind
     }
 
+    /// Returns the zero-based component position for a component failure.
+    ///
+    /// Whole-suffix failures return `None`. This value is present exactly when
+    /// [`Self::component_name`] is present.
     #[must_use]
     pub const fn component_position(&self) -> Option<usize> {
         self.component_position
     }
 
+    /// Returns the component name for a component failure.
+    ///
+    /// Whole-suffix failures return `None`. This value is present exactly when
+    /// [`Self::component_position`] is present.
     #[must_use]
     pub fn component_name(&self) -> Option<&str> {
         self.component_name.as_deref()
     }
 
-    /// Absolute offset in the supplied suffix at which failure was detected.
+    /// Returns the zero-based arc offset where the failure was detected.
+    ///
+    /// The offset is relative to the complete supplied suffix. For a trailing
+    /// arc error, it is the first unconsumed arc.
     #[must_use]
     pub const fn arc_offset(&self) -> usize {
         self.arc_offset
     }
 
+    /// Returns every component decoded before the failing component or suffix check.
     #[must_use]
     pub const fn decoded_prefix(&self) -> &[DecodedPrefixComponent<'suffix>] {
         &self.decoded_prefix
     }
 
+    /// Returns the input arcs retained from the failing component or suffix check.
+    ///
+    /// Component failures retain arcs from that component's start, even when
+    /// [`Self::arc_offset`] identifies a later invalid arc. Whole-suffix failures
+    /// retain arcs from `arc_offset`.
     #[must_use]
     pub const fn remaining_arcs(&self) -> &'suffix [u32] {
         self.remaining
@@ -397,11 +483,13 @@ impl std::error::Error for IndexDecodeError<'_> {}
 pub struct IndexSuffix(Box<[u32]>);
 
 impl IndexSuffix {
+    /// Returns the suffix length in OID arcs.
     #[must_use]
     pub const fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Returns whether the suffix contains no OID arcs.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -437,29 +525,71 @@ impl From<&IndexSuffix> for Oid {
 /// Stable reason canonical encoding failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexEncodeErrorKind {
+    /// The value sequence ended before every schema component received a value.
     #[error("too few values: expected {expected}, received {actual}")]
-    TooFewValues { expected: usize, actual: usize },
+    TooFewValues {
+        /// Contains the schema's component count.
+        expected: usize,
+        /// Contains the supplied value count.
+        actual: usize,
+    },
+    /// The value sequence contains data after every schema component was encoded.
     #[error("too many values: expected {expected}")]
-    TooManyValues { expected: usize },
+    TooManyValues {
+        /// Contains the schema's component count.
+        expected: usize,
+    },
+    /// A value's semantic kind does not match its schema component.
     #[error("wrong value kind: expected {expected}, received {actual}")]
     WrongValueKind {
+        /// Contains the semantic kind required by the schema component.
         expected: IndexValueKind,
+        /// Contains the supplied semantic kind.
         actual: IndexValueKind,
     },
+    /// A negative `Integer32` cannot be represented by an unsigned OID arc.
     #[error("negative Integer32 value {value} cannot be encoded as an OID arc")]
-    NegativeInteger32 { value: i32 },
+    NegativeInteger32 {
+        /// Contains the rejected integer.
+        value: i32,
+    },
+    /// A fixed-width value has the wrong number of arcs.
     #[error("fixed component needs {expected} value arcs, received {actual}")]
-    FixedLength { expected: usize, actual: usize },
+    FixedLength {
+        /// Contains the fixed component width in OID arcs.
+        expected: usize,
+        /// Contains the supplied value width in OID arcs.
+        actual: usize,
+    },
+    /// One semantic value exceeds the per-value arc limit.
     #[error("value has {actual} arcs, exceeding the value limit of {maximum}")]
-    ValueTooLong { actual: usize, maximum: usize },
+    ValueTooLong {
+        /// Contains the supplied value length in OID arcs.
+        actual: usize,
+        /// Contains the configured per-value limit in OID arcs.
+        maximum: usize,
+    },
+    /// A value length cannot be represented by the required `u32` length arc.
     #[error("value length {length} cannot be represented by one OID arc")]
-    LengthPrefixOverflow { length: usize },
+    LengthPrefixOverflow {
+        /// Contains the unrepresentable value length in OID arcs.
+        length: usize,
+    },
+    /// Adding a component would exceed the complete suffix arc limit.
     #[error("encoded suffix would have {actual} arcs, exceeding the limit of {maximum}")]
-    SuffixTooLong { actual: usize, maximum: usize },
+    SuffixTooLong {
+        /// Contains the resulting suffix length in OID arcs.
+        actual: usize,
+        /// Contains the configured suffix limit in OID arcs.
+        maximum: usize,
+    },
+    /// A value conflicts with known effective MIB constraints.
     #[error("{0}")]
     ConstraintViolation(IndexConstraintViolation),
+    /// Unresolved metadata prevents the codec from proving the value valid.
     #[error("constraint validity is indeterminate because metadata is unresolved")]
     IndeterminateConstraint,
+    /// Computing an encoded arc count overflowed `usize`.
     #[error("arithmetic overflow while encoding the suffix")]
     ArithmeticOverflow,
 }
@@ -473,16 +603,25 @@ pub struct IndexEncodeError {
 }
 
 impl IndexEncodeError {
+    /// Returns the stable failure reason.
     #[must_use]
     pub const fn kind(&self) -> &IndexEncodeErrorKind {
         &self.kind
     }
 
+    /// Returns the zero-based component position for a component failure.
+    ///
+    /// Whole-sequence failures return `None`. This value is present exactly
+    /// when [`Self::component_name`] is present.
     #[must_use]
     pub const fn component_position(&self) -> Option<usize> {
         self.component_position
     }
 
+    /// Returns the component name for a component failure.
+    ///
+    /// Whole-sequence failures return `None`. This value is present exactly
+    /// when [`Self::component_position`] is present.
     #[must_use]
     pub fn component_name(&self) -> Option<&str> {
         self.component_name.as_deref()
@@ -506,7 +645,10 @@ impl fmt::Display for IndexEncodeError {
 impl std::error::Error for IndexEncodeError {}
 
 impl IndexSchema {
-    /// Decode one complete suffix exactly under this owned schema.
+    /// Decodes one complete suffix exactly under this owned schema.
+    ///
+    /// The operation succeeds only when every schema component consumes its
+    /// canonical share of the suffix and no trailing arcs remain.
     pub fn decode_exact<'schema, 'suffix>(
         &'schema self,
         suffix: &'suffix [u32],
@@ -719,7 +861,9 @@ impl IndexSchema {
         })
     }
 
-    /// Canonically encode a complete value sequence under this owned schema.
+    /// Canonically encodes a complete value sequence under this owned schema.
+    ///
+    /// The value count and semantic kinds must exactly match the schema.
     pub fn encode_canonical<'a>(
         &self,
         values: impl IntoIterator<Item = IndexValueRef<'a>>,
@@ -816,7 +960,7 @@ pub struct BoundIndexCodec {
 }
 
 impl BoundIndexCodec {
-    /// Bind a schema to an explicit suffix budget.
+    /// Binds a schema to an explicit suffix budget measured in OID arcs.
     pub fn new(schema: Arc<IndexSchema>, max_suffix_arcs: usize) -> Result<Self, IndexBindError> {
         if schema.minimum_suffix_arcs() > max_suffix_arcs {
             return Err(IndexBindError::MinimumSuffixTooLong {
@@ -830,7 +974,7 @@ impl BoundIndexCodec {
         })
     }
 
-    /// Bind using the 128-arc complete instance-OID limit.
+    /// Binds using the 128-arc complete instance-OID limit.
     pub fn for_object_oid(
         schema: Arc<IndexSchema>,
         object_oid: &Oid,
@@ -844,17 +988,19 @@ impl BoundIndexCodec {
         Self::new(schema, maximum)
     }
 
+    /// Returns the shared schema used by this binding.
     #[must_use]
     pub fn schema(&self) -> &Arc<IndexSchema> {
         &self.schema
     }
 
+    /// Returns the maximum complete suffix length in OID arcs.
     #[must_use]
     pub const fn max_suffix_arcs(&self) -> usize {
         self.max_suffix_arcs
     }
 
-    /// Decode with this binding's complete suffix limit.
+    /// Decodes with this binding's complete suffix limit.
     pub fn decode_exact<'schema, 'suffix>(
         &'schema self,
         suffix: &'suffix [u32],
@@ -866,7 +1012,7 @@ impl BoundIndexCodec {
         )
     }
 
-    /// Encode with this binding's complete suffix limit and strict incomplete
+    /// Encodes with this binding's complete suffix limit and strict incomplete
     /// constraint handling.
     pub fn encode_canonical<'a>(
         &self,
@@ -875,7 +1021,7 @@ impl BoundIndexCodec {
         self.encode_canonical_with_incomplete_constraints(values, IncompleteConstraintMode::Reject)
     }
 
-    /// Encode with this binding's suffix limit and an explicit policy for
+    /// Encodes with this binding's suffix limit and an explicit policy for
     /// values whose validity depends on unresolved constraint metadata.
     pub fn encode_canonical_with_incomplete_constraints<'a>(
         &self,
@@ -892,10 +1038,22 @@ impl BoundIndexCodec {
 /// Failure to bind a row schema to an object or explicit operation limit.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexBindError {
+    /// The object's OID already exceeds the complete instance-OID arc limit.
     #[error("object OID has {actual} arcs, exceeding the complete limit of {maximum}")]
-    ObjectOidTooLong { actual: usize, maximum: usize },
+    ObjectOidTooLong {
+        /// Contains the object OID length in arcs.
+        actual: usize,
+        /// Contains the complete instance-OID limit in arcs.
+        maximum: usize,
+    },
+    /// The schema's minimum suffix width exceeds the requested arc budget.
     #[error("schema needs at least {minimum} suffix arcs, exceeding the limit of {maximum}")]
-    MinimumSuffixTooLong { minimum: usize, maximum: usize },
+    MinimumSuffixTooLong {
+        /// Contains the schema's minimum suffix width in arcs.
+        minimum: usize,
+        /// Contains the available suffix budget in arcs.
+        maximum: usize,
+    },
 }
 
 fn decode_integer(kind: IntegerIndexKind, arc: u32) -> Result<IndexValue, IndexDecodeErrorKind> {

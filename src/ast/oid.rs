@@ -13,7 +13,7 @@ use crate::source::SourceRange;
 pub struct OidAssignment {
     /// The ordered list of components forming the OID path.
     pub components: Vec<OidComponent>,
-    /// Source span covering the entire `{ ... }` assignment.
+    /// Source-qualified range covering the entire `{ ... }` assignment.
     pub span: SourceRange,
 }
 
@@ -28,17 +28,23 @@ pub enum OidComponent {
     /// Named reference, e.g. `internet`, `ifEntry`.
     Name(Ident),
     /// Numeric sub-identifier, e.g. `1`, `31`.
-    Number { value: u32, span: SourceRange },
+    Number {
+        value: u32,
+        /// Source-qualified range covering the numeric literal.
+        span: SourceRange,
+    },
     /// Name with number, e.g. `iso(1)`, `org(3)`.
     NamedNumber {
         name: Ident,
         num: u32,
+        /// Source-qualified range covering `name(number)`.
         span: SourceRange,
     },
     /// Module-qualified reference, e.g. `SNMPv2-SMI.enterprises`.
     QualifiedName {
         module_name: Ident,
         name: Ident,
+        /// Source-qualified range covering `module.name`.
         span: SourceRange,
     },
     /// Module-qualified name with number, e.g. `SNMPv2-SMI.enterprises(1)`.
@@ -46,12 +52,13 @@ pub enum OidComponent {
         module_name: Ident,
         name: Ident,
         num: u32,
+        /// Source-qualified range covering `module.name(number)`.
         span: SourceRange,
     },
 }
 
 impl OidComponent {
-    /// Returns the source span of this component.
+    /// Returns the source-qualified range covering this component.
     pub fn span(&self) -> SourceRange {
         match self {
             OidComponent::Name(ident) => ident.span,

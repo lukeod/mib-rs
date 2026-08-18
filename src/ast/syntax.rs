@@ -14,7 +14,7 @@ use crate::types::{Access, AccessKeyword, Status};
 pub struct SyntaxClause {
     /// The type expression.
     pub syntax: TypeSyntax,
-    /// Source span covering the entire SYNTAX clause.
+    /// Source-qualified range covering the entire `SYNTAX` clause.
     pub span: SourceRange,
 }
 
@@ -32,47 +32,60 @@ pub enum TypeSyntax {
     IntegerEnum {
         base: Option<Ident>,
         named_numbers: Vec<NamedNumber>,
+        /// Source-qualified range covering the complete type expression.
         span: SourceRange,
     },
     /// BITS type with named bit positions.
     Bits {
         named_bits: Vec<NamedNumber>,
+        /// Source-qualified range covering the complete type expression.
         span: SourceRange,
     },
     /// Type with a SIZE or range constraint.
     Constrained {
         base: Box<TypeSyntax>,
         constraint: Constraint,
+        /// Source-qualified range covering the base type and constraint.
         span: SourceRange,
     },
     /// SEQUENCE OF entry-type reference.
     SequenceOf {
         entry_type: Ident,
+        /// Source-qualified range covering the complete `SEQUENCE OF` expression.
         span: SourceRange,
     },
     /// SEQUENCE with named fields (table row definition).
     Sequence {
         fields: Vec<SequenceField>,
+        /// Source-qualified range covering the complete `SEQUENCE` expression.
         span: SourceRange,
     },
     /// CHOICE type with named alternatives.
     Choice {
         alternatives: Vec<SequenceField>,
+        /// Source-qualified range covering the complete `CHOICE` expression.
         span: SourceRange,
     },
     /// Tagged type, e.g. `[APPLICATION n] IMPLICIT Type`.
     Tagged {
         underlying: Box<TypeSyntax>,
+        /// Source-qualified range covering the tag and underlying type.
         span: SourceRange,
     },
     /// Explicit OCTET STRING type.
-    OctetString { span: SourceRange },
+    OctetString {
+        /// Source-qualified range covering `OCTET STRING`.
+        span: SourceRange,
+    },
     /// OBJECT IDENTIFIER type.
-    ObjectIdentifier { span: SourceRange },
+    ObjectIdentifier {
+        /// Source-qualified range covering `OBJECT IDENTIFIER`.
+        span: SourceRange,
+    },
 }
 
 impl TypeSyntax {
-    /// Returns the source span of this type expression.
+    /// Returns the source-qualified range covering this type expression.
     pub fn span(&self) -> SourceRange {
         match self {
             TypeSyntax::TypeRef(ident) => ident.span,
@@ -96,7 +109,7 @@ pub struct SequenceField {
     pub name: Ident,
     /// Field type expression.
     pub syntax: TypeSyntax,
-    /// Source span covering the entire field declaration.
+    /// Source-qualified range covering the entire field declaration.
     pub span: SourceRange,
 }
 
@@ -106,17 +119,19 @@ pub enum Constraint {
     /// SIZE(...) constraint on length.
     Size {
         ranges: Vec<Range>,
+        /// Source-qualified range covering the complete `SIZE` constraint.
         span: SourceRange,
     },
     /// Value range constraint, e.g. (0..65535).
     Range {
         ranges: Vec<Range>,
+        /// Source-qualified range covering the complete value constraint.
         span: SourceRange,
     },
 }
 
 impl Constraint {
-    /// Returns the source span of this constraint.
+    /// Returns the source-qualified range covering this constraint.
     pub fn span(&self) -> SourceRange {
         match self {
             Constraint::Size { span, .. } | Constraint::Range { span, .. } => *span,
@@ -134,7 +149,7 @@ pub struct Range {
     pub min: RangeValue,
     /// Upper bound, or `None` for an exact value match.
     pub max: Option<RangeValue>,
-    /// Source span covering the range expression.
+    /// Source-qualified range covering the range expression.
     pub span: SourceRange,
 }
 
@@ -158,7 +173,7 @@ pub struct AccessClause {
     pub keyword: AccessKeyword,
     /// The access level value.
     pub value: Access,
-    /// Source span covering the entire clause.
+    /// Source-qualified range covering the entire clause.
     pub span: SourceRange,
 }
 
@@ -167,7 +182,7 @@ pub struct AccessClause {
 pub struct StatusClause {
     /// The status value (e.g. `current`, `deprecated`, `obsolete`).
     pub value: Status,
-    /// Source span covering the entire clause.
+    /// Source-qualified range covering the entire clause.
     pub span: SourceRange,
 }
 
@@ -176,7 +191,7 @@ pub struct StatusClause {
 pub struct IndexClause {
     /// Ordered list of index objects.
     pub items: Vec<IndexItem>,
-    /// Source span covering `INDEX { ... }`.
+    /// Source-qualified range covering `INDEX { ... }`.
     pub span: SourceRange,
 }
 
@@ -187,7 +202,7 @@ pub struct IndexItem {
     pub implied: bool,
     /// The index object name.
     pub object: Ident,
-    /// Source span covering this index entry.
+    /// Source-qualified range covering this index entry.
     pub span: SourceRange,
 }
 
@@ -196,7 +211,7 @@ pub struct IndexItem {
 pub struct AugmentsClause {
     /// Name of the row object being augmented.
     pub target: Ident,
-    /// Source span covering `AUGMENTS { ... }`.
+    /// Source-qualified range covering `AUGMENTS { ... }`.
     pub span: SourceRange,
 }
 
@@ -205,7 +220,7 @@ pub struct AugmentsClause {
 pub struct DefValClause {
     /// The parsed default value.
     pub value: DefVal,
-    /// Source span covering `DEFVAL { ... }`.
+    /// Source-qualified range covering `DEFVAL { ... }`.
     pub span: SourceRange,
 }
 
@@ -227,19 +242,32 @@ pub enum DefVal {
     /// BITS value, e.g. `DEFVAL { { flag1, flag2 } }`.
     Bits {
         labels: Vec<Ident>,
+        /// Source-qualified range covering the complete braced `BITS` value.
         span: SourceRange,
     },
     /// Hex string literal, e.g. `DEFVAL { 'FF00'H }`.
-    HexString { content: String, span: SourceRange },
+    HexString {
+        content: String,
+        /// Source-qualified range covering the hex string literal.
+        span: SourceRange,
+    },
     /// Binary string literal, e.g. `DEFVAL { '0101'B }`.
-    BinaryString { content: String, span: SourceRange },
+    BinaryString {
+        content: String,
+        /// Source-qualified range covering the binary string literal.
+        span: SourceRange,
+    },
     /// OID value, e.g. `DEFVAL { { 0 0 } }`.
     ObjectIdentifier {
         components: Vec<OidComponent>,
+        /// Source-qualified range covering the complete braced OID value.
         span: SourceRange,
     },
     /// Value that could not be parsed; content was skipped.
-    Unparsed { span: SourceRange },
+    Unparsed {
+        /// Source-qualified range covering the skipped value content.
+        span: SourceRange,
+    },
 }
 
 /// A REVISION clause within a [`ModuleIdentityDef`](super::ModuleIdentityDef).
@@ -249,6 +277,6 @@ pub struct RevisionClause {
     pub date: QuotedString,
     /// Description of what changed in this revision.
     pub description: QuotedString,
-    /// Source span covering the entire REVISION clause.
+    /// Source-qualified range covering the entire `REVISION` clause.
     pub span: SourceRange,
 }

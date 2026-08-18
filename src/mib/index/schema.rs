@@ -10,10 +10,15 @@ use super::value::IndexValueKind;
 /// Integer semantics retained by a schema component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntegerIndexKind {
+    /// Retains `Integer32` semantics and accepts only non-negative values.
     Integer32,
+    /// Retains `Unsigned32` semantics.
     Unsigned32,
+    /// Retains `Gauge32` semantics.
     Gauge32,
+    /// Retains `TimeTicks` semantics.
     TimeTicks,
+    /// Retains mechanically representable `Counter32` compatibility semantics.
     Counter32,
 }
 
@@ -41,8 +46,11 @@ impl IntegerIndexKind {
 /// Octet-valued SMI type retained by a schema component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OctetIndexKind {
+    /// Retains `OCTET STRING` semantics.
     OctetString,
+    /// Retains `BITS` semantics.
     Bits,
+    /// Retains `Opaque` semantics.
     Opaque,
 }
 
@@ -111,18 +119,29 @@ impl IntegerConstraint {
 /// Algebraic wire representation for one index component.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexWireType {
+    /// Encodes an integer-like value in one OID arc.
     Integer {
+        /// Identifies the retained SMI integer semantics.
         kind: IntegerIndexKind,
+        /// Contains the normalized effective range and enumeration constraints.
         allowed: IntegerConstraint,
     },
+    /// Encodes an IPv4 address as four octet-valued arcs.
     IpAddress,
+    /// Encodes an octet-valued SMI type with explicit framing rules.
     Octets {
+        /// Identifies the retained octet-valued SMI semantics.
         kind: OctetIndexKind,
+        /// Specifies how the component boundary is encoded.
         framing: VariableFraming,
+        /// Contains normalized effective length constraints measured in octets.
         lengths: LengthConstraint,
     },
+    /// Encodes an `OBJECT IDENTIFIER` value with explicit framing rules.
     ObjectIdentifier {
+        /// Specifies how the component boundary is encoded.
         framing: VariableFraming,
+        /// Contains normalized effective length constraints measured in OID arcs.
         lengths: LengthConstraint,
     },
 }
@@ -352,24 +371,71 @@ impl IndexSchema {
 /// Failure to compile deterministic owned index metadata.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexSchemaError {
+    /// The requested object is neither a table row nor a table column.
     #[error("object {object} is not a table row or column")]
-    NotRowOrColumn { object: String },
+    NotRowOrColumn {
+        /// Names the requested object.
+        object: String,
+    },
+    /// The row or column has no effective index components.
     #[error("object {object} has no effective INDEX clause")]
-    NoEffectiveIndexes { object: String },
+    NoEffectiveIndexes {
+        /// Names the requested row or column.
+        object: String,
+    },
+    /// A component's effective type did not resolve.
+    ///
+    /// `position` is zero-based in effective `INDEX` clause order.
     #[error("index component {position} ({component}) has no resolved effective type")]
-    UnresolvedType { position: usize, component: String },
+    UnresolvedType {
+        /// Contains the component's zero-based position.
+        position: usize,
+        /// Names the component.
+        component: String,
+    },
+    /// A component uses a base type that the index codec cannot represent.
+    ///
+    /// `position` is zero-based in effective `INDEX` clause order.
     #[error("index component {position} ({component}) has unsupported base type {base}")]
     UnsupportedBaseType {
+        /// Contains the component's zero-based position.
         position: usize,
+        /// Names the component.
         component: String,
+        /// Contains the unsupported effective base type.
         base: BaseType,
     },
+    /// An `IMPLIED` component appears before the final effective component.
+    ///
+    /// `position` is zero-based in effective `INDEX` clause order.
     #[error("IMPLIED index component {position} ({component}) is not final")]
-    ImpliedNotLast { position: usize, component: String },
+    ImpliedNotLast {
+        /// Contains the component's zero-based position.
+        position: usize,
+        /// Names the component.
+        component: String,
+    },
+    /// An `IMPLIED` component has a fixed-width value type.
+    ///
+    /// `position` is zero-based in effective `INDEX` clause order.
     #[error("IMPLIED index component {position} ({component}) is not variable-valued")]
-    ImpliedNonVariable { position: usize, component: String },
+    ImpliedNonVariable {
+        /// Contains the component's zero-based position.
+        position: usize,
+        /// Names the component.
+        component: String,
+    },
+    /// Effective constraints exclude every value representable as index arcs.
+    ///
+    /// `position` is zero-based in effective `INDEX` clause order.
     #[error("index component {position} ({component}) has no representable values")]
-    EmptyRepresentableDomain { position: usize, component: String },
+    EmptyRepresentableDomain {
+        /// Contains the component's zero-based position.
+        position: usize,
+        /// Names the component.
+        component: String,
+    },
+    /// Computing the schema's aggregate arc bounds overflowed `usize`.
     #[error("arithmetic overflow while compiling index metadata")]
     MetadataOverflow,
 }

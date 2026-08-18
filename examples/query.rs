@@ -66,9 +66,12 @@ fn main() {
         .expect("should resolve instance");
     println!("  Full OID:  {instance_oid}");
 
-    // Multi-component instance suffix
-    let deep = mib.resolve_oid("docDescr.1.2.3").expect("should resolve");
-    println!("  Multi-suffix: {deep}");
+    // Symbolic OID resolution accepts an arbitrary numeric suffix. Validate the
+    // suffix separately when its index schema matters.
+    let unchecked_oid = mib
+        .resolve_oid("docDescr.1.2.3")
+        .expect("the symbolic OID should resolve");
+    println!("  Unchecked suffix: {unchecked_oid}");
 
     // -- Numeric instance OID --
     let parsed: mib_rs::Oid = "1.3.6.1.4.1.99999.2.1.1.2.42".parse().unwrap();
@@ -120,6 +123,14 @@ fn main() {
     for idx in decoded.components() {
         println!("  Index:  {}={}", idx.name(), idx.value());
     }
+
+    // This table has one Integer32 index, so exact decoding rejects the two
+    // trailing arcs that symbolic OID resolution accepted above.
+    let unchecked_lookup = mib.lookup_instance(&unchecked_oid);
+    let error = codec
+        .decode_exact(unchecked_lookup.suffix(), mib_rs::ConstraintMode::Enforce)
+        .expect_err("the index schema should reject trailing arcs");
+    println!("  Invalid exact index: {error}");
 
     // -- resolve: returns NodeId (lower-level) --
     let node_id = mib.raw().resolve("docTable");

@@ -12,6 +12,11 @@
 //! validation or name and OID resolution. Use [`crate::parser`] for the
 //! semantic AST parser, [`crate::lower`] for lowering, or [`crate::Loader`] for
 //! a resolved MIB.
+//!
+//! Use [`SyntaxTree::token_at`] and [`SyntaxTree::cursor_context`] for
+//! syntax-only location queries. Use [`SymbolNavigator`] to combine that
+//! context with [`crate::Module`] semantic navigation. The navigator verifies
+//! source provenance before it interprets one position in both compilations.
 
 use std::iter::FusedIterator;
 use std::sync::Arc;

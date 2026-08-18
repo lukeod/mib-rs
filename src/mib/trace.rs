@@ -8,12 +8,19 @@ use crate::types::{ResolutionDomain, ResolverStrictness};
 /// The kind of a candidate definition in a resolution trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResolutionCandidateKind {
+    /// An `OBJECT-TYPE` definition.
     Object,
+    /// A `NOTIFICATION-TYPE` or `TRAP-TYPE` definition.
     Notification,
+    /// An `OBJECT-GROUP` or `NOTIFICATION-GROUP` definition.
     Group,
+    /// A `MODULE-COMPLIANCE` definition.
     Compliance,
+    /// An `AGENT-CAPABILITIES` definition.
     Capability,
+    /// A type assignment or `TEXTUAL-CONVENTION` definition.
     Type,
+    /// An OID assignment without a more specific semantic definition.
     Node,
 }
 
@@ -48,12 +55,19 @@ impl fmt::Display for ResolutionCandidateKind {
 /// One loaded definition with the traced name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionCandidate {
+    /// Identifies the exact loaded module version that defines the symbol.
     pub module: ModuleId,
+    /// Names the module that defines the symbol.
     pub module_name: String,
+    /// Identifies the module source when the loader assigned a label.
     pub source_label: Option<String>,
+    /// Contains the module's `LAST-UPDATED` value, or an empty string when absent.
     pub last_updated: String,
+    /// Classifies the definition.
     pub kind: ResolutionCandidateKind,
+    /// Identifies the definition in the resolved MIB arenas.
     pub symbol: Symbol,
+    /// Contains the definition's numeric OID when it has a resolved OID node.
     pub oid: Option<Oid>,
     /// Whether this definition kind can satisfy the selected domain.
     pub applicable: bool,
@@ -62,31 +76,47 @@ pub struct ResolutionCandidate {
 /// Exact loaded module version used as a resolution scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionScope {
+    /// Identifies the exact loaded module version used as the scope.
     pub module: ModuleId,
+    /// Names the scoped module.
     pub module_name: String,
+    /// Identifies the scoped module's source when the loader assigned a label.
     pub source_label: Option<String>,
+    /// Contains the module's `LAST-UPDATED` value, or an empty string when absent.
     pub last_updated: String,
 }
 
 /// Resolver fallback tiers applicable to this domain, strictness, and name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolutionFallbackPolicy {
+    /// Indicates whether this name has an intrinsic foundation-module rule.
     pub intrinsic: bool,
+    /// Indicates whether the domain and strictness enable foundation-module fallback.
     pub constrained: bool,
+    /// Indicates whether the domain and strictness enable global fallback.
     pub global: bool,
 }
 
 /// Strategy that selected the final definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionStrategy {
+    /// Selected a definition in the scoped module.
     Local,
+    /// Followed an import directly to its declared source module.
     DirectImport,
+    /// Followed an import re-exported through one or more modules.
     ForwardedImport,
+    /// Followed the resolved portion of a partially resolved import clause.
     PartialImport,
+    /// Followed a compatibility alias for the imported module name.
     AliasImport,
+    /// Selected a definition from an intrinsic foundation module.
     IntrinsicFallback,
+    /// Selected a definition from a strictness-dependent foundation module.
     ConstrainedFallback,
+    /// Selected a definition through global fallback.
     GlobalFallback,
+    /// Selected the only applicable candidate during an unscoped lookup.
     UniqueCandidate,
 }
 
@@ -106,64 +136,139 @@ impl fmt::Display for ResolutionStrategy {
     }
 }
 
+/// Final classification of a traced lookup.
+///
+/// [`ResolutionTrace::target`] is present exactly when the outcome is
+/// [`Resolved`](Self::Resolved). An unscoped lookup is ambiguous when multiple
+/// applicable candidates exist. Scoped lookups report an unresolved lookup as
+/// [`Missing`](Self::Missing), even when other modules define the same name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionOutcome {
+    /// The lookup selected one target.
     Resolved,
+    /// An unscoped lookup found multiple applicable candidates.
     Ambiguous,
+    /// The applicable resolver rules did not select a target.
     Missing,
 }
 
+/// Definition selected by a traced lookup and the strategy that selected it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionTarget {
+    /// Describes the selected loaded definition.
     pub candidate: ResolutionCandidate,
+    /// Identifies the resolver strategy that selected the definition.
     pub strategy: ResolutionStrategy,
 }
 
 /// Structured explanation of one domain-specific name lookup.
 #[derive(Debug, Clone)]
 pub struct ResolutionTrace {
+    /// Preserves the original query exactly as supplied by the caller.
     pub query: String,
+    /// Contains the unqualified symbol name extracted from `query`.
     pub symbol: String,
+    /// Identifies the resolver domain whose definition rules were applied.
     pub domain: ResolutionDomain,
+    /// Contains the exact module scope, or `None` for an unscoped lookup.
     pub scope: Option<ResolutionScope>,
+    /// Records the resolver strictness active on the MIB.
     pub strictness: ResolverStrictness,
+    /// Describes the fallback tiers enabled for this domain, strictness, and name.
     pub fallbacks: ResolutionFallbackPolicy,
     /// Every cross-kind definition with this name, deterministically ordered.
     pub candidates: Vec<ResolutionCandidate>,
     /// Exact pre-collapse import provenance for the scope, when it imports the name.
     pub import: Option<ImportResolution>,
+    /// Classifies the final lookup result.
     pub outcome: ResolutionOutcome,
+    /// Contains the selected definition exactly when `outcome` is resolved.
     pub target: Option<ResolutionTarget>,
+    /// Lists unresolved references with the traced symbol name across loaded modules.
+    ///
+    /// The list is diagnostic provenance and does not determine `outcome`.
     pub unresolved: Vec<UnresolvedRef>,
 }
 
+/// Failure to parse a trace query or select an exact module scope.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResolutionTraceError {
+    /// The query contains no characters.
     #[error("symbol query is empty")]
     EmptyQuery,
+    /// The qualified query does not have exactly one nonempty `module::symbol` pair.
     #[error("invalid qualified symbol query: {0}")]
     InvalidQualifiedQuery(String),
+    /// The qualified query and explicit scope name different modules.
     #[error("qualified query scope {query_scope:?} conflicts with --module {explicit_scope:?}")]
     ConflictingScope {
+        /// Names the module in the qualified query.
         query_scope: String,
+        /// Names the separately supplied module scope.
         explicit_scope: String,
     },
+    /// No loaded module has the requested scope name.
     #[error("module scope not found: {0}")]
     ModuleNotFound(String),
+    /// Multiple loaded module versions have the requested scope name.
     #[error("module scope {module:?} is ambiguous across loaded sources: {candidates:?}")]
     AmbiguousModuleScope {
+        /// Names the requested module.
         module: String,
+        /// Lists every exact loaded module version with the requested name.
         candidates: Vec<ResolutionScope>,
     },
 }
 
 impl Mib {
-    /// Explain a symbol lookup using the exact rules for `domain`.
+    /// Explains a symbol lookup using the exact rules for `domain`.
     ///
-    /// A qualified query establishes module scope. An explicit scope may be
-    /// supplied for an unqualified query. A duplicated same-name module scope
-    /// is rejected with all exact source candidates rather than silently
-    /// selecting a version.
+    /// Use `module::symbol` in `query` to establish module scope, or pass
+    /// `module_scope` with an unqualified query. If both forms provide the same
+    /// module name, the lookup uses that scope. If they disagree, the method
+    /// returns [`ResolutionTraceError::ConflictingScope`]. A module name must
+    /// identify exactly one loaded version; duplicate versions return
+    /// [`ResolutionTraceError::AmbiguousModuleScope`] with every candidate.
+    ///
+    /// A scoped lookup follows the same local, import, and fallback rules as
+    /// semantic resolution for `domain`. An unscoped lookup does not infer
+    /// imports or fallbacks: it resolves only when exactly one loaded definition
+    /// has the requested name and an applicable kind. Multiple applicable
+    /// definitions produce [`ResolutionOutcome::Ambiguous`], and no applicable
+    /// definition produces [`ResolutionOutcome::Missing`].
+    ///
+    /// On success, [`ResolutionTrace::target`] is present exactly when
+    /// [`ResolutionTrace::outcome`] is [`ResolutionOutcome::Resolved`].
+    /// Candidate and unresolved-reference lists use deterministic ordering.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mib_rs::load::Loader;
+    /// use mib_rs::mib::{ResolutionOutcome, ResolutionStrategy};
+    /// use mib_rs::source::memory;
+    /// use mib_rs::types::ResolutionDomain;
+    ///
+    /// let source = memory(
+    ///     "TRACE-EXAMPLE-MIB",
+    ///     b"TRACE-EXAMPLE-MIB DEFINITIONS ::= BEGIN\n\
+    ///       traceRoot OBJECT IDENTIFIER ::= { iso 424300 }\n\
+    ///       END\n",
+    /// );
+    /// let mib = Loader::new()
+    ///     .source(source)
+    ///     .modules(["TRACE-EXAMPLE-MIB"])
+    ///     .load()?;
+    /// let trace = mib.trace_symbol(
+    ///     "TRACE-EXAMPLE-MIB::traceRoot",
+    ///     None,
+    ///     ResolutionDomain::Oid,
+    /// )?;
+    ///
+    /// assert_eq!(trace.outcome, ResolutionOutcome::Resolved);
+    /// assert_eq!(trace.target.unwrap().strategy, ResolutionStrategy::Local);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn trace_symbol(
         &self,
         query: &str,
