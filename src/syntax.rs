@@ -422,6 +422,16 @@ define_syntax_kinds! {
         ImportGroup => ("IMPORT_GROUP", "import group");
         UnparsedRegion => ("UNPARSED_REGION", "unparsed region");
 
+        ValueAssignment => ("VALUE_ASSIGNMENT", "value assignment");
+        TypeAssignment => ("TYPE_ASSIGNMENT", "type assignment");
+        TextualConventionDefinition => ("TEXTUAL_CONVENTION_DEFINITION", "TEXTUAL-CONVENTION definition");
+        ObjectTypeDefinition => ("OBJECT_TYPE_DEFINITION", "OBJECT-TYPE definition");
+        ModuleIdentityDefinition => ("MODULE_IDENTITY_DEFINITION", "MODULE-IDENTITY definition");
+        ObjectIdentityDefinition => ("OBJECT_IDENTITY_DEFINITION", "OBJECT-IDENTITY definition");
+        NotificationTypeDefinition => ("NOTIFICATION_TYPE_DEFINITION", "NOTIFICATION-TYPE definition");
+        TrapTypeDefinition => ("TRAP_TYPE_DEFINITION", "TRAP-TYPE definition");
+        MacroDefinition => ("MACRO_DEFINITION", "MACRO definition");
+
         SyntaxClause => ("SYNTAX_CLAUSE", "SYNTAX clause");
         AccessClause => ("ACCESS_CLAUSE", "access clause");
         StatusClause => ("STATUS_CLAUSE", "STATUS clause");
@@ -498,10 +508,10 @@ mod tests {
 
     #[test]
     fn inventory_and_categories_are_exhaustive() {
-        assert_eq!(SyntaxKind::ALL.len(), 153);
+        assert_eq!(SyntaxKind::ALL.len(), 162);
         assert_eq!(
             SyntaxKind::ALL.iter().filter(|kind| kind.is_node()).count(),
-            44
+            53
         );
         assert_eq!(
             SyntaxKind::ALL

@@ -1,6 +1,5 @@
-//! Lossless parsing for definition-body fragments introduced before typed
-//! definition nodes. Definitions remain unparsed regions at this stage; the
-//! common clause, OID, and type-syntax nodes nested within them are typed.
+//! Lossless parsing for definitions and their common clauses, OID assignments,
+//! and type-syntax fragments.
 
 use super::{ElementData, NodeData, TokenData};
 use crate::source::{SourceDocument, SourceRange};
@@ -43,6 +42,7 @@ pub(super) fn parse_region(
         tokens,
         diag_config,
         diagnostics,
+        parse_errors: 0,
     }
     .parse_region(start, end)
 }
@@ -52,6 +52,7 @@ struct BodyParser<'a, 'd> {
     tokens: &'a [TokenData],
     diag_config: &'a DiagnosticConfig,
     diagnostics: &'d mut Vec<Diagnostic>,
+    parse_errors: usize,
 }
 
 impl BodyParser<'_, '_> {
@@ -59,53 +60,82 @@ impl BodyParser<'_, '_> {
         let mut children = Vec::new();
         let mut cursor = start;
         let definition_starts = self.collect_definition_starts(start, end);
-        let mut definition_cursor = 0usize;
-        let mut current_definition = None;
+
+        for (position, &definition_start) in definition_starts.iter().enumerate() {
+            let next_start = definition_starts.get(position + 1).copied().unwrap_or(end);
+            let definition_end = self
+                .previous_significant(next_start, definition_start)
+                .map_or(definition_start, |last| last + 1);
+            self.push_plain(&mut children, cursor, definition_start);
+
+            if let Some(kind) = self.definition_kind(definition_start, definition_end) {
+                let definition = self.parse_definition(definition_start, definition_end, kind);
+                children.push(ElementData::Node(definition));
+            } else {
+                children.extend(self.parse_fragment(
+                    definition_start,
+                    definition_end,
+                    Some(definition_start),
+                ));
+            }
+            cursor = definition_end;
+        }
+        self.push_plain(&mut children, cursor, end);
+        self.node(SyntaxKind::UnparsedRegion, children)
+    }
+
+    fn parse_definition(&mut self, start: usize, end: usize, kind: SyntaxKind) -> NodeData {
+        let parse_error_start = self.parse_errors;
+        let children = self.parse_fragment(start, end, Some(start));
+        let definition = self.node(kind, children);
+        let complete = self.definition_is_complete(&definition);
+        if !complete && self.parse_errors == parse_error_start {
+            self.emit_at(end, format!("incomplete {}", kind.display_name()));
+        }
+
+        if complete && self.parse_errors == parse_error_start {
+            definition
+        } else {
+            self.node(SyntaxKind::Error, vec![ElementData::Node(definition)])
+        }
+    }
+
+    fn parse_fragment(
+        &mut self,
+        start: usize,
+        end: usize,
+        current_definition: Option<usize>,
+    ) -> Vec<ElementData> {
+        let mut children = Vec::new();
+        let mut cursor = start;
         let mut current_assignment = None;
 
         while let Some(current) = self.next_significant(cursor, end) {
             self.push_plain(&mut children, cursor, current);
-            while definition_cursor < definition_starts.len()
-                && definition_starts[definition_cursor] <= current
-            {
-                current_definition = Some(definition_starts[definition_cursor]);
-                current_assignment = None;
-                definition_cursor += 1;
-                record_definition_context_work(1);
-            }
-            let construct_end = definition_starts
-                .get(definition_cursor)
-                .copied()
-                .unwrap_or(end);
             if self.tokens[current].kind == SyntaxKind::ColonColonEqual
                 && current_assignment.is_none()
             {
                 current_assignment = Some(current);
                 record_definition_context_work(1);
             }
-            if let Some((node, next)) = self.parse_clause(current, construct_end) {
+            if let Some((node, next)) = self.parse_clause(current, end) {
                 children.push(ElementData::Node(node));
                 cursor = next;
                 continue;
             }
             if self.tokens[current].kind == SyntaxKind::ColonColonEqual
-                && let Some(open) = self.next_significant(current + 1, construct_end)
+                && let Some(open) = self.next_significant(current + 1, end)
                 && self.tokens[open].kind == SyntaxKind::LBrace
                 && self.is_oid_assignment_context(current, current_definition, current_assignment)
             {
                 self.push_plain(&mut children, current, open);
-                let (oid, next) = self.parse_oid_assignment(open, construct_end);
+                let (oid, next) = self.parse_oid_assignment(open, end);
                 children.push(ElementData::Node(oid));
                 cursor = next;
                 continue;
             }
-            if self.is_type_context(
-                current,
-                start,
-                construct_end,
-                current_definition,
-                current_assignment,
-            ) && let Some((syntax, next)) = self.parse_type_syntax(current, construct_end)
+            if self.is_type_context(current, start, end, current_definition, current_assignment)
+                && let Some((syntax, next)) = self.parse_type_syntax(current, end)
             {
                 children.push(ElementData::Node(syntax));
                 cursor = next;
@@ -116,7 +146,64 @@ impl BodyParser<'_, '_> {
             cursor = current + 1;
         }
         self.push_plain(&mut children, cursor, end);
-        self.node(SyntaxKind::UnparsedRegion, children)
+        children
+    }
+
+    fn definition_kind(&self, start: usize, end: usize) -> Option<SyntaxKind> {
+        let first = self.tokens[start].kind;
+        let Some(second) = self.next_significant(start + 1, end) else {
+            return (first == SyntaxKind::UppercaseIdent || first.is_type_keyword())
+                .then_some(SyntaxKind::TypeAssignment);
+        };
+        match self.tokens[second].kind {
+            SyntaxKind::KwObject if first.is_identifier() => Some(SyntaxKind::ValueAssignment),
+            SyntaxKind::ColonColonEqual => {
+                let rhs = self.next_significant(second + 1, end);
+                if rhs.is_some_and(|rhs| self.tokens[rhs].kind == SyntaxKind::KwTextualConvention) {
+                    Some(SyntaxKind::TextualConventionDefinition)
+                } else {
+                    Some(SyntaxKind::TypeAssignment)
+                }
+            }
+            SyntaxKind::KwTextualConvention if first == SyntaxKind::UppercaseIdent => {
+                Some(SyntaxKind::TextualConventionDefinition)
+            }
+            SyntaxKind::KwObjectType => Some(SyntaxKind::ObjectTypeDefinition),
+            SyntaxKind::KwModuleIdentity => Some(SyntaxKind::ModuleIdentityDefinition),
+            SyntaxKind::KwObjectIdentity => Some(SyntaxKind::ObjectIdentityDefinition),
+            SyntaxKind::KwNotificationType => Some(SyntaxKind::NotificationTypeDefinition),
+            SyntaxKind::KwTrapType => Some(SyntaxKind::TrapTypeDefinition),
+            SyntaxKind::KwMacro => Some(SyntaxKind::MacroDefinition),
+            kind if (first == SyntaxKind::UppercaseIdent || first.is_type_keyword())
+                && is_type_start(kind) =>
+            {
+                Some(SyntaxKind::TypeAssignment)
+            }
+            _ => None,
+        }
+    }
+
+    fn definition_is_complete(&self, definition: &NodeData) -> bool {
+        if contains_node_kind(definition, SyntaxKind::Error) {
+            return false;
+        }
+        let parts = definition_parts(definition);
+        match definition.kind {
+            SyntaxKind::ValueAssignment => validate_value_assignment(&parts, definition),
+            SyntaxKind::TypeAssignment => validate_type_assignment(&parts),
+            SyntaxKind::TextualConventionDefinition => validate_textual_convention(&parts),
+            SyntaxKind::ObjectTypeDefinition => validate_object_type(&parts, definition),
+            SyntaxKind::ModuleIdentityDefinition => validate_module_identity(&parts, definition),
+            SyntaxKind::ObjectIdentityDefinition => validate_object_identity(&parts, definition),
+            SyntaxKind::NotificationTypeDefinition => {
+                validate_notification_type(&parts, definition)
+            }
+            SyntaxKind::TrapTypeDefinition => validate_trap_type(&parts),
+            SyntaxKind::MacroDefinition => {
+                validate_macro_definition(&parts, definition, self.document)
+            }
+            _ => false,
+        }
     }
 
     fn parse_clause(&mut self, start: usize, end: usize) -> Option<(NodeData, usize)> {
@@ -128,7 +215,7 @@ impl BodyParser<'_, '_> {
                     SyntaxKind::AccessClause,
                     start,
                     end,
-                    |value| value.is_status_access_keyword(),
+                    is_access_value,
                     "access value",
                 ))
             }
@@ -136,7 +223,7 @@ impl BodyParser<'_, '_> {
                 SyntaxKind::StatusClause,
                 start,
                 end,
-                |value| value.is_status_access_keyword(),
+                is_status_value,
                 "status value",
             )),
             SyntaxKind::KwDescription => {
@@ -1308,9 +1395,7 @@ impl BodyParser<'_, '_> {
         };
         let second_kind = self.tokens[second].kind;
         if second_kind == SyntaxKind::KwObject {
-            return self
-                .next_significant(second + 1, assignment)
-                .is_some_and(|third| self.tokens[third].kind == SyntaxKind::KwIdentifier);
+            return true;
         }
         second_kind.is_macro_keyword()
             && !matches!(
@@ -1341,24 +1426,31 @@ impl BodyParser<'_, '_> {
             return false;
         }
         let Some(second) = self.next_significant(index + 1, end) else {
-            return false;
+            return first == SyntaxKind::UppercaseIdent || first.is_type_keyword();
         };
+        let second_kind = self.tokens[second].kind;
         if first.is_macro_keyword() {
-            return self.tokens[second].kind == SyntaxKind::KwMacro;
+            return second_kind == SyntaxKind::KwMacro;
         }
         if first.is_type_keyword() {
             return matches!(
-                self.tokens[second].kind,
+                second_kind,
                 SyntaxKind::KwMacro | SyntaxKind::ColonColonEqual
-            );
+            ) || is_type_start(second_kind);
         }
-        if self.tokens[second].kind == SyntaxKind::KwMacro {
+        if second_kind == SyntaxKind::KwMacro {
             return true;
         }
-        if self.tokens[second].kind.is_macro_keyword() {
+        if second_kind.is_macro_keyword() {
             return true;
         }
-        if self.is_clause_boundary_kind(self.tokens[second].kind) {
+        if first == SyntaxKind::UppercaseIdent && is_type_start(second_kind) {
+            return true;
+        }
+        if first.is_identifier() && second_kind == SyntaxKind::KwObject {
+            return true;
+        }
+        if self.is_clause_boundary_kind(second_kind) {
             return false;
         }
 
@@ -1366,6 +1458,15 @@ impl BodyParser<'_, '_> {
         let mut cursor = second;
         for _ in 0..256 {
             record_definition_context_work(1);
+            if cursor != second
+                && delimiters.is_empty()
+                && self.starts_unindented_source_line(cursor)
+                && (self.tokens[cursor].kind.is_identifier()
+                    || self.tokens[cursor].kind.is_type_keyword()
+                    || self.tokens[cursor].kind.is_macro_keyword())
+            {
+                return false;
+            }
             let kind = self.tokens[cursor].kind;
             match kind {
                 SyntaxKind::LParen => delimiters.push(SyntaxKind::RParen),
@@ -1443,6 +1544,7 @@ impl BodyParser<'_, '_> {
     }
 
     fn emit_at(&mut self, index: usize, message: impl Into<String>) {
+        self.parse_errors += 1;
         if !self.diag_config.should_collect(DiagCode::ParseError) {
             return;
         }
@@ -1499,4 +1601,345 @@ fn is_range_value(kind: SyntaxKind) -> bool {
             | SyntaxKind::UppercaseIdent
             | SyntaxKind::ForbiddenKeyword
     )
+}
+
+fn is_access_value(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::KwReadOnly
+            | SyntaxKind::KwReadWrite
+            | SyntaxKind::KwReadCreate
+            | SyntaxKind::KwNotAccessible
+            | SyntaxKind::KwAccessibleForNotify
+            | SyntaxKind::KwWriteOnly
+            | SyntaxKind::KwNotImplemented
+    )
+}
+
+fn is_status_value(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::KwCurrent
+            | SyntaxKind::KwDeprecated
+            | SyntaxKind::KwObsolete
+            | SyntaxKind::KwMandatory
+            | SyntaxKind::KwOptional
+    )
+}
+
+const TYPE_SYNTAX_KINDS: &[SyntaxKind] = &[
+    SyntaxKind::TypeRefSyntax,
+    SyntaxKind::IntegerEnumSyntax,
+    SyntaxKind::BitsSyntax,
+    SyntaxKind::ConstrainedSyntax,
+    SyntaxKind::SequenceOfSyntax,
+    SyntaxKind::SequenceSyntax,
+    SyntaxKind::ChoiceSyntax,
+    SyntaxKind::TaggedSyntax,
+    SyntaxKind::OctetStringSyntax,
+    SyntaxKind::ObjectIdentifierSyntax,
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DefinitionPart {
+    Token(SyntaxKind),
+    Node(SyntaxKind),
+}
+
+fn definition_parts(definition: &NodeData) -> Vec<DefinitionPart> {
+    definition
+        .children
+        .iter()
+        .filter_map(|element| match element {
+            ElementData::Node(node) => Some(DefinitionPart::Node(node.kind)),
+            ElementData::Token(token) if token.kind.is_trivia() => None,
+            ElementData::Token(token) => Some(DefinitionPart::Token(token.kind)),
+        })
+        .collect()
+}
+
+struct PartCursor<'a> {
+    parts: &'a [DefinitionPart],
+    index: usize,
+}
+
+impl<'a> PartCursor<'a> {
+    fn new(parts: &'a [DefinitionPart]) -> Self {
+        Self { parts, index: 0 }
+    }
+
+    fn token(&mut self, kind: SyntaxKind) -> bool {
+        self.take(DefinitionPart::Token(kind))
+    }
+
+    fn token_matching(&mut self, predicate: impl FnOnce(SyntaxKind) -> bool) -> bool {
+        let Some(DefinitionPart::Token(kind)) = self.parts.get(self.index).copied() else {
+            return false;
+        };
+        if !predicate(kind) {
+            return false;
+        }
+        self.index += 1;
+        true
+    }
+
+    fn node(&mut self, kind: SyntaxKind) -> bool {
+        self.take(DefinitionPart::Node(kind))
+    }
+
+    fn optional_node(&mut self, kind: SyntaxKind) {
+        let _ = self.node(kind);
+    }
+
+    fn type_syntax(&mut self) -> bool {
+        let Some(DefinitionPart::Node(kind)) = self.parts.get(self.index).copied() else {
+            return false;
+        };
+        if !TYPE_SYNTAX_KINDS.contains(&kind) {
+            return false;
+        }
+        self.index += 1;
+        true
+    }
+
+    fn peek_node(&self, kind: SyntaxKind) -> bool {
+        self.parts.get(self.index) == Some(&DefinitionPart::Node(kind))
+    }
+
+    fn finish(self) -> bool {
+        self.index == self.parts.len()
+    }
+
+    fn take(&mut self, expected: DefinitionPart) -> bool {
+        if self.parts.get(self.index) != Some(&expected) {
+            return false;
+        }
+        self.index += 1;
+        true
+    }
+}
+
+fn validate_value_assignment(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    cursor.token_matching(SyntaxKind::is_identifier)
+        && cursor.node(SyntaxKind::ObjectIdentifierSyntax)
+        && find_node(definition, SyntaxKind::ObjectIdentifierSyntax)
+            .is_some_and(|syntax| contains_token_kind(syntax, SyntaxKind::KwIdentifier))
+        && cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_type_assignment(parts: &[DefinitionPart]) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    cursor.token_matching(|kind| kind.is_identifier() || kind.is_type_keyword())
+        && cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.type_syntax()
+        && cursor.finish()
+}
+
+fn validate_textual_convention(parts: &[DefinitionPart]) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(|kind| kind.is_identifier() || kind.is_type_keyword()) {
+        return false;
+    }
+    let _ = cursor.token(SyntaxKind::ColonColonEqual);
+    if !cursor.token(SyntaxKind::KwTextualConvention) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::DisplayHintClause);
+    if !cursor.node(SyntaxKind::StatusClause) || !cursor.node(SyntaxKind::DescriptionClause) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    cursor.node(SyntaxKind::SyntaxClause) && cursor.finish()
+}
+
+fn validate_object_type(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwObjectType)
+        || !cursor.node(SyntaxKind::SyntaxClause)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::UnitsClause);
+    if !cursor.node(SyntaxKind::AccessClause) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::StatusClause);
+    cursor.optional_node(SyntaxKind::DescriptionClause);
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    if cursor.peek_node(SyntaxKind::IndexClause) {
+        let _ = cursor.node(SyntaxKind::IndexClause);
+    } else {
+        cursor.optional_node(SyntaxKind::AugmentsClause);
+    }
+    cursor.optional_node(SyntaxKind::DefvalClause);
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_module_identity(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwModuleIdentity)
+        || !cursor.node(SyntaxKind::LastUpdatedClause)
+        || !cursor.node(SyntaxKind::OrganizationClause)
+        || !cursor.node(SyntaxKind::ContactInfoClause)
+        || !cursor.node(SyntaxKind::DescriptionClause)
+    {
+        return false;
+    }
+    while cursor.peek_node(SyntaxKind::RevisionClause) {
+        if !cursor.node(SyntaxKind::RevisionClause) || !cursor.node(SyntaxKind::DescriptionClause) {
+            return false;
+        }
+    }
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_object_identity(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwObjectIdentity)
+        || !cursor.node(SyntaxKind::StatusClause)
+        || !cursor.node(SyntaxKind::DescriptionClause)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_notification_type(parts: &[DefinitionPart], definition: &NodeData) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwNotificationType)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ObjectsClause);
+    if !cursor.node(SyntaxKind::StatusClause) || !cursor.node(SyntaxKind::DescriptionClause) {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    cursor.token(SyntaxKind::ColonColonEqual)
+        && cursor.node(SyntaxKind::OidAssignment)
+        && complete_oid(definition)
+        && cursor.finish()
+}
+
+fn validate_trap_type(parts: &[DefinitionPart]) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(SyntaxKind::is_identifier)
+        || !cursor.token(SyntaxKind::KwTrapType)
+        || !cursor.node(SyntaxKind::EnterpriseClause)
+    {
+        return false;
+    }
+    cursor.optional_node(SyntaxKind::VariablesClause);
+    cursor.optional_node(SyntaxKind::DescriptionClause);
+    cursor.optional_node(SyntaxKind::ReferenceClause);
+    cursor.token(SyntaxKind::ColonColonEqual) && cursor.token(SyntaxKind::Number) && cursor.finish()
+}
+
+fn validate_macro_definition(
+    parts: &[DefinitionPart],
+    definition: &NodeData,
+    document: &SourceDocument,
+) -> bool {
+    let mut cursor = PartCursor::new(parts);
+    if !cursor.token_matching(|kind| kind == SyntaxKind::UppercaseIdent || kind.is_macro_keyword())
+        || !cursor.token(SyntaxKind::KwMacro)
+        || !cursor.token(SyntaxKind::OpaqueText)
+        || !cursor.token(SyntaxKind::KwEnd)
+        || !cursor.finish()
+    {
+        return false;
+    }
+    find_token(definition, SyntaxKind::OpaqueText).is_some_and(|body| {
+        let text = document
+            .slice(body.range)
+            .expect("CST token belongs to retained document");
+        macro_body_has_ordered_framing(text)
+    })
+}
+
+fn complete_oid(definition: &NodeData) -> bool {
+    find_node(definition, SyntaxKind::OidAssignment)
+        .is_some_and(|oid| contains_token_kind(oid, SyntaxKind::RBrace))
+}
+
+fn macro_body_has_ordered_framing(text: &[u8]) -> bool {
+    let mut cursor = 0usize;
+    skip_macro_trivia(text, &mut cursor);
+    if !text[cursor..].starts_with(b"::=") {
+        return false;
+    }
+    cursor += 3;
+    skip_macro_trivia(text, &mut cursor);
+    if !text[cursor..].starts_with(b"BEGIN") {
+        return false;
+    }
+    let after = cursor + 5;
+    after == text.len()
+        || text[after..].starts_with(b"--")
+        || !matches!(text[after], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')
+}
+
+fn skip_macro_trivia(text: &[u8], cursor: &mut usize) {
+    loop {
+        while *cursor < text.len() && text[*cursor].is_ascii_whitespace() {
+            *cursor += 1;
+        }
+        if !text[*cursor..].starts_with(b"--") {
+            return;
+        }
+        *cursor += 2;
+        while *cursor < text.len() {
+            if text[*cursor..].starts_with(b"--") {
+                *cursor += 2;
+                break;
+            }
+            if matches!(text[*cursor], b'\n' | b'\r') {
+                break;
+            }
+            *cursor += 1;
+        }
+    }
+}
+
+fn contains_node_kind(node: &NodeData, kind: SyntaxKind) -> bool {
+    find_node(node, kind).is_some()
+}
+
+fn find_node(node: &NodeData, kind: SyntaxKind) -> Option<&NodeData> {
+    if node.kind == kind {
+        return Some(node);
+    }
+    node.children.iter().find_map(|element| match element {
+        ElementData::Node(child) => find_node(child, kind),
+        ElementData::Token(_) => None,
+    })
+}
+
+fn contains_token_kind(node: &NodeData, kind: SyntaxKind) -> bool {
+    find_token(node, kind).is_some()
+}
+
+fn find_token(node: &NodeData, kind: SyntaxKind) -> Option<&TokenData> {
+    node.children.iter().find_map(|element| match element {
+        ElementData::Node(child) => find_token(child, kind),
+        ElementData::Token(token) => (token.kind == kind).then_some(token),
+    })
 }

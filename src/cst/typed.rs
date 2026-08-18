@@ -43,6 +43,15 @@ typed_node!(ModuleHeader, ModuleHeader);
 typed_node!(Imports, Imports);
 typed_node!(ImportGroup, ImportGroup);
 typed_node!(UnparsedRegion, UnparsedRegion);
+typed_node!(ValueAssignment, ValueAssignment);
+typed_node!(TypeAssignment, TypeAssignment);
+typed_node!(TextualConventionDefinition, TextualConventionDefinition);
+typed_node!(ObjectTypeDefinition, ObjectTypeDefinition);
+typed_node!(ModuleIdentityDefinition, ModuleIdentityDefinition);
+typed_node!(ObjectIdentityDefinition, ObjectIdentityDefinition);
+typed_node!(NotificationTypeDefinition, NotificationTypeDefinition);
+typed_node!(TrapTypeDefinition, TrapTypeDefinition);
+typed_node!(MacroDefinition, MacroDefinition);
 typed_node!(SyntaxClause, SyntaxClause);
 typed_node!(AccessClause, AccessClause);
 typed_node!(StatusClause, StatusClause);
@@ -81,6 +90,94 @@ typed_node!(TaggedSyntax, TaggedSyntax);
 typed_node!(OctetStringSyntax, OctetStringSyntax);
 typed_node!(ObjectIdentifierSyntax, ObjectIdentifierSyntax);
 typed_node!(ErrorRegion, Error);
+
+/// A typed top-level definition or recovered malformed definition.
+#[derive(Clone, Copy, Debug)]
+pub enum Definition<'tree, 'src> {
+    /// OID value assignment.
+    ValueAssignment(ValueAssignment<'tree, 'src>),
+    /// ASN.1/SMI type assignment.
+    TypeAssignment(TypeAssignment<'tree, 'src>),
+    /// `TEXTUAL-CONVENTION` definition.
+    TextualConvention(TextualConventionDefinition<'tree, 'src>),
+    /// `OBJECT-TYPE` definition.
+    ObjectType(ObjectTypeDefinition<'tree, 'src>),
+    /// `MODULE-IDENTITY` definition.
+    ModuleIdentity(ModuleIdentityDefinition<'tree, 'src>),
+    /// `OBJECT-IDENTITY` definition.
+    ObjectIdentity(ObjectIdentityDefinition<'tree, 'src>),
+    /// `NOTIFICATION-TYPE` definition.
+    NotificationType(NotificationTypeDefinition<'tree, 'src>),
+    /// `TRAP-TYPE` definition.
+    TrapType(TrapTypeDefinition<'tree, 'src>),
+    /// ASN.1 `MACRO` definition.
+    Macro(MacroDefinition<'tree, 'src>),
+    /// A malformed definition retained for recovery.
+    Error(ErrorRegion<'tree, 'src>),
+}
+
+impl<'tree, 'src> Definition<'tree, 'src> {
+    /// Cast a definition-level syntax node.
+    pub fn cast(node: SyntaxNode<'tree, 'src>) -> Option<Self> {
+        match node.kind() {
+            SyntaxKind::ValueAssignment => ValueAssignment::cast(node).map(Self::ValueAssignment),
+            SyntaxKind::TypeAssignment => TypeAssignment::cast(node).map(Self::TypeAssignment),
+            SyntaxKind::TextualConventionDefinition => {
+                TextualConventionDefinition::cast(node).map(Self::TextualConvention)
+            }
+            SyntaxKind::ObjectTypeDefinition => {
+                ObjectTypeDefinition::cast(node).map(Self::ObjectType)
+            }
+            SyntaxKind::ModuleIdentityDefinition => {
+                ModuleIdentityDefinition::cast(node).map(Self::ModuleIdentity)
+            }
+            SyntaxKind::ObjectIdentityDefinition => {
+                ObjectIdentityDefinition::cast(node).map(Self::ObjectIdentity)
+            }
+            SyntaxKind::NotificationTypeDefinition => {
+                NotificationTypeDefinition::cast(node).map(Self::NotificationType)
+            }
+            SyntaxKind::TrapTypeDefinition => TrapTypeDefinition::cast(node).map(Self::TrapType),
+            SyntaxKind::MacroDefinition => MacroDefinition::cast(node).map(Self::Macro),
+            SyntaxKind::Error if is_definition_or_recovery(node) => {
+                ErrorRegion::cast(node).map(Self::Error)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the underlying syntax node.
+    pub fn syntax(self) -> SyntaxNode<'tree, 'src> {
+        match self {
+            Self::ValueAssignment(node) => node.syntax(),
+            Self::TypeAssignment(node) => node.syntax(),
+            Self::TextualConvention(node) => node.syntax(),
+            Self::ObjectType(node) => node.syntax(),
+            Self::ModuleIdentity(node) => node.syntax(),
+            Self::ObjectIdentity(node) => node.syntax(),
+            Self::NotificationType(node) => node.syntax(),
+            Self::TrapType(node) => node.syntax(),
+            Self::Macro(node) => node.syntax(),
+            Self::Error(node) => node.syntax(),
+        }
+    }
+
+    /// Return the definition name, if the definition was structurally valid.
+    pub fn name(self) -> Option<SyntaxToken<'tree, 'src>> {
+        match self {
+            Self::ValueAssignment(node) => node.name(),
+            Self::TypeAssignment(node) => node.name(),
+            Self::TextualConvention(node) => node.name(),
+            Self::ObjectType(node) => node.name(),
+            Self::ModuleIdentity(node) => node.name(),
+            Self::ObjectIdentity(node) => node.name(),
+            Self::NotificationType(node) => node.name(),
+            Self::TrapType(node) => node.name(),
+            Self::Macro(node) => node.name(),
+            Self::Error(_) => None,
+        }
+    }
+}
 
 fn child_node<'tree, 'src, N>(node: SyntaxNode<'tree, 'src>) -> Option<N>
 where
@@ -126,6 +223,54 @@ fn last_token<'tree, 'src>(node: SyntaxNode<'tree, 'src>) -> Option<SyntaxToken<
     node.children().filter_map(SyntaxElement::as_token).last()
 }
 
+fn child_type_syntax<'tree, 'src>(
+    node: SyntaxNode<'tree, 'src>,
+) -> Option<SyntaxNode<'tree, 'src>> {
+    node.children()
+        .filter_map(SyntaxElement::as_node)
+        .find(|child| is_type_syntax_kind(child.kind()))
+}
+
+fn token_after<'tree, 'src>(
+    node: SyntaxNode<'tree, 'src>,
+    marker: SyntaxKind,
+    expected: SyntaxKind,
+) -> Option<SyntaxToken<'tree, 'src>> {
+    let mut after_marker = false;
+    node.children().find_map(|element| {
+        let token = element.as_token()?;
+        if token.kind() == marker {
+            after_marker = true;
+            return None;
+        }
+        (after_marker && token.kind() == expected).then_some(token)
+    })
+}
+
+fn is_definition_kind(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::ValueAssignment
+            | SyntaxKind::TypeAssignment
+            | SyntaxKind::TextualConventionDefinition
+            | SyntaxKind::ObjectTypeDefinition
+            | SyntaxKind::ModuleIdentityDefinition
+            | SyntaxKind::ObjectIdentityDefinition
+            | SyntaxKind::NotificationTypeDefinition
+            | SyntaxKind::TrapTypeDefinition
+            | SyntaxKind::MacroDefinition
+    )
+}
+
+fn is_definition_or_recovery(node: SyntaxNode<'_, '_>) -> bool {
+    is_definition_kind(node.kind())
+        || (node.kind() == SyntaxKind::Error
+            && node
+                .children()
+                .filter_map(SyntaxElement::as_node)
+                .any(|child| is_definition_kind(child.kind())))
+}
+
 impl<'tree, 'src> SourceFile<'tree, 'src> {
     /// Iterate over recognized modules in source order.
     pub fn modules(self) -> impl Iterator<Item = Module<'tree, 'src>> {
@@ -141,6 +286,11 @@ impl<'tree, 'src> SourceFile<'tree, 'src> {
             .children()
             .filter_map(SyntaxElement::as_node)
             .filter_map(ErrorRegion::cast)
+    }
+
+    /// Iterate over definitions across all modules in source order.
+    pub fn definitions(self) -> impl Iterator<Item = Definition<'tree, 'src>> {
+        self.modules().flat_map(Module::definitions)
     }
 }
 
@@ -168,12 +318,315 @@ impl<'tree, 'src> Module<'tree, 'src> {
             .filter_map(UnparsedRegion::cast)
     }
 
+    /// Iterate over primary definitions and malformed-definition recovery
+    /// regions in source order.
+    ///
+    /// Conformance and capability definitions remain untyped until the next
+    /// CST grammar stage and are therefore not yielded here.
+    pub fn definitions(self) -> impl Iterator<Item = Definition<'tree, 'src>> {
+        self.unparsed_regions().flat_map(|region| {
+            region
+                .syntax()
+                .children()
+                .filter_map(SyntaxElement::as_node)
+                .filter(|node| is_definition_or_recovery(*node))
+                .filter_map(Definition::cast)
+        })
+    }
+
     /// Iterate over immediate module-level recovery regions.
     pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
         self.0
             .children()
             .filter_map(SyntaxElement::as_node)
             .filter_map(ErrorRegion::cast)
+    }
+}
+
+macro_rules! definition_common {
+    ($name:ident, $keyword:ident) => {
+        impl<'tree, 'src> $name<'tree, 'src> {
+            /// Return the definition name.
+            pub fn name(self) -> Option<SyntaxToken<'tree, 'src>> {
+                first_token(self.0)
+            }
+
+            /// Return the family keyword.
+            pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+                child_token(self.0, SyntaxKind::$keyword)
+            }
+
+            /// Return the assignment operator, when this definition form has one.
+            pub fn assignment(self) -> Option<SyntaxToken<'tree, 'src>> {
+                child_token(self.0, SyntaxKind::ColonColonEqual)
+            }
+
+            /// Iterate over malformed nested portions of this definition.
+            pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+                self.0
+                    .descendant_nodes()
+                    .skip(1)
+                    .filter_map(ErrorRegion::cast)
+            }
+        }
+    };
+}
+
+definition_common!(TextualConventionDefinition, KwTextualConvention);
+definition_common!(ObjectTypeDefinition, KwObjectType);
+definition_common!(ModuleIdentityDefinition, KwModuleIdentity);
+definition_common!(ObjectIdentityDefinition, KwObjectIdentity);
+definition_common!(NotificationTypeDefinition, KwNotificationType);
+definition_common!(TrapTypeDefinition, KwTrapType);
+definition_common!(MacroDefinition, KwMacro);
+
+impl<'tree, 'src> TypeAssignment<'tree, 'src> {
+    /// Return the assigned type name.
+    pub fn name(self) -> Option<SyntaxToken<'tree, 'src>> {
+        first_token(self.0)
+    }
+
+    /// Return the assignment operator.
+    pub fn assignment(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::ColonColonEqual)
+    }
+
+    /// Return the assigned type syntax.
+    pub fn type_syntax(self) -> Option<SyntaxNode<'tree, 'src>> {
+        child_type_syntax(self.0)
+    }
+
+    /// Iterate over malformed nested portions of this definition.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> ValueAssignment<'tree, 'src> {
+    /// Return the assigned value name.
+    pub fn name(self) -> Option<SyntaxToken<'tree, 'src>> {
+        first_token(self.0)
+    }
+
+    /// Return the `OBJECT` keyword.
+    pub fn keyword(self) -> Option<SyntaxToken<'tree, 'src>> {
+        self.0
+            .descendant_tokens()
+            .find(|token| token.kind() == SyntaxKind::KwObject)
+    }
+
+    /// Return the `IDENTIFIER` keyword.
+    pub fn identifier(self) -> Option<SyntaxToken<'tree, 'src>> {
+        self.0
+            .descendant_tokens()
+            .find(|token| token.kind() == SyntaxKind::KwIdentifier)
+    }
+
+    /// Return the assignment operator.
+    pub fn assignment(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::ColonColonEqual)
+    }
+
+    /// Return the OID assigned to this name.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over malformed nested portions of this definition.
+    pub fn recovery_regions(self) -> impl Iterator<Item = ErrorRegion<'tree, 'src>> {
+        self.0
+            .descendant_nodes()
+            .skip(1)
+            .filter_map(ErrorRegion::cast)
+    }
+}
+
+impl<'tree, 'src> TextualConventionDefinition<'tree, 'src> {
+    /// Return the optional display hint.
+    pub fn display_hint(self) -> Option<DisplayHintClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the status clause.
+    pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional reference clause.
+    pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the underlying syntax clause.
+    pub fn syntax_clause(self) -> Option<SyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+impl<'tree, 'src> ObjectTypeDefinition<'tree, 'src> {
+    /// Return the object's syntax clause.
+    pub fn syntax_clause(self) -> Option<SyntaxClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional units clause.
+    pub fn units(self) -> Option<UnitsClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the access clause.
+    pub fn access(self) -> Option<AccessClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional status clause.
+    pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional reference clause.
+    pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional index clause.
+    pub fn index(self) -> Option<IndexClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional augments clause.
+    pub fn augments(self) -> Option<AugmentsClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional default-value clause.
+    pub fn defval(self) -> Option<DefvalClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the object's assigned OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+impl<'tree, 'src> ModuleIdentityDefinition<'tree, 'src> {
+    /// Return the last-updated clause.
+    pub fn last_updated(self) -> Option<LastUpdatedClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the organization clause.
+    pub fn organization(self) -> Option<OrganizationClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the contact-info clause.
+    pub fn contact_info(self) -> Option<ContactInfoClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Iterate over description clauses, including revision descriptions.
+    pub fn descriptions(self) -> impl Iterator<Item = DescriptionClause<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Iterate over revision date clauses.
+    pub fn revisions(self) -> impl Iterator<Item = RevisionClause<'tree, 'src>> {
+        child_nodes(self.0)
+    }
+
+    /// Return the module identity's assigned OID.
+    pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+macro_rules! status_description_oid_definition {
+    ($name:ident) => {
+        impl<'tree, 'src> $name<'tree, 'src> {
+            /// Return the status clause.
+            pub fn status(self) -> Option<StatusClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the description clause.
+            pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the optional reference clause.
+            pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+                child_node(self.0)
+            }
+
+            /// Return the assigned OID.
+            pub fn oid(self) -> Option<OidAssignment<'tree, 'src>> {
+                child_node(self.0)
+            }
+        }
+    };
+}
+
+status_description_oid_definition!(ObjectIdentityDefinition);
+status_description_oid_definition!(NotificationTypeDefinition);
+
+impl<'tree, 'src> NotificationTypeDefinition<'tree, 'src> {
+    /// Return the optional objects clause.
+    pub fn objects(self) -> Option<ObjectsClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+}
+
+impl<'tree, 'src> TrapTypeDefinition<'tree, 'src> {
+    /// Return the enterprise clause.
+    pub fn enterprise(self) -> Option<EnterpriseClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional variables clause.
+    pub fn variables(self) -> Option<VariablesClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional description clause.
+    pub fn description(self) -> Option<DescriptionClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the optional reference clause.
+    pub fn reference(self) -> Option<ReferenceClause<'tree, 'src>> {
+        child_node(self.0)
+    }
+
+    /// Return the numeric trap value following `::=`.
+    pub fn trap_number(self) -> Option<SyntaxToken<'tree, 'src>> {
+        token_after(self.0, SyntaxKind::ColonColonEqual, SyntaxKind::Number)
+    }
+}
+
+impl<'tree, 'src> MacroDefinition<'tree, 'src> {
+    /// Return the opaque lexer token retaining the macro body.
+    pub fn body(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::OpaqueText)
+    }
+
+    /// Return the macro's closing `END`.
+    pub fn end(self) -> Option<SyntaxToken<'tree, 'src>> {
+        child_token(self.0, SyntaxKind::KwEnd)
     }
 }
 
@@ -333,7 +786,7 @@ impl<'tree, 'src> AccessClause<'tree, 'src> {
 
     /// Return the access value, when present and lexically valid.
     pub fn value(self) -> Option<SyntaxToken<'tree, 'src>> {
-        child_token_matching(self.0, SyntaxKind::is_status_access_keyword)
+        child_token_matching(self.0, is_access_value_kind)
     }
 
     /// Iterate over malformed portions of the clause.
@@ -342,7 +795,7 @@ impl<'tree, 'src> AccessClause<'tree, 'src> {
     }
 }
 
-value_clause!(StatusClause, KwStatus, SyntaxKind::is_status_access_keyword);
+value_clause!(StatusClause, KwStatus, is_status_value_kind);
 value_clause!(DescriptionClause, KwDescription, |kind| kind
     == SyntaxKind::QuotedString);
 value_clause!(ReferenceClause, KwReference, |kind| kind
@@ -905,6 +1358,30 @@ fn is_range_value_kind(kind: SyntaxKind) -> bool {
             | SyntaxKind::HexString
             | SyntaxKind::UppercaseIdent
             | SyntaxKind::ForbiddenKeyword
+    )
+}
+
+fn is_access_value_kind(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::KwReadOnly
+            | SyntaxKind::KwReadWrite
+            | SyntaxKind::KwReadCreate
+            | SyntaxKind::KwNotAccessible
+            | SyntaxKind::KwAccessibleForNotify
+            | SyntaxKind::KwWriteOnly
+            | SyntaxKind::KwNotImplemented
+    )
+}
+
+fn is_status_value_kind(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::KwCurrent
+            | SyntaxKind::KwDeprecated
+            | SyntaxKind::KwObsolete
+            | SyntaxKind::KwMandatory
+            | SyntaxKind::KwOptional
     )
 }
 

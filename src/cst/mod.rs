@@ -17,13 +17,16 @@ mod typed;
 
 pub use typed::{
     AccessClause, AugmentsClause, BitsSyntax, ChoiceSyntax, ConstrainedSyntax, Constraint,
-    ContactInfoClause, CstNode, DefvalClause, DefvalContent, DescriptionClause, DisplayHintClause,
-    EnterpriseClause, ErrorRegion, ImportGroup, Imports, IndexClause, IndexItem, IntegerEnumSyntax,
-    LastUpdatedClause, Module, ModuleHeader, NamedNumber, NotificationsClause,
-    ObjectIdentifierSyntax, ObjectsClause, OctetStringSyntax, OidAssignment, OidComponent,
-    OrganizationClause, ProductReleaseClause, Range, ReferenceClause, RevisionClause,
-    SequenceField, SequenceOfSyntax, SequenceSyntax, SourceFile, StatusClause, SyntaxClause,
-    TaggedSyntax, TypeRefSyntax, UnitsClause, UnparsedRegion, VariablesClause,
+    ContactInfoClause, CstNode, Definition, DefvalClause, DefvalContent, DescriptionClause,
+    DisplayHintClause, EnterpriseClause, ErrorRegion, ImportGroup, Imports, IndexClause, IndexItem,
+    IntegerEnumSyntax, LastUpdatedClause, MacroDefinition, Module, ModuleHeader,
+    ModuleIdentityDefinition, NamedNumber, NotificationTypeDefinition, NotificationsClause,
+    ObjectIdentifierSyntax, ObjectIdentityDefinition, ObjectTypeDefinition, ObjectsClause,
+    OctetStringSyntax, OidAssignment, OidComponent, OrganizationClause, ProductReleaseClause,
+    Range, ReferenceClause, RevisionClause, SequenceField, SequenceOfSyntax, SequenceSyntax,
+    SourceFile, StatusClause, SyntaxClause, TaggedSyntax, TextualConventionDefinition,
+    TrapTypeDefinition, TypeAssignment, TypeRefSyntax, UnitsClause, UnparsedRegion,
+    ValueAssignment, VariablesClause,
 };
 
 /// An immutable lossless syntax tree for one source document.
@@ -773,6 +776,47 @@ mod tests {
     }
 
     #[test]
+    fn embedded_foundation_corpus_round_trips_with_definition_nodes() {
+        for (name, input) in [
+            (
+                "RFC1065-SMI",
+                include_bytes!("../lower/embedded/RFC1065-SMI").as_slice(),
+            ),
+            (
+                "RFC1155-SMI",
+                include_bytes!("../lower/embedded/RFC1155-SMI").as_slice(),
+            ),
+            (
+                "RFC-1212",
+                include_bytes!("../lower/embedded/RFC-1212").as_slice(),
+            ),
+            (
+                "RFC-1215",
+                include_bytes!("../lower/embedded/RFC-1215").as_slice(),
+            ),
+            (
+                "SNMPv2-SMI",
+                include_bytes!("../lower/embedded/SNMPv2-SMI").as_slice(),
+            ),
+            (
+                "SNMPv2-TC",
+                include_bytes!("../lower/embedded/SNMPv2-TC").as_slice(),
+            ),
+            (
+                "SNMPv2-CONF",
+                include_bytes!("../lower/embedded/SNMPv2-CONF").as_slice(),
+            ),
+        ] {
+            with_document(input, |document| {
+                let (tree, _) = build(document);
+                assert!(tree.source_file().modules().count() > 0, "{name}");
+                assert!(tree.source_file().definitions().count() > 0, "{name}");
+                assert_eq!(tree.reconstruct_text(), input, "{name}");
+            });
+        }
+    }
+
+    #[test]
     fn obsolete_module_oid_headers_support_complete_and_truncated_forms() {
         let complete = b"OID-MIB { iso org(3) 6 } DEFINITIONS ::= BEGIN\nEND";
         with_document(complete, |document| {
@@ -847,21 +891,33 @@ item OBJECT-TYPE
     DESCRIPTION "description"
     REFERENCE "reference"
     INDEX { IMPLIED indexObject, OCTET STRING }
-    AUGMENTS { parentEntry }
     DEFVAL { { enabled, disabled } }
     ::= { ROOT-MIB.root(1) 2 leaf }
+augmented OBJECT-TYPE
+    SYNTAX INTEGER
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "augmented"
+    AUGMENTS { parentEntry }
+    ::= { item 2 }
 notice NOTIFICATION-TYPE
     OBJECTS { item, other }
-    NOTIFICATIONS { notice }
-    VARIABLES { item }
+    STATUS current
+    DESCRIPTION "notice"
     ::= { item 3 }
+noticeGroup NOTIFICATION-GROUP
+    NOTIFICATIONS { notice }
+    STATUS current
+    DESCRIPTION "group"
+    ::= { item 4 }
 identity MODULE-IDENTITY
     LAST-UPDATED "202608180000Z"
     ORGANIZATION "org"
     CONTACT-INFO "contact"
+    DESCRIPTION "identity"
     REVISION "202608180000Z"
     DESCRIPTION "revision"
-    ::= { item 4 }
+    ::= { item 5 }
 legacy TRAP-TYPE
     ENTERPRISE item
     VARIABLES { item }
@@ -887,7 +943,7 @@ END"#;
                 .nodes()
                 .filter_map(SyntaxClause::cast)
                 .collect::<Vec<_>>();
-            assert_eq!(syntax.len(), 2);
+            assert_eq!(syntax.len(), 3);
             assert!(syntax.iter().all(|clause| clause.type_syntax().is_some()));
             let access = tree.nodes().find_map(AccessClause::cast).unwrap();
             assert_eq!(access.keyword().unwrap().text(), b"MAX-ACCESS");
@@ -1332,7 +1388,7 @@ END"#;
 
     #[test]
     fn type_and_oid_contexts_distinguish_declarations_from_values() {
-        let input = b"CONTEXT-CST-MIB DEFINITIONS ::= BEGIN\nfoo SomeType ::= otherValue\nFoo ::= SomeType\ntaggedValue [APPLICATION 1] IMPLICIT SomeType ::= otherTagged\nTaggedType ::= [APPLICATION 2] IMPLICIT SomeType\nbitsValue BITS ::= { first, second }\nactual OBJECT IDENTIFIER ::= { ROOT-MIB.root 1 }\nobject OBJECT-TYPE\n SYNTAX INTEGER\n ::= { actual 2 }\nEND";
+        let input = b"CONTEXT-CST-MIB DEFINITIONS ::= BEGIN\nfoo SomeType ::= otherValue\nFoo ::= SomeType\ntaggedValue [APPLICATION 1] IMPLICIT SomeType ::= otherTagged\nTaggedType ::= [APPLICATION 2] IMPLICIT SomeType\nbitsValue BITS ::= { first, second }\nactual OBJECT IDENTIFIER ::= { ROOT-MIB.root 1 }\nobject OBJECT-TYPE\n SYNTAX INTEGER\n MAX-ACCESS read-only\n STATUS current\n DESCRIPTION \"object\"\n ::= { actual 2 }\nEND";
         with_document(input, |document| {
             let (tree, diagnostics) = build(document);
             assert!(diagnostics.is_empty(), "{diagnostics:#?}");
@@ -1417,7 +1473,7 @@ END"#;
 
     #[test]
     fn balanced_defval_content_does_not_create_nested_definition_boundaries() {
-        let input = b"NESTED-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX INTEGER\n DEFVAL {\n  fake ::= INTEGER\n }\n ::= { root 1 }\nlater OBJECT IDENTIFIER ::= { root 2 }\nEND";
+        let input = b"NESTED-CST-MIB DEFINITIONS ::= BEGIN\nitem OBJECT-TYPE\n SYNTAX INTEGER\n MAX-ACCESS read-only\n STATUS current\n DESCRIPTION \"item\"\n DEFVAL {\n  fake ::= INTEGER\n }\n ::= { root 1 }\nlater OBJECT IDENTIFIER ::= { root 2 }\nEND";
         with_document(input, |document| {
             let (tree, diagnostics) = build(document);
             assert!(diagnostics.is_empty(), "{diagnostics:#?}");
@@ -1437,6 +1493,32 @@ END"#;
                 1
             );
             assert_eq!(tree.nodes().filter_map(OidAssignment::cast).count(), 2);
+            let definitions = tree
+                .source_file()
+                .modules()
+                .next()
+                .unwrap()
+                .definitions()
+                .collect::<Vec<_>>();
+            assert_eq!(definitions.len(), 2);
+            assert_eq!(definitions[0].name().unwrap().text(), b"item");
+            assert_eq!(definitions[1].name().unwrap().text(), b"later");
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn assignment_like_tokens_in_type_content_do_not_create_definitions() {
+        let input = b"NESTED-TYPE-CST-MIB DEFINITIONS ::= BEGIN\nOuter ::= SEQUENCE { fake ::= INTEGER }\nAfter ::= INTEGER\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let module = tree.source_file().modules().next().unwrap();
+            let definitions = module.definitions().collect::<Vec<_>>();
+            assert_eq!(definitions.len(), 2);
+            assert!(matches!(definitions[0], Definition::Error(_)));
+            assert_eq!(definitions[1].name().unwrap().text(), b"After");
+            assert_eq!(tree.nodes().filter_map(TypeAssignment::cast).count(), 2);
             assert_eq!(tree.reconstruct_text(), input);
         });
     }
@@ -1485,11 +1567,529 @@ END"#;
                 tree.nodes().filter_map(TypeRefSyntax::cast).count(),
                 DEFINITION_COUNT
             );
+            assert_eq!(
+                tree.source_file()
+                    .modules()
+                    .next()
+                    .unwrap()
+                    .definitions()
+                    .count(),
+                DEFINITION_COUNT
+            );
             assert!(
                 work <= token_count * 4,
                 "definition-context work {work} exceeded linear bound for {token_count} tokens"
             );
             assert_eq!(tree.reconstruct_text(), input.as_bytes());
+        });
+    }
+
+    #[test]
+    fn primary_definition_families_are_typed_and_iterated_in_source_order() {
+        let cases: &[(&str, &[u8], SyntaxKind)] = &[
+            (
+                "value assignment",
+                b"value OBJECT IDENTIFIER ::= { root 1 }",
+                SyntaxKind::ValueAssignment,
+            ),
+            (
+                "type assignment",
+                b"Type ::= INTEGER (0..10)",
+                SyntaxKind::TypeAssignment,
+            ),
+            (
+                "textual convention",
+                br#"Convention ::= TEXTUAL-CONVENTION
+ STATUS current
+ DESCRIPTION "convention"
+ SYNTAX OCTET STRING"#,
+                SyntaxKind::TextualConventionDefinition,
+            ),
+            (
+                "object type",
+                br#"object OBJECT-TYPE
+ SYNTAX INTEGER
+ MAX-ACCESS read-only
+ STATUS current
+ DESCRIPTION "object"
+ ::= { root 1 }"#,
+                SyntaxKind::ObjectTypeDefinition,
+            ),
+            (
+                "module identity",
+                br#"module MODULE-IDENTITY
+ LAST-UPDATED "202608180000Z"
+ ORGANIZATION "org"
+ CONTACT-INFO "contact"
+ DESCRIPTION "module"
+ REVISION "202608170000Z"
+ DESCRIPTION "revision"
+ ::= { root 1 }"#,
+                SyntaxKind::ModuleIdentityDefinition,
+            ),
+            (
+                "object identity",
+                br#"identity OBJECT-IDENTITY
+ STATUS current
+ DESCRIPTION "identity"
+ ::= { root 1 }"#,
+                SyntaxKind::ObjectIdentityDefinition,
+            ),
+            (
+                "notification type",
+                br#"notice NOTIFICATION-TYPE
+ OBJECTS { object }
+ STATUS current
+ DESCRIPTION "notice"
+ ::= { root 1 }"#,
+                SyntaxKind::NotificationTypeDefinition,
+            ),
+            (
+                "trap type",
+                br#"trap TRAP-TYPE
+ ENTERPRISE root
+ VARIABLES { object }
+ DESCRIPTION "trap"
+ ::= 7"#,
+                SyntaxKind::TrapTypeDefinition,
+            ),
+            (
+                "macro",
+                b"TEST-MACRO MACRO -- framing -- ::= -- begin -- BEGIN\nTYPE NOTATION ::= \"type\"\nEND",
+                SyntaxKind::MacroDefinition,
+            ),
+        ];
+
+        for &(family, definition, expected_kind) in cases {
+            let mut input = b"DEFINITION-CST-MIB DEFINITIONS ::= BEGIN\n".to_vec();
+            input.extend_from_slice(definition);
+            input.extend_from_slice(b"\nAfter ::= INTEGER\nEND");
+            with_document(&input, |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(diagnostics.is_empty(), "{family}: {diagnostics:#?}");
+                let module = tree.source_file().modules().next().unwrap();
+                let definitions = module.definitions().collect::<Vec<_>>();
+                assert_eq!(definitions.len(), 2, "{family}");
+                assert_eq!(definitions[0].syntax().kind(), expected_kind, "{family}");
+                assert_eq!(definitions[0].syntax().text(), definition, "{family}");
+                match definitions[0] {
+                    Definition::ValueAssignment(node) => {
+                        assert!(node.identifier().is_some());
+                        assert!(node.oid().is_some());
+                    }
+                    Definition::TypeAssignment(node) => {
+                        assert!(node.assignment().is_some());
+                        assert!(node.type_syntax().is_some());
+                    }
+                    Definition::TextualConvention(node) => {
+                        assert!(node.status().is_some());
+                        assert!(node.description().is_some());
+                        assert!(node.syntax_clause().is_some());
+                    }
+                    Definition::ObjectType(node) => {
+                        assert!(node.syntax_clause().is_some());
+                        assert!(node.access().is_some());
+                        assert!(node.status().is_some());
+                        assert!(node.description().is_some());
+                        assert!(node.oid().is_some());
+                    }
+                    Definition::ModuleIdentity(node) => {
+                        assert!(node.last_updated().is_some());
+                        assert!(node.organization().is_some());
+                        assert!(node.contact_info().is_some());
+                        assert_eq!(node.descriptions().count(), 2);
+                        assert_eq!(node.revisions().count(), 1);
+                        assert!(node.oid().is_some());
+                    }
+                    Definition::ObjectIdentity(node) => {
+                        assert!(node.status().is_some());
+                        assert!(node.description().is_some());
+                        assert!(node.oid().is_some());
+                    }
+                    Definition::NotificationType(node) => {
+                        assert!(node.objects().is_some());
+                        assert!(node.status().is_some());
+                        assert!(node.description().is_some());
+                        assert!(node.oid().is_some());
+                    }
+                    Definition::TrapType(node) => {
+                        assert!(node.enterprise().is_some());
+                        assert!(node.variables().is_some());
+                        assert!(node.description().is_some());
+                        assert!(node.trap_number().is_some());
+                    }
+                    Definition::Macro(node) => {
+                        assert!(node.body().is_some());
+                        assert!(node.end().is_some());
+                    }
+                    Definition::Error(_) => panic!("{family}: valid definition recovered"),
+                }
+                assert_eq!(definitions[1].name().unwrap().text(), b"After", "{family}");
+                assert_eq!(tree.source_file().definitions().count(), 2, "{family}");
+                assert_eq!(tree.reconstruct_text(), input, "{family}");
+            });
+        }
+    }
+
+    #[test]
+    fn malformed_primary_definitions_recover_before_later_definitions() {
+        let cases: &[(&str, &[u8], SyntaxKind)] = &[
+            (
+                "value assignment missing IDENTIFIER",
+                b"broken OBJECT ::= { root 1 }",
+                SyntaxKind::ValueAssignment,
+            ),
+            (
+                "value assignment truncated OID",
+                b"broken OBJECT IDENTIFIER ::= { root 1",
+                SyntaxKind::ValueAssignment,
+            ),
+            (
+                "type assignment missing operator",
+                b"Broken INTEGER",
+                SyntaxKind::TypeAssignment,
+            ),
+            (
+                "type assignment missing syntax",
+                b"Broken ::=",
+                SyntaxKind::TypeAssignment,
+            ),
+            (
+                "textual convention missing status",
+                b"Broken ::= TEXTUAL-CONVENTION DESCRIPTION \"broken\" SYNTAX INTEGER",
+                SyntaxKind::TextualConventionDefinition,
+            ),
+            (
+                "textual convention wrong order",
+                b"Broken ::= TEXTUAL-CONVENTION STATUS current SYNTAX INTEGER DESCRIPTION \"broken\"",
+                SyntaxKind::TextualConventionDefinition,
+            ),
+            (
+                "object type missing access",
+                b"broken OBJECT-TYPE SYNTAX INTEGER STATUS current DESCRIPTION \"broken\" ::= { root 1 }",
+                SyntaxKind::ObjectTypeDefinition,
+            ),
+            (
+                "object type wrong order",
+                b"broken OBJECT-TYPE SYNTAX INTEGER STATUS current MAX-ACCESS read-only DESCRIPTION \"broken\" ::= { root 1 }",
+                SyntaxKind::ObjectTypeDefinition,
+            ),
+            (
+                "module identity missing organization",
+                b"broken MODULE-IDENTITY LAST-UPDATED \"202608180000Z\" CONTACT-INFO \"contact\" DESCRIPTION \"broken\" ::= { root 1 }",
+                SyntaxKind::ModuleIdentityDefinition,
+            ),
+            (
+                "module identity wrong revision order",
+                b"broken MODULE-IDENTITY LAST-UPDATED \"202608180000Z\" ORGANIZATION \"org\" CONTACT-INFO \"contact\" REVISION \"202608180000Z\" DESCRIPTION \"revision\" ::= { root 1 }",
+                SyntaxKind::ModuleIdentityDefinition,
+            ),
+            (
+                "object identity missing description",
+                b"broken OBJECT-IDENTITY STATUS current ::= { root 1 }",
+                SyntaxKind::ObjectIdentityDefinition,
+            ),
+            (
+                "object identity wrong order",
+                b"broken OBJECT-IDENTITY DESCRIPTION \"broken\" STATUS current ::= { root 1 }",
+                SyntaxKind::ObjectIdentityDefinition,
+            ),
+            (
+                "notification type missing status",
+                b"broken NOTIFICATION-TYPE OBJECTS { object } DESCRIPTION \"broken\" ::= { root 1 }",
+                SyntaxKind::NotificationTypeDefinition,
+            ),
+            (
+                "notification type wrong objects order",
+                b"broken NOTIFICATION-TYPE STATUS current OBJECTS { object } DESCRIPTION \"broken\" ::= { root 1 }",
+                SyntaxKind::NotificationTypeDefinition,
+            ),
+            (
+                "trap type missing enterprise",
+                b"broken TRAP-TYPE DESCRIPTION \"broken\" ::= 1",
+                SyntaxKind::TrapTypeDefinition,
+            ),
+            (
+                "trap type wrong order",
+                b"broken TRAP-TYPE VARIABLES { object } ENTERPRISE root ::= 1",
+                SyntaxKind::TrapTypeDefinition,
+            ),
+            (
+                "macro missing framing",
+                b"BROKEN-MACRO MACRO missing-framing\nEND",
+                SyntaxKind::MacroDefinition,
+            ),
+            (
+                "macro reversed framing",
+                b"BROKEN-MACRO MACRO BEGIN ::= body\nEND",
+                SyntaxKind::MacroDefinition,
+            ),
+            (
+                "macro quoted framing false positive",
+                b"BROKEN-MACRO MACRO \"::= BEGIN\"\nEND",
+                SyntaxKind::MacroDefinition,
+            ),
+            (
+                "macro commented framing false positive",
+                b"BROKEN-MACRO MACRO -- ::= BEGIN\nbody\nEND",
+                SyntaxKind::MacroDefinition,
+            ),
+        ];
+
+        for &(family, definition, partial_kind) in cases {
+            let mut input = b"RECOVERY-CST-MIB DEFINITIONS ::= BEGIN\n".to_vec();
+            input.extend_from_slice(definition);
+            input.extend_from_slice(b"\nAfter ::= INTEGER\nEND");
+            with_document(&input, |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{family}");
+                let definitions = tree
+                    .source_file()
+                    .modules()
+                    .next()
+                    .unwrap()
+                    .definitions()
+                    .collect::<Vec<_>>();
+                assert_eq!(definitions.len(), 2, "{family}");
+                assert!(matches!(definitions[0], Definition::Error(_)), "{family}");
+                assert_eq!(definitions[0].syntax().text(), definition, "{family}");
+                let partials = definitions[0]
+                    .syntax()
+                    .children()
+                    .filter_map(SyntaxElement::as_node)
+                    .collect::<Vec<_>>();
+                assert_eq!(partials.len(), 1, "{family}");
+                assert_eq!(partials[0].kind(), partial_kind, "{family}");
+                assert!(matches!(definitions[1], Definition::TypeAssignment(_)));
+                assert_eq!(definitions[1].name().unwrap().text(), b"After", "{family}");
+                assert_eq!(tree.reconstruct_text(), input, "{family}");
+            });
+        }
+    }
+
+    #[test]
+    fn direct_textual_convention_form_is_retained() {
+        let input = b"DIRECT-TC-CST-MIB DEFINITIONS ::= BEGIN\nConvention TEXTUAL-CONVENTION\n STATUS current\n DESCRIPTION \"direct\"\n SYNTAX INTEGER\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let definition = tree.source_file().definitions().next().unwrap();
+            let Definition::TextualConvention(convention) = definition else {
+                panic!("expected textual convention: {definition:?}");
+            };
+            assert!(convention.assignment().is_none());
+            assert_eq!(convention.name().unwrap().text(), b"Convention");
+            assert!(convention.status().is_some());
+            assert!(convention.description().is_some());
+            assert!(convention.syntax_clause().is_some());
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn object_type_accepts_smiv1_access_and_status_values() {
+        let input = b"SMIV1-OBJECT-CST-MIB DEFINITIONS ::= BEGIN\nlegacy OBJECT-TYPE\n SYNTAX INTEGER\n ACCESS read-only\n STATUS mandatory\n DESCRIPTION \"legacy\"\n ::= { root 1 }\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            let Definition::ObjectType(object) = tree.source_file().definitions().next().unwrap()
+            else {
+                panic!("expected OBJECT-TYPE");
+            };
+            assert_eq!(
+                object.access().unwrap().keyword().unwrap().text(),
+                b"ACCESS"
+            );
+            assert_eq!(
+                object.status().unwrap().value().unwrap().text(),
+                b"mandatory"
+            );
+            assert_eq!(tree.reconstruct_text(), input);
+        });
+    }
+
+    #[test]
+    fn object_type_status_and_description_are_independently_optional() {
+        for (name, optional_clauses) in [
+            ("without status", " DESCRIPTION \"description\"\n"),
+            ("without description", " STATUS current\n"),
+            ("without both", ""),
+        ] {
+            let input = format!(
+                "OPTIONAL-OBJECT-CST-MIB DEFINITIONS ::= BEGIN\nobject OBJECT-TYPE\n SYNTAX INTEGER\n MAX-ACCESS read-only\n{optional_clauses} ::= {{ root 1 }}\nEND"
+            );
+            with_document(input.as_bytes(), |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(diagnostics.is_empty(), "{name}: {diagnostics:#?}");
+                let Definition::ObjectType(object) =
+                    tree.source_file().definitions().next().unwrap()
+                else {
+                    panic!("{name}: expected OBJECT-TYPE");
+                };
+                assert!(object.syntax_clause().is_some(), "{name}");
+                assert!(object.access().is_some(), "{name}");
+                assert!(object.oid().is_some(), "{name}");
+                assert_eq!(tree.reconstruct_text(), input.as_bytes(), "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn access_and_status_clauses_accept_the_semantic_keyword_sets() {
+        for (keyword, value) in [
+            ("MAX-ACCESS", "read-only"),
+            ("ACCESS", "read-write"),
+            ("MIN-ACCESS", "read-create"),
+            ("MAX-ACCESS", "not-accessible"),
+            ("ACCESS", "accessible-for-notify"),
+            ("MIN-ACCESS", "write-only"),
+            ("MAX-ACCESS", "not-implemented"),
+        ] {
+            let input = format!(
+                "ACCESS-CST-MIB DEFINITIONS ::= BEGIN\nobject OBJECT-TYPE\n SYNTAX INTEGER\n {keyword} {value}\n STATUS current\n DESCRIPTION \"object\"\n ::= {{ root 1 }}\nEND"
+            );
+            with_document(input.as_bytes(), |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(
+                    diagnostics.is_empty(),
+                    "{keyword} {value}: {diagnostics:#?}"
+                );
+                let Definition::ObjectType(object) =
+                    tree.source_file().definitions().next().unwrap()
+                else {
+                    panic!("expected OBJECT-TYPE");
+                };
+                let access = object.access().unwrap();
+                assert_eq!(access.keyword().unwrap().text(), keyword.as_bytes());
+                assert_eq!(access.value().unwrap().text(), value.as_bytes());
+                assert_eq!(tree.reconstruct_text(), input.as_bytes());
+            });
+        }
+
+        for value in ["current", "deprecated", "obsolete", "mandatory", "optional"] {
+            let input = format!(
+                "STATUS-CST-MIB DEFINITIONS ::= BEGIN\nobject OBJECT-TYPE\n SYNTAX INTEGER\n MAX-ACCESS read-only\n STATUS {value}\n DESCRIPTION \"object\"\n ::= {{ root 1 }}\nEND"
+            );
+            with_document(input.as_bytes(), |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(diagnostics.is_empty(), "{value}: {diagnostics:#?}");
+                let Definition::ObjectType(object) =
+                    tree.source_file().definitions().next().unwrap()
+                else {
+                    panic!("expected OBJECT-TYPE");
+                };
+                assert_eq!(
+                    object.status().unwrap().value().unwrap().text(),
+                    value.as_bytes()
+                );
+                assert_eq!(tree.reconstruct_text(), input.as_bytes());
+            });
+        }
+    }
+
+    #[test]
+    fn swapped_access_and_status_values_recover_the_definition() {
+        for (name, clauses, clause_kind) in [
+            (
+                "access uses status value",
+                " MAX-ACCESS current\n STATUS current\n",
+                SyntaxKind::AccessClause,
+            ),
+            (
+                "status uses access value",
+                " MAX-ACCESS read-only\n STATUS read-only\n",
+                SyntaxKind::StatusClause,
+            ),
+        ] {
+            let input = format!(
+                "SWAPPED-CST-MIB DEFINITIONS ::= BEGIN\nbroken OBJECT-TYPE\n SYNTAX INTEGER\n{clauses} DESCRIPTION \"broken\"\n ::= {{ root 1 }}\nAfter ::= INTEGER\nEND"
+            );
+            with_document(input.as_bytes(), |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{name}");
+                let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+                assert_eq!(definitions.len(), 2, "{name}");
+                assert!(matches!(definitions[0], Definition::Error(_)), "{name}");
+                assert!(matches!(definitions[1], Definition::TypeAssignment(_)));
+                let clause = tree
+                    .nodes()
+                    .find(|node| node.kind() == clause_kind)
+                    .unwrap();
+                assert!(
+                    clause
+                        .descendant_nodes()
+                        .any(|node| node.kind() == SyntaxKind::Error)
+                );
+                if clause_kind == SyntaxKind::AccessClause {
+                    let access = AccessClause::cast(clause).unwrap();
+                    assert!(access.value().is_none());
+                    assert_eq!(access.recovery_regions().count(), 1);
+                } else {
+                    let status = StatusClause::cast(clause).unwrap();
+                    assert!(status.value().is_none());
+                    assert_eq!(status.recovery_regions().count(), 1);
+                }
+                assert_eq!(tree.reconstruct_text(), input.as_bytes(), "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn macro_begin_boundary_matches_comment_and_identifier_rules() {
+        let valid = b"MACRO-BOUNDARY-CST-MIB DEFINITIONS ::= BEGIN\nVALID-MACRO MACRO ::= BEGIN-- adjacent comment\nTYPE NOTATION ::= \"type\"\nEND\nAfter ::= INTEGER\nEND";
+        with_document(valid, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+            assert!(matches!(
+                tree.source_file().definitions().next(),
+                Some(Definition::Macro(_))
+            ));
+            assert_eq!(tree.reconstruct_text(), valid);
+        });
+
+        for (name, framing) in [
+            ("single hyphen", "::= BEGIN-body"),
+            ("identifier suffix", "::= BEGINsuffix"),
+            ("underscore suffix", "::= BEGIN_suffix"),
+        ] {
+            let input = format!(
+                "MACRO-BOUNDARY-CST-MIB DEFINITIONS ::= BEGIN\nBROKEN-MACRO MACRO {framing}\nEND\nAfter ::= INTEGER\nEND"
+            );
+            with_document(input.as_bytes(), |document| {
+                let (tree, diagnostics) = build(document);
+                assert!(!diagnostics.is_empty(), "{name}");
+                let definitions = tree.source_file().definitions().collect::<Vec<_>>();
+                assert_eq!(definitions.len(), 2, "{name}");
+                assert!(matches!(definitions[0], Definition::Error(_)), "{name}");
+                assert!(matches!(definitions[1], Definition::TypeAssignment(_)));
+                assert_eq!(tree.reconstruct_text(), input.as_bytes(), "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn definition_cast_rejects_nested_recovery_nodes() {
+        let input = b"CAST-CST-MIB DEFINITIONS ::= BEGIN\nbroken OBJECT-TYPE\n SYNTAX INTEGER\n MAX-ACCESS read-only\n STATUS current\n DESCRIPTION @\n ::= { root 1 }\nAfter ::= INTEGER\nEND";
+        with_document(input, |document| {
+            let (tree, diagnostics) = build(document);
+            assert!(!diagnostics.is_empty());
+            let errors = tree
+                .nodes()
+                .filter(|node| node.kind() == SyntaxKind::Error)
+                .collect::<Vec<_>>();
+            assert!(errors.len() >= 2);
+            let definition_errors = errors
+                .iter()
+                .filter(|error| matches!(Definition::cast(**error), Some(Definition::Error(_))))
+                .count();
+            assert_eq!(definition_errors, 1);
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| Definition::cast(*error).is_none())
+            );
+            assert_eq!(tree.source_file().definitions().count(), 2);
+            assert_eq!(tree.reconstruct_text(), input);
         });
     }
 
@@ -1527,6 +2127,10 @@ END"#;
             let (tree, diagnostics) = build_with_config(document, &ignored);
             assert!(diagnostics.is_empty());
             assert_eq!(tree.nodes().filter_map(StatusClause::cast).count(), 1);
+            assert!(matches!(
+                tree.source_file().definitions().next(),
+                Some(Definition::Error(_))
+            ));
             assert_eq!(tree.reconstruct_text(), input);
 
             let mut overridden = DiagnosticConfig::default();
@@ -1594,22 +2198,33 @@ item OBJECT-TYPE
  DESCRIPTION "description"
  REFERENCE "reference"
  INDEX { IMPLIED index }
- AUGMENTS { row }
  DEFVAL { one }
  ::= { ROOT-MIB.root(1) 1 }
+augmented OBJECT-TYPE
+ SYNTAX INTEGER
+ MAX-ACCESS read-only
+ STATUS current
+ DESCRIPTION "augmented"
+ AUGMENTS { row }
+ ::= { item 2 }
 notice NOTIFICATION-TYPE
  OBJECTS { item }
- NOTIFICATIONS { notice }
  STATUS current
  DESCRIPTION "notice"
- ::= { item 2 }
+ ::= { item 3 }
+noticeGroup NOTIFICATION-GROUP
+ NOTIFICATIONS { notice }
+ STATUS current
+ DESCRIPTION "group"
+ ::= { item 4 }
 identity MODULE-IDENTITY
  LAST-UPDATED "202608180000Z"
  ORGANIZATION "org"
  CONTACT-INFO "contact"
+ DESCRIPTION "identity"
  REVISION "202608180000Z"
  DESCRIPTION "revision"
- ::= { item 3 }
+ ::= { item 5 }
 trap TRAP-TYPE
  ENTERPRISE item
  VARIABLES { item }
