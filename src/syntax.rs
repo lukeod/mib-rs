@@ -416,6 +416,11 @@ define_syntax_kinds! {
     }
     nodes {
         SourceFile => ("SOURCE_FILE", "source file");
+        Module => ("MODULE", "module");
+        ModuleHeader => ("MODULE_HEADER", "module header");
+        Imports => ("IMPORTS_NODE", "imports");
+        ImportGroup => ("IMPORT_GROUP", "import group");
+        UnparsedRegion => ("UNPARSED_REGION", "unparsed region");
         Error => ("ERROR_NODE", "error node");
     }
     forbidden {
@@ -453,10 +458,10 @@ mod tests {
 
     #[test]
     fn inventory_and_categories_are_exhaustive() {
-        assert_eq!(SyntaxKind::ALL.len(), 111);
+        assert_eq!(SyntaxKind::ALL.len(), 116);
         assert_eq!(
             SyntaxKind::ALL.iter().filter(|kind| kind.is_node()).count(),
-            2
+            7
         );
         assert_eq!(
             SyntaxKind::ALL
