@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace `TokenKind` with the shared `SyntaxKind` token/node vocabulary and rename its error and end-of-file variants to `ErrorToken` and `EofToken`
 - Replace borrowed index-suffix decoding with an owned `IndexSchema` that provides exact decoding and canonical encoding
 - Change `Object::node()` to return `Option<Node>` and retain object metadata when numeric OID resolution fails
-- Remove `DiagCode::EmptyRevisionDescription`; empty `REVISION DESCRIPTION` clauses now use `DiagCode::EmptyDescription` (`empty-description`)
+- Use `DiagCode::EmptyRevisionDescription` (`empty-revision-description`) for empty `REVISION DESCRIPTION` clauses while retaining `empty-description` for other descriptions
 - Make `LoadError::DiagnosticThreshold` own a source-retaining `DiagnosticReport`; reports order diagnostics by stable source identity rather than compilation-local IDs and derive checked full ranges on demand
 - Make diagnostic reports internal products of a resolved MIB's exact shared source arena and remove `SourceSet::clone` to prevent cross-arena `SourceId` aliasing
 - Expose checked diagnostic locations and rendering only through report-owned `DiagnosticEntry` handles; raw diagnostic metadata can no longer be resolved through an arbitrary report

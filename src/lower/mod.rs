@@ -762,7 +762,7 @@ fn lower_module_identity(
                 r.span,
                 name,
                 "REVISION DESCRIPTION",
-                DiagCode::EmptyDescription,
+                DiagCode::EmptyRevisionDescription,
             );
             ir::Revision {
                 date: r.date.value.clone(),
@@ -1843,7 +1843,7 @@ END
     }
 
     #[test]
-    fn revision_empty_description_uses_empty_description_diagnostic() {
+    fn revision_empty_description_uses_dedicated_diagnostic() {
         let mut sources = SourceSet::new();
         let source_id = sources
             .insert(
@@ -1913,6 +1913,6 @@ END
             .iter()
             .find(|d| d.message == "\"testMIB\": empty REVISION DESCRIPTION clause")
             .expect("expected empty REVISION DESCRIPTION diagnostic");
-        assert_eq!(diagnostic.code, DiagCode::EmptyDescription);
+        assert_eq!(diagnostic.code, DiagCode::EmptyRevisionDescription);
     }
 }

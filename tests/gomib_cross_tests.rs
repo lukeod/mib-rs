@@ -6,9 +6,11 @@
 mod common;
 
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mib_rs::load::{Loader, load};
 use mib_rs::mib::{Mib, NodeId, Oid};
@@ -212,6 +214,29 @@ fn can_run_cross_tests() -> bool {
         .arg("version")
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+static NEXT_CROSS_CORPUS: AtomicU64 = AtomicU64::new(0);
+
+struct CrossCorpus(PathBuf);
+
+impl CrossCorpus {
+    fn with_mib(filename: &str, source: &[u8]) -> Self {
+        let sequence = NEXT_CROSS_CORPUS.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "mib-rs-cross-corpus-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("create cross-test corpus");
+        fs::write(path.join(filename), source).expect("write cross-test MIB");
+        Self(path)
+    }
+}
+
+impl Drop for CrossCorpus {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 // -- Build and run gomib-fixturegen --
@@ -1470,6 +1495,83 @@ fn diagnostics_cross_strict() {
         return;
     }
     assert_no_diagnostic_divergences("strict", ResolverStrictness::Strict);
+}
+
+#[test]
+fn empty_revision_description_uses_shared_diagnostic_code() {
+    if !can_run_cross_tests() {
+        eprintln!("skipping: go toolchain or gomib source not available");
+        return;
+    }
+
+    const MODULE: &str = "CROSS-EMPTY-DESCRIPTIONS-MIB";
+    const SOURCE: &[u8] = br#"CROSS-EMPTY-DESCRIPTIONS-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+crossEmptyDescriptionsMIB MODULE-IDENTITY
+    LAST-UPDATED "200001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION "Test module"
+    REVISION "200001010000Z"
+    DESCRIPTION ""
+    ::= { enterprises 99999 }
+
+crossEmptyDescriptionObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION ""
+    ::= { crossEmptyDescriptionsMIB 1 }
+END
+"#;
+
+    let corpus = CrossCorpus::with_mib("CROSS-EMPTY-DESCRIPTIONS-MIB.mib", SOURCE);
+    let expected = run_fixturegen_for(&corpus.0, "normal", true, &[MODULE]);
+
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    let mib = load(
+        Loader::new()
+            .source(dir_source(&corpus.0).expect("failed to create cross-test source"))
+            .modules([MODULE])
+            .resolver_strictness(ResolverStrictness::Normal)
+            .diagnostic_config(config),
+    )
+    .expect("cross-test MIB load failed");
+    let actual = extract_diagnostics(&mib);
+
+    for (message, code) in [
+        (
+            "\"crossEmptyDescriptionsMIB\": empty REVISION DESCRIPTION clause",
+            "empty-revision-description",
+        ),
+        (
+            "\"crossEmptyDescriptionObject\": empty DESCRIPTION clause",
+            "empty-description",
+        ),
+    ] {
+        let expected = expected
+            .diagnostics
+            .iter()
+            .find(|diagnostic| normalize_diagnostic_message(&diagnostic.message) == message)
+            .unwrap_or_else(|| panic!("gomib did not emit {code}"));
+        assert_eq!(expected.code, code);
+
+        let actual = actual
+            .iter()
+            .find(|diagnostic| diagnostic.message == message)
+            .unwrap_or_else(|| panic!("mib-rs did not emit {code}"));
+        assert_eq!(actual.code, expected.code);
+        assert_eq!(actual.severity, expected.severity);
+        assert_eq!(actual.module, expected.module);
+        if code == "empty-revision-description" {
+            assert_eq!(actual.line, expected.line);
+            assert_eq!(actual.column, expected.column);
+        }
+    }
 }
 
 #[test]

@@ -10,6 +10,31 @@ bad_name OBJECT IDENTIFIER ::= { iso 99999 }
 END
 "#;
 
+const EMPTY_DESCRIPTIONS_SOURCE: &[u8] = br#"EMPTY-DESCRIPTIONS-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+emptyDescriptionsMIB MODULE-IDENTITY
+    LAST-UPDATED "200001010000Z"
+    ORGANIZATION "Test"
+    CONTACT-INFO "Test"
+    DESCRIPTION ""
+    REVISION "200001010000Z"
+    DESCRIPTION ""
+    ::= { enterprises 99999 }
+
+emptyDescriptionObject OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION ""
+    ::= { emptyDescriptionsMIB 1 }
+END
+"#;
+
+const REVISION_CLAUSE: &[u8] = b"REVISION \"200001010000Z\"\n    DESCRIPTION \"\"";
+
 fn source() -> Box<dyn mib_rs::Source> {
     mib_rs::source::memory("DIAGNOSTIC-POLICY-MIB", SOURCE)
 }
@@ -18,6 +43,68 @@ fn config_with_override(code: DiagCode, severity: Severity) -> DiagnosticConfig 
     let mut config = DiagnosticConfig::default();
     config.overrides.insert(code, severity);
     config
+}
+
+fn load_empty_descriptions(config: DiagnosticConfig) -> mib_rs::Mib {
+    Loader::new()
+        .source(mib_rs::source::memory(
+            "EMPTY-DESCRIPTIONS-MIB",
+            EMPTY_DESCRIPTIONS_SOURCE,
+        ))
+        .modules(["EMPTY-DESCRIPTIONS-MIB"])
+        .diagnostic_config(config)
+        .load()
+        .expect("empty-description diagnostics should not fail loading")
+}
+
+#[test]
+fn revision_description_override_uses_dedicated_code_and_full_clause_range() {
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    config
+        .overrides
+        .insert(DiagCode::EmptyRevisionDescription, Severity::Severe);
+
+    let mib = load_empty_descriptions(config);
+    let report = mib.diagnostic_report();
+    let revision = report
+        .iter()
+        .find(|entry| entry.diagnostic().code == DiagCode::EmptyRevisionDescription)
+        .expect("expected dedicated revision-description diagnostic");
+    assert_eq!(revision.diagnostic().severity, Severity::Severe);
+    assert_eq!(revision.slice().unwrap(), Some(REVISION_CLAUSE));
+
+    let ordinary_descriptions: Vec<_> = report
+        .iter()
+        .filter(|entry| entry.diagnostic().code == DiagCode::EmptyDescription)
+        .collect();
+    assert_eq!(ordinary_descriptions.len(), 2);
+    assert!(
+        ordinary_descriptions
+            .iter()
+            .all(|entry| entry.diagnostic().severity == Severity::Style)
+    );
+}
+
+#[test]
+fn revision_description_ignore_does_not_hide_other_empty_descriptions() {
+    let mut config = DiagnosticConfig::verbose();
+    config.fail_at = Severity::Fatal;
+    config.ignore.push("empty-revision-description".to_string());
+
+    let mib = load_empty_descriptions(config);
+    assert!(
+        mib.diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code != DiagCode::EmptyRevisionDescription)
+    );
+    assert_eq!(
+        mib.diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code == DiagCode::EmptyDescription)
+            .count(),
+        2
+    );
 }
 
 #[test]
