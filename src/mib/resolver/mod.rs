@@ -15,6 +15,7 @@
 mod checks;
 mod context;
 mod imports;
+mod navigation;
 mod oids;
 mod registration;
 mod semantics;
@@ -134,6 +135,8 @@ pub fn resolve(
             "phase complete",
         );
     });
+
+    navigation::build_semantic_span_indexes(&mut ctx);
 
     ctx.drop_modules();
     ctx.finalize_unresolved();

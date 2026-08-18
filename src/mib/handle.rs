@@ -12,7 +12,10 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ptr;
 
-use crate::source::{SourceDocument, SourceId, SourceOrigin, SourceRange};
+use crate::source::{
+    ByteOffset, Position, PositionEncoding, PositionError, SourceDocument, SourceId, SourceOrigin,
+    SourceRange,
+};
 use crate::types::{Access, BaseType, Kind, Language, Status};
 
 use super::capability::CapabilityData;
@@ -355,6 +358,73 @@ impl<'a> Module<'a> {
     /// Return the source document's stable origin, if retained.
     pub fn source_origin(self) -> Option<&'a SourceOrigin> {
         self.source().map(SourceDocument::origin)
+    }
+
+    /// Return resolved semantic context at a byte offset in this module's source.
+    ///
+    /// Ranges are half-open: the start byte is included and the end byte is not.
+    /// References take precedence over containing definitions. Among overlapping
+    /// references, the narrowest range wins. Equal widths use import, OID, then
+    /// type/symbol-reference priority; equal-kind overlaps prefer the later start,
+    /// then retained-item order. Returns `None` for an out-of-bounds offset or a
+    /// module without retained source text.
+    pub fn semantic_at(self, offset: ByteOffset) -> Option<super::SemanticSpan<'a>> {
+        let source = self.source()?;
+        if offset >= source.len() {
+            return None;
+        }
+        self.data().semantic_spans.get(offset)
+    }
+
+    /// Return resolved semantic context after checking the source identity.
+    ///
+    /// This is useful when a caller has a source-qualified cursor. A source ID
+    /// from another document never falls back to interpreting the same numeric
+    /// offset in this module and instead returns `None`.
+    pub fn semantic_at_source(
+        self,
+        source_id: SourceId,
+        offset: ByteOffset,
+    ) -> Option<super::SemanticSpan<'a>> {
+        if self.data().semantic_spans.source_id() != Some(source_id) {
+            return None;
+        }
+        self.semantic_at(offset)
+    }
+
+    /// Return resolved semantic context at a zero-based editor position.
+    ///
+    /// Position conversion uses the requested UTF encoding and propagates
+    /// invalid-line, invalid-column, mid-code-point, and invalid-UTF-8 errors.
+    /// A module without retained source text returns `Ok(None)`.
+    pub fn semantic_at_position(
+        self,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<Option<super::SemanticSpan<'a>>, PositionError> {
+        super::navigation::at_position(
+            &self.data().semantic_spans,
+            self.source(),
+            position,
+            encoding,
+        )
+    }
+
+    /// Return resolved semantic context at a source-qualified editor position.
+    ///
+    /// A source-ID mismatch returns `Ok(None)` without converting the position;
+    /// otherwise this has the same conversion errors and result as
+    /// [`Module::semantic_at_position`].
+    pub fn semantic_at_source_position(
+        self,
+        source_id: SourceId,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<Option<super::SemanticSpan<'a>>, PositionError> {
+        if self.data().semantic_spans.source_id() != Some(source_id) {
+            return Ok(None);
+        }
+        self.semantic_at_position(position, encoding)
     }
 
     /// Return the ORGANIZATION clause text from MODULE-IDENTITY.

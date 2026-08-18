@@ -12,6 +12,7 @@ use crate::mib::Oid;
 use crate::source::SourceId;
 use crate::types::Language;
 
+use super::navigation::SemanticSpanIndex;
 use super::symbol::Symbol;
 use super::types::*;
 
@@ -43,6 +44,7 @@ pub struct ModuleData {
 
     pub(crate) used_import_names: HashSet<String>,
     pub(crate) resolved_imports: HashMap<String, ModuleId>,
+    pub(crate) semantic_spans: SemanticSpanIndex,
 
     pub(crate) objects_by_name: HashMap<String, ObjectId>,
     pub(crate) types_by_name: HashMap<String, TypeId>,
@@ -76,6 +78,7 @@ impl ModuleData {
             nodes: Vec::new(),
             used_import_names: HashSet::new(),
             resolved_imports: HashMap::new(),
+            semantic_spans: SemanticSpanIndex::default(),
             objects_by_name: HashMap::new(),
             types_by_name: HashMap::new(),
             notifications_by_name: HashMap::new(),

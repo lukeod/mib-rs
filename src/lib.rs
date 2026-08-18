@@ -792,7 +792,7 @@ pub use error::LoadError;
 pub use load::{Loader, load};
 pub use mib::{
     Capability, Compliance, Group, Index, Mib, Module, Node, Notification, Object, Oid, OidLookup,
-    ParseOidError, ResolveOidError, Type,
+    ParseOidError, ResolveOidError, SemanticSpan, SemanticSpanKind, Type,
     index::{
         BoundIndexCodec, ConstraintCheck, ConstraintMode, DecodeOptions, DecodedIndexComponent,
         DecodedRowIndex, EncodeOptions, InclusiveRange, IncompleteConstraintMode, IndexBindError,

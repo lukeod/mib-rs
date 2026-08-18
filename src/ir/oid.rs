@@ -26,6 +26,8 @@ pub enum OidComponent {
     NamedNumber {
         name: String,
         number: u32,
+        /// Exact source range of `name`, excluding the numeric annotation.
+        name_range: SourceRange,
         range: SourceRange,
     },
     /// Module-qualified reference, e.g. `SNMPv2-SMI.enterprises`.
@@ -39,6 +41,8 @@ pub enum OidComponent {
         module: String,
         name: String,
         number: u32,
+        /// Exact source range of `module.name`, excluding the numeric annotation.
+        name_range: SourceRange,
         range: SourceRange,
     },
 }

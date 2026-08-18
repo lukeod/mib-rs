@@ -20,6 +20,8 @@ pub enum TypeSyntax {
     /// INTEGER with named values, e.g. `INTEGER { up(1), down(2) }`.
     IntegerEnum {
         base: String,
+        /// Exact source range of the optional named base type.
+        base_range: Option<SourceRange>,
         named_numbers: Vec<NamedNumber>,
         range: SourceRange,
     },
@@ -37,6 +39,8 @@ pub enum TypeSyntax {
     /// `SEQUENCE OF` entry-type reference (table types).
     SequenceOf {
         entry_type: String,
+        /// Exact source range of `entry_type`.
+        entry_type_range: SourceRange,
         range: SourceRange,
     },
     /// `SEQUENCE` with named fields (table row definition).

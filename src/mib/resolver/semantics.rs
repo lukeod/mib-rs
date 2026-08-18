@@ -1981,6 +1981,7 @@ mod tests {
                 "INTEGER",
                 ir::TypeSyntax::IntegerEnum {
                     base: String::new(),
+                    base_range: None,
                     named_numbers: Vec::new(),
                     range,
                 },

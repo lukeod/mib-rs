@@ -1141,6 +1141,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
 
             ir::TypeSyntax::IntegerEnum {
                 base: base_name,
+                base_range: base.as_ref().map(|base| base.span),
                 named_numbers: lowered,
                 range: *span,
             }
@@ -1224,6 +1225,7 @@ fn lower_type_syntax(syntax: &ast::TypeSyntax, ctx: &mut LoweringContext<'_>) ->
 
         ast::TypeSyntax::SequenceOf { entry_type, span } => ir::TypeSyntax::SequenceOf {
             entry_type: entry_type.name.clone(),
+            entry_type_range: entry_type.span,
             range: *span,
         },
 
@@ -1371,6 +1373,7 @@ fn lower_oid_component(comp: &ast::OidComponent) -> ir::OidComponent {
         ast::OidComponent::NamedNumber { name, num, span } => ir::OidComponent::NamedNumber {
             name: name.name.clone(),
             number: *num,
+            name_range: name.span,
             range: *span,
         },
         ast::OidComponent::QualifiedName {
@@ -1391,6 +1394,8 @@ fn lower_oid_component(comp: &ast::OidComponent) -> ir::OidComponent {
             module: module_name.name.clone(),
             name: name.name.clone(),
             number: *num,
+            name_range: SourceRange::cover(module_name.span, name.span)
+                .expect("qualified OID name parts share one source"),
             range: *span,
         },
     }
